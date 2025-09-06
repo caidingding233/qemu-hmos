@@ -7,6 +7,9 @@ import picker from '@ohos.file.picker'
 import fs from '@ohos.file.fs'
 import { VmStore, type VMMetaPersist } from '../managers/VmStore'
 
+// 辅助类型：ISO 复制结果
+interface CopyResult { ok: boolean; path: string }
+
 // QEMU配置接口
 interface VMConfig {
   name: string;
@@ -30,6 +33,26 @@ class QemuConfig {
   memoryMB: number = 6144;
   cpuCount: number = 4;
   isoPath?: string;
+}
+
+// 依赖诊断类型（供 runDiagnostics 使用）
+interface CoreDiag {
+  loaded: boolean;
+  foundLd: boolean;
+  symFound?: boolean;
+  selfDir: string;
+  foundSelfDir: boolean;
+  existsFilesPath: boolean;
+  filesPath: string;
+  foundFiles: boolean;
+  errLd?: string;
+  symErr?: string;
+  errSelfDir?: string;
+  errFiles?: string;
+}
+
+interface QemuCoreProbe {
+  checkCoreLib?: () => CoreDiag;
 }
 
 // VM元数据类
@@ -71,7 +94,7 @@ struct Index {
 
   private async initStoreAndLoad() {
     try {
-      const ctx = getContext(this) as common.UIAbilityContext
+      const ctx: common.UIAbilityContext = getContext(this) as common.UIAbilityContext
       this.store = new VmStore(ctx)
       const list = await this.store.loadAll()
       this.vms = list.map((p: VMMetaPersist) => {
@@ -80,17 +103,28 @@ struct Index {
         m.name = p.name
         m.osType = p.osType
         m.createdAt = p.createdAt
-        m.status = (p.status as any) ?? 'stopped'
-        m.config = Object.assign(new QemuConfig(), {
-          name: p.config.name,
-          osType: p.config.osType,
-          diskSizeGB: p.config.diskSizeGB,
-          memoryMB: p.config.memoryMB,
-          cpuCount: p.config.cpuCount,
-          isoPath: p.config.isoPath || ''
-        })
+        m.status = p.status ?? 'stopped'
+        const cfg = new QemuConfig()
+        cfg.name = p.config.name
+        cfg.osType = p.config.osType
+        cfg.diskSizeGB = p.config.diskSizeGB
+        cfg.memoryMB = p.config.memoryMB
+        cfg.cpuCount = p.config.cpuCount
+        cfg.isoPath = p.config.isoPath || ''
+        m.config = cfg
         return m
       })
+      // 冷启动状态重同步：避免上次异常退出/重装后仍显示为“运行中”
+      // 通过 NAPI 查询真实状态并校正到 stopped（若当前进程并未持有运行线程）
+      try {
+        for (const vm of this.vms) {
+          let live: string = 'stopped'
+          try { live = qemu.getVmStatus(vm.name) as string } catch (_e) { live = 'stopped' }
+          const normalized = live === 'running' ? 'running' : 'stopped'
+          if (vm.status !== normalized) vm.status = normalized
+        }
+        await this.saveAllVMs()
+      } catch (_e) { /* ignore */ }
     } catch (e) {
       console.error('加载VM列表失败: ' + (e as Error).message)
     }
@@ -155,10 +189,10 @@ struct Index {
 
       this.vms.push(newVM);
       // 若指定了 ISO，尝试复制到沙箱
-      if ((newVM.config as any).isoPath) {
-        const copied = await this.ensureIsoInSandbox((newVM.config as any).isoPath as unknown as string)
+      if (newVM.config.isoPath && newVM.config.isoPath.length > 0) {
+        const copied = await this.ensureIsoInSandbox(newVM.config.isoPath)
         if (copied.ok) {
-          (newVM.config as any).isoPath = copied.path
+          newVM.config.isoPath = copied.path
         } else {
           this.errorMessage = '无法复制 ISO，请手动使用 hdc 推送到 files/isos/ 后重试'
         }
@@ -197,7 +231,7 @@ struct Index {
       hilog.info(0x0000, 'VM_START', '启动VM: %{public}s', vm.name);
 
       // 确保 UEFI 固件就绪
-      const ok = await FirmwareManager.ensureUefi(getContext(this))
+      const ok = await FirmwareManager.ensureUefi(getContext(this) as common.UIAbilityContext)
       if (!ok) {
         this.errorMessage = '缺少 UEFI 固件：请将 edk2-aarch64-code.fd 放到 rawfile 或使用 hdc 推送到 files 目录'
         vm.status = 'failed'
@@ -209,18 +243,19 @@ struct Index {
       // 启动 VM
       const success: boolean = qemu.startVm({
         name: vm.name,
-        isoPath: (vm.config as any).isoPath || '',
+        isoPath: vm.config.isoPath || '',
         diskSizeGB: vm.config.diskSizeGB,
         memoryMB: vm.config.memoryMB,
         cpuCount: vm.config.cpuCount,
         accel: qemu.kvmSupported() ? 'kvm' : 'tcg',
-        display: mode === 'install' ? 'vnc=:1,websocket=on' : 'vnc=:1',
+        display: mode === 'install' ? 'vnc=:1,websocket=5701' : 'vnc=:1',
         nographic: false
       })
 
       if (success) {
         if (mode === 'install') {
-          router.pushUrl({ url: 'pages/VNCViewer', params: { vmInfo: { name: vm.name, vncPort: 5901 } } })
+          hilog.info(0x0000, 'VM_START', '启动VNC模式，端口: 5701')
+          router.pushUrl({ url: 'pages/VNCViewer', params: { vmInfo: { name: vm.name, vncPort: 5701 } } })
         } else {
           router.pushUrl({ url: 'pages/RDPViewer', params: { vmId: vm.name, vmName: vm.name, rdpHost: '127.0.0.1', rdpPort: 3390 } })
         }
@@ -228,7 +263,8 @@ struct Index {
         hilog.info(0x0000, 'VM_START', 'VM启动成功: %{public}s', vm.name)
       } else {
         vm.status = 'failed'
-        this.errorMessage = 'VM启动失败'
+        this.errorMessage = 'VM启动失败 - 请先点击"诊断依赖"检查核心库状态'
+        hilog.error(0x0000, 'VM_START', 'VM启动失败，请检查诊断信息')
       }
     } catch (error) {
       vm.status = 'failed'
@@ -275,13 +311,42 @@ struct Index {
     }
   }
 
+  // 删除VM（清理持久化与磁盘文件）
+  async deleteVM(vm: VMMeta) {
+    try {
+      if (vm.status === 'running' || vm.status === 'starting' || vm.status === 'stopping') {
+        this.errorMessage = '请先停止虚拟机再删除';
+        return;
+      }
+      this.isLoading = true;
+      this.errorMessage = '';
+      // 1) 删除磁盘文件（最佳努力）
+      const vmDir = `/data/storage/el2/base/haps/entry/files/vms/${vm.name}`
+      const files = ['disk.qcow2', 'qemu.log', 'vm_config.json', 'vm_status.txt']
+      for (const f of files) {
+        const p = `${vmDir}/${f}`
+        try { await fs.unlink(p) } catch (_) { /* ignore */ }
+      }
+      try { await fs.rmdir(vmDir) } catch (_) { /* may contain extra files; ignore */ }
+      // 2) 从列表移除并持久化
+      this.vms = this.vms.filter((x: VMMeta) => x.id !== vm.id)
+      await this.saveAllVMs()
+      hilog.info(0x0000, 'VM_DELETE', '删除VM: %{public}s', vm.name)
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e)
+      this.errorMessage = `删除失败: ${msg}`
+    } finally {
+      this.isLoading = false
+    }
+  }
+
   private async saveAllVMs() {
     if (!this.store) return
-    const list: VMMetaPersist[] = this.vms.map(vm => ({
+    const list: VMMetaPersist[] = this.vms.map((vm: VMMeta) : VMMetaPersist => ({
       id: vm.id,
       name: vm.name,
       osType: vm.osType,
-      status: (vm.status as any),
+      status: vm.status,
       createdAt: vm.createdAt,
       config: {
         name: vm.config.name,
@@ -289,14 +354,14 @@ struct Index {
         diskSizeGB: vm.config.diskSizeGB,
         memoryMB: vm.config.memoryMB,
         cpuCount: vm.config.cpuCount,
-        isoPath: (vm.config as any).isoPath || ''
+        isoPath: vm.config.isoPath || ''
       }
     }))
     await this.store.saveAll(list)
   }
 
   // 将选中的 ISO 复制到应用沙箱目录 files/isos/
-  private async ensureIsoInSandbox(srcPath: string): Promise<{ ok: boolean, path: string }> {
+  private async ensureIsoInSandbox(srcPath: string): Promise<CopyResult> {
     try {
       const sandboxRoot = '/data/storage/el2/base/haps/entry/files'
       if (srcPath.startsWith(sandboxRoot)) {
@@ -311,13 +376,10 @@ struct Index {
       const dst = await fs.open(dstPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY)
       const chunkSize = 1024 * 1024
       const buf = new ArrayBuffer(chunkSize)
-      // @ts-ignore
       const u8 = new Uint8Array(buf)
       while (true) {
-        // @ts-ignore 读取可变长度
-        const n: number = await (fs as any).read(src.fd, u8)
+        const n: number = await fs.read(src.fd, u8)
         if (!n || n <= 0) break
-        // @ts-ignore 支持写入 Uint8Array 的前 n 字节
         await fs.write(dst.fd, u8.subarray(0, n))
         if (n < chunkSize) break
       }
@@ -384,6 +446,12 @@ struct Index {
                 Text('QEMU功能测试')
                   .fontSize(14)
                   .fontColor('#666666')
+                Row() {
+                  Button('诊断依赖')
+                    .type(ButtonType.Capsule)
+                    .onClick(() => this.runDiagnostics())
+                    .margin({ top: 8 })
+                }
               }
               .alignItems(HorizontalAlign.Start)
               .layoutWeight(1);
@@ -534,7 +602,8 @@ struct Index {
                           .fontColor(Color.White)
                           .borderRadius(18)
                           .margin({ left: 12 })
-                          .enabled(vm.status === 'stopped');
+                          .enabled(vm.status === 'stopped')
+                          .onClick(() => this.deleteVM(vm));
                       }
                       .width('100%')
                       .justifyContent(FlexAlign.Start);
@@ -991,13 +1060,9 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center);
       }
-    }
-    .width('100%')
-    .height('100%');
-
-    // 启动模式选择弹窗（覆盖层）
-    if (this.showStartModeDialog && this.startTargetVM) {
-      Column() {
+      // 启动模式选择弹窗（覆盖层）
+      if (this.showStartModeDialog && this.startTargetVM) {
+        Column() {
         Text('选择启动模式')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
@@ -1007,30 +1072,102 @@ struct Index {
           .fontColor('#666666')
           .margin({ bottom: 12 })
         Row() {
-          Button('安装期 (VNC)')
-            .width('48%')
+          Button('安装期 (VNC - Web)')
+            .width('32%')
             .onClick(() => this.doStartVM(this.startTargetVM!, 'install'))
+          Button('安装期 (VNC - 原生)')
+            .width('32%')
+            .backgroundColor('#F1F3F5')
+            .fontColor('#333333')
+            .onClick(() => {
+              // 启动不带 websocket 的 VNC 并进入原生VNC页面
+              const vm = this.startTargetVM!
+              this.isLoading = true
+              const ok: boolean = qemu.startVm({
+                name: vm.name,
+                accel: qemu.kvmSupported() ? 'kvm' : 'tcg',
+                display: 'vnc=:1',
+                nographic: false
+              })
+              this.isLoading = false
+              this.showStartModeDialog = false
+              this.startTargetVM = null
+              if (ok) {
+                router.pushUrl({ url: 'pages/VNCNativeViewer', params: { vmName: vm.name } })
+              } else {
+                this.errorMessage = 'VM启动失败 (原生VNC)'
+              }
+            })
           Button('已安装 (RDP)')
-            .width('48%')
+            .width('32%')
             .backgroundColor('#007DFF')
             .fontColor(Color.White)
             .onClick(() => this.doStartVM(this.startTargetVM!, 'normal'))
         }
         .width('100%')
-        .justifyContent(FlexAlign.SpaceBetween)
+        .justifyContent(FlexAlign.SpaceAround)
         Button('取消')
           .width('100%')
           .backgroundColor('#F1F3F5')
           .fontColor('#333333')
           .margin({ top: 12 })
           .onClick(() => { this.showStartModeDialog = false; this.startTargetVM = null })
+        }
+        .padding(16)
+        .backgroundColor(Color.White)
+        .borderRadius(12)
+        .width('90%')
+        .shadow({ radius: 10, color: '#00000020' })
+        .position({ x: '5%', y: '30%' })
       }
-      .padding(16)
-      .backgroundColor(Color.White)
-      .borderRadius(12)
-      .width('90%')
-      .shadow({ radius: 10, color: '#00000020' })
-      .position({ x: '5%', y: '30%' })
+    }
+    .width('100%')
+    .height('100%');
+  }
+
+  async runDiagnostics() {
+    try {
+      const ctx: common.UIAbilityContext = getContext(this) as common.UIAbilityContext
+      const rm = ctx.resourceManager
+      // 检测核心库（真实NAPI接口）
+      const probe: QemuCoreProbe = qemu as QemuCoreProbe
+      const defaultCore: CoreDiag = {
+        loaded: false,
+        foundLd: false,
+        selfDir: '',
+        foundSelfDir: false,
+        existsFilesPath: false,
+        filesPath: '/data/storage/el2/base/haps/entry/files/libqemu_full.so',
+        foundFiles: false
+      }
+      const core: CoreDiag = (probe.checkCoreLib && typeof probe.checkCoreLib === 'function')
+        ? (probe.checkCoreLib() as CoreDiag)
+        : defaultCore
+      // 检测 noVNC 资源（真实 rawfile 探测）
+      let hasMin = false, hasEsm = false
+      try { await rm.getRawFileContent('novnc/novnc.min.js'); hasMin = true } catch (_) {}
+      try { await rm.getRawFileContent('novnc/novnc.esm.js'); hasEsm = true } catch (_) {}
+
+      const lines: string[] = []
+      lines.push(`Core.loaded: ${core.loaded === true}`)
+      lines.push(`Core.foundLd: ${core.foundLd === true}${core.errLd ? ' ('+core.errLd+')' : ''}`)
+      lines.push(`Core.symFound: ${core.symFound === true}${core.symErr ? ' ('+core.symErr+')' : ''}`)
+      lines.push(`Core.selfDir: ${core.selfDir || ''}`)
+      lines.push(`Core.foundSelfDir: ${core.foundSelfDir === true}${core.errSelfDir ? ' ('+core.errSelfDir+')' : ''}`)
+      lines.push(`Core.filesPath: ${core.filesPath || '/data/storage/el2/base/haps/entry/files/libqemu_full.so'}`)
+      lines.push(`Core.existsFilesPath: ${core.existsFilesPath === true}`)
+      lines.push(`Core.foundFiles: ${core.foundFiles === true}${core.errFiles ? ' ('+core.errFiles+')' : ''}`)
+      lines.push(`noVNC.min.js: ${hasMin}`)
+      lines.push(`noVNC.esm.js: ${hasEsm}`)
+
+      AlertDialog.show({
+        title: '依赖诊断',
+        message: lines.join('\n'),
+        primaryButton: { value: '确定', action: () => {} }
+      })
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : `${e}`
+      AlertDialog.show({ title: '诊断失败', message: msg, primaryButton: { value: '确定', action: () => {} } })
     }
   }
 }

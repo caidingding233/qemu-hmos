@@ -1,4 +1,6 @@
-import { qemu } from '../cpp/types/libqemu_hmos/Index';
+import qemu from 'libqemu_hmos.so';
+import fs from '@ohos.file.fs'
+import router from '@ohos.router'
 import { VMCreateDialog } from '../components/VMCreateDialog';
 import { CustomDialogController } from '@kit.ArkUI';
 
@@ -51,6 +53,15 @@ struct VMsPage {
       const savedVms = await AppStorage.Get<string>('vms');
       if (savedVms) {
         this.vms = JSON.parse(savedVms);
+        // 冷启动同步真实状态，避免误显示为“运行中”
+        try {
+          for (const vm of this.vms) {
+            let live = 'stopped' as VmMeta['status']
+            try { live = qemu.getVmStatus(vm.name) as VmMeta['status'] } catch (_) { live = 'stopped' }
+            if (live !== 'running' && vm.status !== 'stopped') vm.status = 'stopped'
+          }
+          await this.saveVms()
+        } catch (_) {}
       }
     } catch (e) {
       console.error('Failed to load VMs:', e);
@@ -70,19 +81,16 @@ struct VMsPage {
       this.loading = true;
       this.error = '';
       
-      const vmConfig: {
-        name: string;
-        isoPath: string;
-        diskSizeGB: number;
-        memoryMB: number;
-        cpuCount: number;
-      } = {
+      const vmConfig = {
         name: config.name,
         isoPath: config.isoPath,
         diskSizeGB: config.diskSize,
         memoryMB: config.memory,
-        cpuCount: config.cpuCount
-      };
+        cpuCount: config.cpuCount,
+        accel: qemu.kvmSupported() ? 'kvm' : 'tcg',
+        display: 'vnc=:1,websocket=5701',
+        nographic: false
+      } as const;
       
       const success = qemu.startVm(vmConfig);
       if (success) {
@@ -100,6 +108,9 @@ struct VMsPage {
         this.vms.push(newVm);
         await this.saveVms();
         this.showCreateDialog = false;
+        // 成功启动后进入 VNC 页面
+        router.pushUrl({ url: 'pages/VNCViewer', params: { vmInfo: { name: newVm.name, vncPort: 5701 } } })
+          .catch((e: Error) => console.error('打开VNC失败:', e));
         this.startVMStatusMonitoring(newVm.name);
       } else {
         this.error = 'Failed to start VM';
@@ -136,11 +147,18 @@ struct VMsPage {
 
   private startVM(vm: VmMeta) {
     try {
-      const vmConfig: { name: string } = { name: vm.name };
-      const success = qemu.startVm(vmConfig);
+      const success = qemu.startVm({
+        name: vm.name,
+        accel: qemu.kvmSupported() ? 'kvm' : 'tcg',
+        display: 'vnc=:1,websocket=5701',
+        nographic: false
+      });
       if (success) {
         vm.status = 'running';
         this.saveVms();
+        // 进入 VNC 页面
+        router.pushUrl({ url: 'pages/VNCViewer', params: { vmInfo: { name: vm.name, vncPort: 5701 } } })
+          .catch((e: Error) => console.error('打开VNC失败:', e));
         this.startVMStatusMonitoring(vm.name);
       }
     } catch (e) {
@@ -159,6 +177,32 @@ struct VMsPage {
     } catch (e) {
       console.error('Stop VM failed:', e);
       this.error = `Failed to stop VM: ${e}`;
+    }
+  }
+
+  private async deleteVM(vm: VmMeta) {
+    try {
+      if (vm.status !== 'stopped' && vm.status !== 'failed') {
+        this.error = '请先停止虚拟机再删除';
+        return;
+      }
+      this.loading = true;
+      this.error = '';
+      // 尝试删除磁盘文件
+      const vmDir = `/data/storage/el2/base/haps/entry/files/vms/${vm.name}`
+      const files = ['disk.qcow2', 'qemu.log', 'vm_config.json', 'vm_status.txt']
+      for (const f of files) {
+        const p = `${vmDir}/${f}`
+        try { await fs.unlink(p) } catch (_) { /* 忽略 */ }
+      }
+      try { await fs.rmdir(vmDir) } catch (_) {}
+      // 从内存与存储移除
+      this.vms = this.vms.filter((x: VmMeta) => x.name !== vm.name)
+      await this.saveVms()
+    } catch (e) {
+      this.error = `删除失败: ${e}`
+    } finally {
+      this.loading = false;
     }
   }
 
@@ -266,6 +310,9 @@ struct VMsPage {
                 Button('日志')
                   .onClick(() => this.showVMLogs(vm))
                   .margin({ right: 8 })
+                Button('删除')
+                  .onClick(() => this.deleteVM(vm))
+                  .enabled(vm.status === 'stopped' || vm.status === 'failed')
               }
               .width('100%')
             }

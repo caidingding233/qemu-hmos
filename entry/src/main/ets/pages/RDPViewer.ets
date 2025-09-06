@@ -18,12 +18,13 @@ struct RDPViewer {
   
   aboutToAppear() {
     // 获取路由参数
-    const params = router.getParams() as any
+    interface RDPRouteParams { vmId?: string; vmName?: string; rdpHost?: string; rdpPort?: number }
+    const params = router.getParams() as RDPRouteParams
     if (params) {
-      this.vmId = params.vmId || ''
-      this.vmName = params.vmName || '未知虚拟机'
-      this.rdpHost = params.rdpHost || 'localhost'
-      this.rdpPort = params.rdpPort || 3389
+      if (typeof params.vmId === 'string') this.vmId = params.vmId
+      if (typeof params.vmName === 'string') this.vmName = params.vmName
+      if (typeof params.rdpHost === 'string') this.rdpHost = params.rdpHost
+      if (typeof params.rdpPort === 'number') this.rdpPort = params.rdpPort
     }
   }
   
@@ -88,7 +89,7 @@ struct RDPViewer {
           }
           .width('100%')
           .height(56)
-          .padding({ horizontal: 16 })
+          .padding({ left: 16, right: 16, top: 0, bottom: 0 })
           .backgroundColor('#F8F9FA')
           .justifyContent(2)
           .alignItems(1)
@@ -139,8 +140,7 @@ struct RDPViewer {
               .fontSize(20)
           }
           .width('100%')
-          .padding({ horizontal: 16, vertical: 12 })
-          .borderBottom({ width: 1, color: '#E0E0E0' })
+          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
           
           // 设置内容
           Column() {
@@ -258,7 +258,6 @@ struct RDPViewer {
           .padding(16)
         }
         .width('90%')
-        .maxWidth(400)
         .backgroundColor('#FFFFFF')
         .borderRadius(8)
         .shadow({ radius: 10, color: '#00000020' })

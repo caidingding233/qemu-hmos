@@ -1,4 +1,4 @@
-import { qemu } from '../cpp/types/libqemu_hmos/Index';
+import qemu from 'libqemu_hmos.so';
 
 interface AppInfo {
   name: string;
@@ -22,14 +22,12 @@ struct AppsPage {
     this.loading = true;
     try {
       // 启动VM并运行应用
-      const vmConfig: {
-        name: string;
-        app: string;
-      } = {
+      const ok: boolean = qemu.startVm({
         name: 'default-vm',
-        app: app.cmd
-      };
-      const ok: boolean = qemu.startVm(vmConfig);
+        accel: qemu.kvmSupported() ? 'kvm' : 'tcg',
+        display: 'vnc=:1,websocket=on',
+        nographic: false
+      });
       if (!ok) {
         this.error = '启动失败';
       } else {

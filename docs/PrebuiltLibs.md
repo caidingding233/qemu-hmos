@@ -7,11 +7,12 @@ This app’s N-API module (`libqemu_hmos.so`) dynamically loads a separate QEMU 
 
 ## Placement
 
-Place the prebuilt `libqemu_full.so` for `arm64-v8a` here so it is packed into the HAP:
+Place the prebuilt `libqemu_full.so` for `arm64-v8a` so it is packed into the HAP:
 
-- `entry/src/main/cpp/libs/arm64-v8a/libqemu_full.so`
+- Preferred: `entry/src/main/libs/arm64-v8a/libqemu_full.so`
+- Also supported: `entry/src/main/cpp/libs/arm64-v8a/libqemu_full.so`
 
-The build system will package it under the app’s `lib/arm64` directory and it will be discoverable by name at runtime.
+Hvigor will package native libs from `src/main/libs/<abi>/` automatically. Using `cpp/libs` also works in some setups, but `src/main/libs` is the most compatible location.
 
 ## Verify at Runtime
 

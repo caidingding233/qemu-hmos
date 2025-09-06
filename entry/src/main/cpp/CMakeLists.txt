@@ -1,21 +1,33 @@
 cmake_minimum_required(VERSION 3.5)
-project(qemu_hmos)
+project(qemu_hmos VERSION 1.0.0)
 
 # 设置C++标准
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 设置构建类型
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Release")
+endif()
+
+message(STATUS "Building ${PROJECT_NAME} v${PROJECT_VERSION} in ${CMAKE_BUILD_TYPE} mode")
+
 # 鸿蒙开发环境特定配置
+# 优先使用环境变量，其次使用用户提供的本机路径，最后再尝试默认安装路径
 if(DEFINED ENV{OHOS_NDK_HOME})
     set(OHOS_NDK_HOME $ENV{OHOS_NDK_HOME})
 else()
-    # 尝试自动检测NDK路径
-    if(EXISTS "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native")
-        set(OHOS_NDK_HOME "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native")
-    elseif(EXISTS "/Applications/DevEco-Studio.app/Contents/ohos/ndk")
-        set(OHOS_NDK_HOME "/Applications/DevEco-Studio.app/Contents/ohos/ndk")
-    else()
-        message(FATAL_ERROR "OHOS_NDK_HOME not set and could not be auto-detected")
+    # 用户本机已安装的 NDK（按需修改）
+    set(OHOS_NDK_HOME "/Users/caidingding233/Library/OpenHarmony/Sdk/18/native")
+    if(NOT EXISTS "${OHOS_NDK_HOME}")
+        # 兼容 DevEco 默认安装位置
+        if(EXISTS "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native")
+            set(OHOS_NDK_HOME "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native")
+        elseif(EXISTS "/Applications/DevEco-Studio.app/Contents/ohos/ndk")
+            set(OHOS_NDK_HOME "/Applications/DevEco-Studio.app/Contents/ohos/ndk")
+        else()
+            message(FATAL_ERROR "OHOS_NDK_HOME not set and could not be auto-detected; tried /Users/caidingding233/Library/OpenHarmony/Sdk/18/native")
+        endif()
     endif()
 endif()
 
@@ -38,15 +50,25 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
 # 设置编译选项，确保不包含macOS特定的选项，并包含aarch64-linux-ohos的头文件路径
-set(CMAKE_C_FLAGS "-target aarch64-linux-ohos -nostdinc -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${CMAKE_CURRENT_SOURCE_DIR}")
-set(CMAKE_CXX_FLAGS "-target aarch64-linux-ohos -nostdinc -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${CMAKE_CURRENT_SOURCE_DIR} -std=c++98 -fno-rtti -fno-exceptions -D_LIBCPP_NO_EXCEPTIONS -D_LIBCPP_NO_RTTI -nostdlib++")
+# 使用交叉目标与 sysroot 的基础包含路径，避免 -nostdinc/-nostdlib++ 破坏标准库
+set(CMAKE_C_FLAGS "-target aarch64-linux-ohos -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${CMAKE_CURRENT_SOURCE_DIR}")
+set(CMAKE_CXX_FLAGS "-target aarch64-linux-ohos -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${CMAKE_CURRENT_SOURCE_DIR}")
+
+# 根据构建类型设置优化级别
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -g -DDEBUG")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g -DDEBUG")
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -DNDEBUG")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -DNDEBUG")
+endif()
 
 # 设置链接器标志，确保使用正确的链接器，并移除macOS特定的选项
 set(CMAKE_EXE_LINKER_FLAGS "-fuse-ld=${OHOS_NDK_HOME}/llvm/bin/ld.lld")
 set(CMAKE_SHARED_LINKER_FLAGS "-fuse-ld=${OHOS_NDK_HOME}/llvm/bin/ld.lld -shared")
 
 # 确保输出文件扩展名为.so而不是.dylib
-set(CMAKE_SHARED_LIBRARY_SUFFIX ".so")
+# 让工具链按默认规则生成平台后缀（不要强制输出到源码树）
 
 # QEMU库路径
 set(QEMU_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/build")
@@ -57,35 +79,20 @@ set(QEMU_INCLUDE_DIRS
 
 # 检测操作系统
 if(APPLE)
-    # macOS构建
+    # macOS 主机上也走 OpenHarmony NDK 交叉编译，不使用 /usr/bin/clang++
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99")
-    
-    # 强制使用系统编译器
-    set(CMAKE_C_COMPILER "/usr/bin/clang")
-    set(CMAKE_CXX_COMPILER "/usr/bin/clang++")
-    
-    # 包含目录
+    # 包含/库目录
     include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}
-        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include"
         ${QEMU_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libvncclient/include
     )
-    
-    # 库目录
     link_directories(
-        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib"
         "${QEMU_BUILD_DIR}"
     )
 else()
-    # HarmonyOS构建
-    set(OHOS_NDK_HOME "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native")
-    if(EXISTS "/Applications/DevEco-Studio.app/Contents/ohos/ndk")
-        set(OHOS_NDK_HOME "/Applications/DevEco-Studio.app/Contents/ohos/ndk")
-    else()
-        message(FATAL_ERROR "OHOS_NDK_HOME not set and could not be auto-detected")
-    endif()
-    
+    # HarmonyOS构建（沿用上面已解析出的 OHOS_NDK_HOME）
     # 设置工具链
     set(CMAKE_SYSTEM_NAME Linux)
     set(CMAKE_SYSTEM_PROCESSOR aarch64)
@@ -101,12 +108,13 @@ else()
     set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
     
     # 包含目录
-    include_directories(
+include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}
         "${OHOS_NDK_HOME}/sysroot/usr/include"
         "${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos"
         ${QEMU_INCLUDE_DIRS}
-    )
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libvncclient/include
+)
     
     # 库目录
     link_directories(
@@ -121,8 +129,19 @@ set(SOURCES
     napi_init.cpp
     qemu_wrapper.cpp
     rdp_client.cpp
-    napi_impl.cpp
 )
+
+# 仅在本机仿真或显式启用时使用简化 NAPI 实现（避免在设备端与系统 NAPI 冲突）
+option(USE_FAKE_NAPI "Build with simplified NAPI shim (host only)" OFF)
+
+# 仅允许在主机侧启用简化NAPI；设备端强制关闭以避免ABI冲突
+if(USE_FAKE_NAPI AND NOT APPLE)
+    message(FATAL_ERROR "USE_FAKE_NAPI is only allowed for host builds (APPLE). Disable it for device builds.")
+endif()
+
+if(USE_FAKE_NAPI)
+    list(APPEND SOURCES napi_impl.cpp)
+endif()
 
 # 创建共享库
 if(APPLE)
@@ -170,8 +189,6 @@ if(QEMU_STATIC_LIBS)
         -lcurl
         -lssh
         -lgmp
-        -lpng
-        -ljpeg
         -lglib-2.0
         -lgio-2.0
         -lgobject-2.0
@@ -216,77 +233,78 @@ else()
     set(NAPI_LIB "")
 endif()
 
-# 链接库
-target_link_libraries(qemu_hmos 
-    ${NAPI_LIB}
-)
-
-# 只有在找到库的情况下才链接
+if(NAPI_LIB)
+    target_link_libraries(qemu_hmos ${NAPI_LIB})
+endif()
 if(LOG_LIB)
     target_link_libraries(qemu_hmos ${LOG_LIB})
 endif()
-
 if(ANDROID_LIB)
     target_link_libraries(qemu_hmos ${ANDROID_LIB})
 endif()
 
-# 查找QEMU相关库
-# 1. QEMU核心库
-set(QEMU_CORE_LIB "${CMAKE_CURRENT_SOURCE_DIR}/libqemu_hmos.so")
-if(EXISTS ${QEMU_CORE_LIB})
-    message(STATUS "Found QEMU core library: ${QEMU_CORE_LIB}")
+# 不静态链接 QEMU 核心库，改为运行时 dlopen("libqemu_full.so")
+
+# 2. VNC库 (LibVNC: server/client)
+set(VNC_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libvncserver/libvncserver.a")
+set(VNC_CLIENT_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libvncclient/libvncclient.a")
+
+# 检查VNC库状态
+if(EXISTS ${VNC_LIB_PATH})
+    message(STATUS "✅ Found VNC server library: ${VNC_LIB_PATH}")
+    set(HAVE_VNC_SERVER ON)
 else()
-    message(WARNING "QEMU core library not found, will build without QEMU core support")
-    set(QEMU_CORE_LIB "")
+    message(WARNING "❌ VNC server library not found, VNC server support will be limited")
+    set(VNC_LIB_PATH "")
+    set(HAVE_VNC_SERVER OFF)
 endif()
 
-# 2. VNC库 (libvncserver)
-set(VNC_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libvncserver/libvncserver.a")
-if(EXISTS ${VNC_LIB_PATH})
-    message(STATUS "Found VNC library: ${VNC_LIB_PATH}")
+if(EXISTS ${VNC_CLIENT_LIB_PATH})
+    message(STATUS "✅ Found VNC client library: ${VNC_CLIENT_LIB_PATH}")
+    add_definitions(-DLIBVNC_HAVE_CLIENT=1)
+    set(HAVE_VNC_CLIENT ON)
 else()
-    message(WARNING "VNC library not found, VNC support will be limited")
-    set(VNC_LIB_PATH "")
+    message(WARNING "❌ VNC client library not found, Native VNC viewer will be stubbed")
+    set(VNC_CLIENT_LIB_PATH "")
+    set(HAVE_VNC_CLIENT OFF)
 endif()
 
 # 3. FreeRDP库
 set(FREERDP_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third_party/freerdp/libfreerdp.a")
 if(EXISTS ${FREERDP_LIB_PATH})
-    message(STATUS "Found FreeRDP library: ${FREERDP_LIB_PATH}")
+    message(STATUS "✅ Found FreeRDP library: ${FREERDP_LIB_PATH}")
+    set(HAVE_FREERDP ON)
 else()
-    message(WARNING "FreeRDP library not found, RDP support will be limited")
+    message(WARNING "❌ FreeRDP library not found, RDP support will be limited")
     set(FREERDP_LIB_PATH "")
+    set(HAVE_FREERDP OFF)
 endif()
 
-# 链接库
-target_link_libraries(qemu_hmos 
-    ${NAPI_LIB}
-)
-
-# 只有在找到库的情况下才链接
+if(NAPI_LIB)
+    target_link_libraries(qemu_hmos ${NAPI_LIB})
+endif()
 if(LOG_LIB)
     target_link_libraries(qemu_hmos ${LOG_LIB})
 endif()
-
 if(ANDROID_LIB)
     target_link_libraries(qemu_hmos ${ANDROID_LIB})
 endif()
 
 # 链接QEMU相关库
-if(QEMU_CORE_LIB)
-    target_link_libraries(qemu_hmos ${QEMU_CORE_LIB})
-endif()
+# no direct link to libqemu_full.so
 
 if(VNC_LIB_PATH)
     target_link_libraries(qemu_hmos ${VNC_LIB_PATH})
-    # VNC依赖库
-    target_link_libraries(qemu_hmos 
-        -lpthread
-        -lz
-        -ljpeg
-        -lpng
-    )
 endif()
+if(VNC_CLIENT_LIB_PATH)
+    target_link_libraries(qemu_hmos ${VNC_CLIENT_LIB_PATH})
+endif()
+
+# VNC依赖库（两者共享）
+target_link_libraries(qemu_hmos 
+    -lpthread
+    -lz
+)
 
 if(FREERDP_LIB_PATH)
     target_link_libraries(qemu_hmos ${FREERDP_LIB_PATH})
@@ -377,12 +395,47 @@ else()
     )
 endif()
 
-# 设置输出名称和路径
+# 设置输出名称和路径 - 使用Hvigor期望的目录结构
 set_target_properties(qemu_hmos PROPERTIES
     OUTPUT_NAME "qemu_hmos"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    PREFIX ""
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a"
 )
+
+# ---- Bundle prebuilt QEMU core into native outputs (so Hvigor packs it) ----
+# Copy prebuilt core from cpp folder to Hvigor expected directory
+set(QEMU_FULL_SRC "${CMAKE_CURRENT_SOURCE_DIR}/libqemu_full.so")
+set(QEMU_FULL_DST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../build/default/intermediates/libs/default/arm64-v8a")
+set(QEMU_FULL_DST "${QEMU_FULL_DST_DIR}/libqemu_full.so")
+
+# Also copy to oh_modules for runtime loading
+set(QEMU_FULL_OH_DST "${CMAKE_CURRENT_SOURCE_DIR}/../../oh_modules/libqemu_full.so")
+
+if(EXISTS ${QEMU_FULL_SRC})
+    add_custom_command(
+        OUTPUT ${QEMU_FULL_DST} ${QEMU_FULL_OH_DST}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy ${QEMU_FULL_SRC} ${QEMU_FULL_DST}
+        COMMAND ${CMAKE_COMMAND} -E copy ${QEMU_FULL_SRC} ${QEMU_FULL_OH_DST}
+        DEPENDS ${QEMU_FULL_SRC}
+        COMMENT "Copying prebuilt libqemu_full.so to libs/arm64-v8a and oh_modules"
+    )
+    add_custom_target(copy_qemu_full ALL DEPENDS ${QEMU_FULL_DST} ${QEMU_FULL_OH_DST})
+    add_dependencies(qemu_hmos copy_qemu_full)
+
+    # Also link the prebuilt core to force a DT_NEEDED entry so packager keeps it
+    add_library(qemu_full_prebuilt SHARED IMPORTED GLOBAL)
+    set_target_properties(qemu_full_prebuilt PROPERTIES IMPORTED_LOCATION ${QEMU_FULL_SRC})
+    # Disable as-needed so the linker emits NEEDED even if no symbols referenced
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_link_options(qemu_hmos PRIVATE "-Wl,--no-as-needed")
+    endif()
+    target_link_libraries(qemu_hmos qemu_full_prebuilt)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_link_options(qemu_hmos PRIVATE "-Wl,--as-needed")
+    endif()
+else()
+    message(WARNING "Prebuilt core not found at ${QEMU_FULL_SRC}; libqemu_full.so will not be packaged. You can still place it under src/main/libs/arm64-v8a/ manually or push to files/ at runtime.")
+endif()
 
 # 添加自定义目标用于调试
 add_custom_target(debug_info
@@ -391,14 +444,53 @@ add_custom_target(debug_info
     COMMAND ${CMAKE_COMMAND} -E echo "CMAKE_CXX_COMPILER: ${CMAKE_CXX_COMPILER}"
     COMMAND ${CMAKE_COMMAND} -E echo "CMAKE_FIND_ROOT_PATH: ${CMAKE_FIND_ROOT_PATH}"
     COMMAND ${CMAKE_COMMAND} -E echo "NAPI_LIB: ${NAPI_LIB}"
+    COMMAND ${CMAKE_COMMAND} -E echo "HAVE_VNC_CLIENT: ${HAVE_VNC_CLIENT}"
+    COMMAND ${CMAKE_COMMAND} -E echo "HAVE_VNC_SERVER: ${HAVE_VNC_SERVER}"
+    COMMAND ${CMAKE_COMMAND} -E echo "HAVE_FREERDP: ${HAVE_FREERDP}"
 )
 
-# 调试信息
-message(STATUS "CMAKE_SYSTEM_NAME: ${CMAKE_SYSTEM_NAME}")
-message(STATUS "CMAKE_SYSTEM_PROCESSOR: ${CMAKE_SYSTEM_PROCESSOR}")
-message(STATUS "CMAKE_C_COMPILER: ${CMAKE_C_COMPILER}")
-message(STATUS "CMAKE_CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
-message(STATUS "CMAKE_FIND_ROOT_PATH: ${CMAKE_FIND_ROOT_PATH}")
-if(NOT APPLE)
-    message(STATUS "NAPI_LIB: ${NAPI_LIB}")
+# 构建配置摘要
+message(STATUS "=== QEMU on HarmonyOS Build Configuration ===")
+message(STATUS "Target: ${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
+
+if(HAVE_VNC_CLIENT)
+    message(STATUS "✅ VNC Client: Enabled")
+else()
+    message(STATUS "❌ VNC Client: Disabled (missing libvncclient.a)")
 endif()
+
+if(HAVE_VNC_SERVER)
+    message(STATUS "✅ VNC Server: Enabled")
+else()
+    message(STATUS "❌ VNC Server: Disabled (missing libvncserver.a)")
+endif()
+
+if(HAVE_FREERDP)
+    message(STATUS "✅ FreeRDP: Enabled")
+else()
+    message(STATUS "❌ FreeRDP: Disabled (missing libfreerdp.a)")
+endif()
+
+# 检查核心库
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libqemu_full.so")
+    message(STATUS "✅ Core Library: Found (libqemu_full.so)")
+else()
+    message(STATUS "❌ Core Library: Missing (libqemu_full.so)")
+endif()
+
+message(STATUS "Output Directory: ${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a")
+message(STATUS "================================================")
+
+# 添加构建验证目标
+add_custom_target(verify_build
+    COMMAND ${CMAKE_COMMAND} -E echo "=== Build Verification ==="
+    COMMAND ${CMAKE_COMMAND} -E echo "Checking output files..."
+    COMMAND test -f "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a/libqemu_hmos.so" && echo "✅ libqemu_hmos.so found" || echo "❌ libqemu_hmos.so missing"
+    COMMAND test -f "${CMAKE_CURRENT_SOURCE_DIR}/../../oh_modules/libqemu_full.so" && echo "✅ libqemu_full.so found in oh_modules" || echo "❌ libqemu_full.so missing in oh_modules"
+    COMMAND test -f "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a/libqemu_full.so" && echo "✅ libqemu_full.so found in libs" || echo "❌ libqemu_full.so missing in libs"
+    COMMAND ${CMAKE_COMMAND} -E echo "=== Verification Complete ==="
+    DEPENDS qemu_hmos copy_qemu_full
+    COMMENT "Verifying that all required files are built and copied correctly"
+)

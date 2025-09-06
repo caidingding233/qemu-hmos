@@ -1,7 +1,7 @@
 import data_preferences from '@ohos.data.preferences'
 import common from '@ohos.app.ability.common'
 
-export type VMStatus = 'creating' | 'preparing' | 'running' | 'stopping' | 'stopped' | 'failed'
+export type VMStatus = 'creating' | 'preparing' | 'starting' | 'running' | 'stopping' | 'stopped' | 'failed'
 
 export interface VMConfigPersist {
   name: string

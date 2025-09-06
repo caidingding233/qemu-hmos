@@ -44,7 +44,7 @@ class RDPProtocol {
     const view = new DataView(buffer)
     
     // RDP连接请求头
-    view.setUint32(0, this.RDP_VERSION, true)
+    view.setUint32(0, RDPProtocol.RDP_VERSION, true)
     view.setUint16(4, config.width || 1024, true)
     view.setUint16(6, config.height || 768, true)
     view.setUint16(8, config.colorDepth || 16, true)
@@ -54,10 +54,20 @@ class RDPProtocol {
   
   // 创建认证数据
   static createAuthenticationData(username: string, password: string, domain?: string): ArrayBuffer {
-    const encoder = new TextEncoder()
-    const usernameBytes = encoder.encode(username)
-    const passwordBytes = encoder.encode(password)
-    const domainBytes = domain ? encoder.encode(domain) : new Uint8Array(0)
+    // HarmonyOS ArkTS 不内置 TextEncoder，这里使用简易 UTF-8 编码器
+    const encode = (s: string): Uint8Array => {
+      const out: number[] = []
+      for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i)
+        if (c < 0x80) { out.push(c) }
+        else if (c < 0x800) { out.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f)) }
+        else { out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f)) }
+      }
+      return new Uint8Array(out)
+    }
+    const usernameBytes = encode(username)
+    const passwordBytes = encode(password)
+    const domainBytes = domain ? encode(domain) : new Uint8Array(0)
     
     const totalLength = 12 + usernameBytes.length + passwordBytes.length + domainBytes.length
     const buffer = new ArrayBuffer(totalLength)
@@ -110,7 +120,7 @@ class RDPProtocol {
 
 // RDP连接管理类
 class RDPConnection {
-  private socket: any = null
+  private socket: object | null = null
   private state: RDPConnectionState = RDPConnectionState.DISCONNECTED
   private callbacks: RDPConnectionCallbacks = {}
   private config: RDPConnectionConfig | null = null
@@ -236,7 +246,7 @@ export struct RDPDisplay {
   @State frameBuffer: ArrayBuffer | null = null
   
   private rdpConnection: RDPConnection | null = null
-  private canvasContext: any = null
+  private canvasContext: object | null = null
   
   aboutToAppear() {
     this.initializeRDPConnection()
@@ -387,14 +397,14 @@ export struct RDPDisplay {
         }
       }
       .width('100%')
-      .padding({ horizontal: 16, vertical: 8 })
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
       
       // 错误信息显示
       if (this.errorMessage) {
         Text(this.errorMessage)
           .fontSize(12)
           .fontColor('#FF0000')
-          .padding({ horizontal: 16, vertical: 4 })
+          .padding({ left: 16, right: 16, top: 4, bottom: 4 })
       }
       
       // RDP显示区域

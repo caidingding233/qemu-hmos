@@ -25,37 +25,23 @@ export interface QemuAPI {
   stopVm(name: string): boolean;
   getVmLogs(name: string, startLine?: number): string[];
   getVmStatus(name: string): string;
+  // Native VNC (LibVNCClient)
+  vncAvailable(): boolean;
+  vncCreate(): number;
+  vncConnect(id: number, host: string, port: number): boolean;
+  vncDisconnect(id: number): boolean;
+  vncGetFrame(id: number): VncFrame | null;
 }
 
-// 模拟QEMU API实现，用于开发阶段
-export const qemu: QemuAPI = {
-  version(): string {
-    return 'QEMU 8.0.0 (模拟版本)';
-  },
-  
-  enableJit(): boolean {
-    return true;
-  },
-  
-  kvmSupported(): boolean {
-    return false;
-  },
-  
-  startVm(config: VMConfig): boolean {
-    console.log('启动VM:', config);
-    return true;
-  },
-  
-  stopVm(name: string): boolean {
-    console.log('停止VM:', name);
-    return true;
-  },
-  
-  getVmLogs(name: string, startLine: number = 0): string[] {
-    return [`VM ${name} 的日志记录`];
-  },
-  
-  getVmStatus(name: string): string {
-    return 'stopped';
-  }
-};
+// VNC frame shape for native client
+export interface VncFrame {
+  width: number;
+  height: number;
+  pixels: ArrayBuffer;
+}
+
+// Module declaration for N-API native addon
+declare module 'libqemu_hmos.so' {
+  const qemu: QemuAPI;
+  export default qemu;
+}

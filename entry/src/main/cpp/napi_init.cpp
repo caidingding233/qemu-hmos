@@ -1,4 +1,4 @@
-#include "napi_simple.h"
+#include "napi_compat.h"
 #include "qemu_wrapper.h"
 #include <string>
 #include <vector>
@@ -16,6 +16,13 @@
 #include <iomanip>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <dlfcn.h>
+#include <cstdio>
+
+#if defined(__OHOS__)
+extern "C" __attribute__((weak)) int OH_LOG_Print(int type, int level, unsigned int domain, const char* tag, const char* fmt, ...);
+#endif
+#include <vector>
 
 // macOS兼容性处理
 #ifdef __APPLE__
@@ -34,8 +41,26 @@ static int prctl(int option, unsigned long arg2) {
 #include <sys/prctl.h>
 #endif
 
-// NAPI常量定义
-#define NAPI_AUTO_LENGTH SIZE_MAX
+// NAPI常量定义（如官方头已定义则不重复定义）
+#ifndef NAPI_AUTO_LENGTH
+#  include <cstdint>
+#  define NAPI_AUTO_LENGTH SIZE_MAX
+#endif
+
+// 安全获取 NAPI 字符串为 std::string（确保为 NUL 终止分配 len+1 缓冲区，避免越界）
+static bool NapiGetStringUtf8(napi_env env, napi_value value, std::string& out)
+{
+    size_t len = 0;
+    if (napi_get_value_string_utf8(env, value, nullptr, 0, &len) != napi_ok) {
+        return false;
+    }
+    std::vector<char> buf(len + 1, '\0');
+    if (napi_get_value_string_utf8(env, value, buf.data(), buf.size(), &len) != napi_ok) {
+        return false;
+    }
+    out.assign(buf.data(), len);
+    return true;
+}
 #define EXTERN_C_START extern "C" {
 #define EXTERN_C_END }
 
@@ -79,6 +104,9 @@ extern "C" int qemu_main(int argc, char **argv);
 extern "C" void qemu_system_shutdown_request(int reason);
 static constexpr int SHUTDOWN_CAUSE_HOST = 0;
 
+// 前向声明 - 日志函数
+static void HilogPrint(const std::string& message);
+
 // RDP客户端管理
 static std::map<std::string, rdp_client_handle_t> g_rdp_clients;
 static std::mutex g_rdp_mutex;
@@ -106,21 +134,22 @@ static VMConfig ParseVMConfig(napi_env env, napi_value config, bool &ok) {
     
     // 获取name
     napi_value nameValue;
-    if (napi_get_named_property(env, config, "name", &nameValue) != napi_ok) return vmConfig;
-    size_t nameLen;
-    if (napi_get_value_string_utf8(env, nameValue, nullptr, 0, &nameLen) != napi_ok) return vmConfig;
-    vmConfig.name.resize(nameLen);
-    if (napi_get_value_string_utf8(env, nameValue, &vmConfig.name[0], nameLen + 1, &nameLen) != napi_ok) return vmConfig;
+    if (napi_get_named_property(env, config, "name", &nameValue) != napi_ok) {
+        HilogPrint("QEMU: ParseVMConfig failed - cannot get name property");
+        return vmConfig;
+    }
+    if (!NapiGetStringUtf8(env, nameValue, vmConfig.name)) {
+        HilogPrint("QEMU: ParseVMConfig failed - cannot get name string");
+        return vmConfig;
+    }
+    HilogPrint("QEMU: ParseVMConfig got name: " + vmConfig.name);
     
-    // 获取isoPath
+    // 获取isoPath（可选）
     napi_value isoValue;
     if (napi_get_named_property(env, config, "isoPath", &isoValue) == napi_ok) {
-        size_t isoLen;
-        if (napi_get_value_string_utf8(env, isoValue, nullptr, 0, &isoLen) == napi_ok) {
-            vmConfig.isoPath.resize(isoLen);
-            if (napi_get_value_string_utf8(env, isoValue, &vmConfig.isoPath[0], isoLen + 1, &isoLen) == napi_ok) {
-                // ISO路径获取成功
-            }
+        std::string iso;
+        if (NapiGetStringUtf8(env, isoValue, iso)) {
+            vmConfig.isoPath = iso;
         }
     }
     
@@ -147,10 +176,9 @@ static VMConfig ParseVMConfig(napi_env env, napi_value config, bool &ok) {
     // 获取加速器类型
     napi_value accelValue;
     if (napi_get_named_property(env, config, "accel", &accelValue) == napi_ok) {
-        size_t accelLen;
-        if (napi_get_value_string_utf8(env, accelValue, nullptr, 0, &accelLen) == napi_ok) {
-            vmConfig.accel.resize(accelLen);
-            napi_get_value_string_utf8(env, accelValue, &vmConfig.accel[0], accelLen + 1, &accelLen);
+        std::string accel;
+        if (NapiGetStringUtf8(env, accelValue, accel)) {
+            vmConfig.accel = accel;
         }
     } else {
         // 自动检测：支持KVM则使用KVM，否则使用TCG
@@ -160,10 +188,9 @@ static VMConfig ParseVMConfig(napi_env env, napi_value config, bool &ok) {
     // 获取显示类型
     napi_value displayValue;
     if (napi_get_named_property(env, config, "display", &displayValue) == napi_ok) {
-        size_t displayLen;
-        if (napi_get_value_string_utf8(env, displayValue, nullptr, 0, &displayLen) == napi_ok) {
-            vmConfig.display.resize(displayLen);
-            napi_get_value_string_utf8(env, displayValue, &vmConfig.display[0], displayLen + 1, &displayLen);
+        std::string display;
+        if (NapiGetStringUtf8(env, displayValue, display)) {
+            vmConfig.display = display;
         }
     } else {
         vmConfig.display = "vnc=:1"; // 默认VNC显示
@@ -332,9 +359,31 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
     args.push_back("-accel");
     args.push_back(config.accel);
     
-    // 固件配置
+    // 固件配置 - 使用HAP内部资源的完整路径
+    // 尝试从多个可能的位置查找固件文件
+    std::string biosPath;
+    std::vector<std::string> biosPaths = {
+        "/data/storage/el1/bundle/entry/resources/rawfile/edk2-aarch64-code.fd",
+        "/data/storage/el2/base/haps/entry/resources/rawfile/edk2-aarch64-code.fd",
+        "/data/storage/el2/base/haps/entry/files/edk2-aarch64-code.fd",
+        "edk2-aarch64-code.fd"  // 作为fallback
+    };
+    
+    for (const auto& path : biosPaths) {
+        if (FileExists(path)) {
+            biosPath = path;
+            HilogPrint(std::string("QEMU: Found BIOS at: ") + path);
+            break;
+        }
+    }
+    
+    if (biosPath.empty()) {
+        HilogPrint(std::string("QEMU: WARNING - BIOS file not found, using default path"));
+        biosPath = "edk2-aarch64-code.fd";
+    }
+    
     args.push_back("-bios");
-    args.push_back("/data/storage/el2/base/haps/entry/files/QEMU_EFI.fd");
+    args.push_back(biosPath);
     
     // 磁盘配置
     if (FileExists(config.diskPath)) {
@@ -363,7 +412,12 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         args.push_back("file:" + config.logPath);
     } else {
         args.push_back("-display");
-        args.push_back(config.display);
+        std::string disp = config.display;
+        // 若未显式指定主机地址，强制绑定到 127.0.0.1，便于 WebView 访问
+        if (disp.rfind("vnc=:", 0) == 0) {
+            disp.replace(0, 5, "vnc=127.0.0.1:");
+        }
+        args.push_back(disp);
     }
     
     // 监控接口
@@ -378,6 +432,21 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
 }
 
 // 写入日志
+// 封装：同时写文件与Hilogs，便于 grep QEMU
+static void HilogPrint(const std::string& message)
+{
+#if defined(__OHOS__)
+    // 尝试使用 OH_LOG_Print（来自 hilog_ndk），否则退回到 stderr
+    // type: 0(LOG_APP), level: 3(INFO), domain: 0x0000
+    if (OH_LOG_Print) {
+        OH_LOG_Print(0, 3, 0x0000, "QEMU_CORE", "%s", message.c_str());
+        return;
+    }
+#endif
+    // 回退：stderr 也会被系统日志采集
+    std::fprintf(stderr, "[QEMU_CORE] %s\n", message.c_str());
+}
+
 static void WriteLog(const std::string& logPath, const std::string& message) {
     try {
         std::string dirPath = logPath.substr(0, logPath.find_last_of('/'));
@@ -395,7 +464,7 @@ static void WriteLog(const std::string& logPath, const std::string& message) {
         if (log) {
             log << formattedMessage << std::endl;
         }
-        
+
         // 添加到内存缓冲区用于实时回传
         if (!g_current_vm_name.empty()) {
             std::lock_guard<std::mutex> lock(g_vmLogMutexes[g_current_vm_name]);
@@ -407,31 +476,146 @@ static void WriteLog(const std::string& logPath, const std::string& message) {
                 buffer.erase(buffer.begin(), buffer.begin() + (buffer.size() - MAX_LOG_BUFFER_SIZE));
             }
         }
+
+        // 输出到系统日志，便于 on-device 调试
+        HilogPrint(formattedMessage);
     } catch (...) {
         // 忽略日志写入错误
     }
 }
 
-// QEMU主函数实现
-extern "C" int qemu_main(int argc, char **argv) {
-    // 重置关闭请求标志
-    g_qemu_shutdown_requested = false;
+// 动态加载 QEMU 核心库并调用其 qemu_main
+using qemu_main_fn = int(*)(int, char**);
+using qemu_shutdown_fn = void(*)(int);
+
+static void* g_qemu_core_handle = nullptr;
+static qemu_main_fn g_qemu_core_main = nullptr;
+static qemu_shutdown_fn g_qemu_core_shutdown = nullptr;
+
+static std::string Dirname(const std::string& path)
+{
+    size_t pos = path.find_last_of('/');
+    if (pos == std::string::npos) return std::string();
+    return path.substr(0, pos);
+}
+
+static void TryLoadCoreFromSelfDir(const std::string& logPath)
+{
+    if (g_qemu_core_handle) return;
+    Dl_info info{};
+    if (dladdr((void*)&TryLoadCoreFromSelfDir, &info) != 0 && info.dli_fname) {
+        std::string self = info.dli_fname;
+        std::string dir = Dirname(self);
+        if (!dir.empty()) {
+            std::string abs = dir + "/libqemu_full.so";
+            g_qemu_core_handle = dlopen(abs.c_str(), RTLD_NOW);
+            if (g_qemu_core_handle) {
+                WriteLog(logPath, std::string("[QEMU] dlopen from self dir: ") + abs);
+            } else {
+                WriteLog(logPath, std::string("[QEMU] dlopen self dir failed: ") + dlerror());
+            }
+        }
+    }
+}
+
+static void EnsureQemuCoreLoaded(const std::string& logPath)
+{
+    if (g_qemu_core_main) return;
     
-    // 解析参数获取日志路径
+    HilogPrint("QEMU: Starting core library loading process");
+    WriteLog(logPath, "[QEMU] Starting core library loading process");
+    
+    // 直接按名称加载，前提是 core so 已随 HAP 打包
+    HilogPrint("QEMU: Attempting dlopen libqemu_full.so");
+    g_qemu_core_handle = dlopen("libqemu_full.so", RTLD_NOW);
+    if (!g_qemu_core_handle) {
+        std::string err = dlerror() ? std::string(dlerror()) : "unknown error";
+        WriteLog(logPath, std::string("[QEMU] dlopen libqemu_full.so failed: ") + err);
+        HilogPrint(std::string("QEMU: dlopen libqemu_full.so failed: ") + err);
+        
+        // 尝试从当前模块同目录加载
+        HilogPrint("QEMU: Attempting TryLoadCoreFromSelfDir");
+        TryLoadCoreFromSelfDir(logPath);
+        if (!g_qemu_core_handle) {
+            // 尝试从应用libs目录加载
+            std::string libsPath = "/data/app/el2/100/base/com.caidingding233.qemuhmos/haps/entry/libs/arm64-v8a/libqemu_full.so";
+            HilogPrint("QEMU: Attempting dlopen from libs: " + libsPath);
+            g_qemu_core_handle = dlopen(libsPath.c_str(), RTLD_NOW);
+            if (g_qemu_core_handle) {
+                WriteLog(logPath, std::string("[QEMU] dlopen from libs: ") + libsPath);
+                HilogPrint("QEMU: Successfully loaded from libs");
+            } else {
+                std::string err = dlerror() ? std::string(dlerror()) : "unknown error";
+                WriteLog(logPath, std::string("[QEMU] dlopen libs failed: ") + err);
+                HilogPrint(std::string("QEMU: dlopen libs failed: ") + err);
+                return;
+            }
+        } else {
+            HilogPrint("QEMU: Successfully loaded from self dir");
+        }
+    } else {
+        HilogPrint("QEMU: Successfully loaded libqemu_full.so directly");
+    }
+    g_qemu_core_main = reinterpret_cast<qemu_main_fn>(dlsym(g_qemu_core_handle, "qemu_main"));
+    g_qemu_core_shutdown = reinterpret_cast<qemu_shutdown_fn>(dlsym(g_qemu_core_handle, "qemu_system_shutdown_request"));
+
+    // 添加详细的调试日志
+    if (!g_qemu_core_main) {
+        std::string err = dlerror() ? std::string(dlerror()) : "unknown error";
+        WriteLog(logPath, std::string("[QEMU] dlsym qemu_main failed: ") + err);
+        HilogPrint(std::string("QEMU: dlsym qemu_main failed: ") + err);
+    } else {
+        WriteLog(logPath, "[QEMU] Successfully loaded qemu_main symbol");
+        HilogPrint("QEMU: Successfully loaded qemu_main symbol");
+    }
+
+    if (!g_qemu_core_shutdown) {
+        std::string err = dlerror() ? std::string(dlerror()) : "unknown error";
+        WriteLog(logPath, std::string("[QEMU] dlsym qemu_system_shutdown_request failed: ") + err);
+    }
+}
+
+static int QemuCoreMainOrStub(int argc, char** argv)
+{
+    // 提取日志路径用于记录
     std::string logPath;
     for (int i = 0; i < argc - 1; i++) {
         if (std::string(argv[i]) == "-serial" && i + 1 < argc) {
             std::string serialArg = argv[i + 1];
-            if (serialArg.substr(0, 5) == "file:") {
+            if (serialArg.rfind("file:", 0) == 0) {
                 logPath = serialArg.substr(5);
                 break;
             }
         }
     }
-    
-    if (logPath.empty()) {
-        logPath = g_current_log_path;
+    if (logPath.empty()) logPath = g_current_log_path;
+
+    EnsureQemuCoreLoaded(logPath);
+    if (g_qemu_core_main) {
+        WriteLog(logPath, "[QEMU] Core library loaded, entering qemu_main...");
+        HilogPrint("QEMU: Core library loaded successfully");
+        
+        // 打印所有启动参数便于调试
+        HilogPrint("QEMU: Command line arguments (" + std::to_string(argc) + " args):");
+        for (int i = 0; i < argc; i++) {
+            HilogPrint("QEMU:   argv[" + std::to_string(i) + "] = " + std::string(argv[i]));
+        }
+        
+        HilogPrint("QEMU: Calling qemu_main now...");
+        int result = g_qemu_core_main(argc, argv);
+        WriteLog(logPath, "[QEMU] qemu_main returned: " + std::to_string(result));
+        HilogPrint("QEMU: qemu_main returned: " + std::to_string(result));
+        return result;
     }
+
+    // Fallback: 仅日志模拟，方便界面验证
+    WriteLog(logPath, "[QEMU] Core library missing, running stub loop");
+    HilogPrint("QEMU: ERROR - Core library not loaded");
+    // 重置关闭请求标志
+    g_qemu_shutdown_requested = false;
+    
+    // 解析参数获取日志路径
+    // 上面已获取 logPath
     
     // 模拟VM启动过程
     WriteLog(logPath, "[QEMU] VM启动中...");
@@ -449,36 +633,23 @@ extern "C" int qemu_main(int argc, char **argv) {
     WriteLog(logPath, "[QEMU] 网络设备已配置");
     WriteLog(logPath, "[QEMU] VM启动完成，等待操作系统引导...");
     
-    // 模拟VM运行循环
-    int runTime = 0;
-    while (!g_qemu_shutdown_requested && runTime < 300) { // 最多运行5分钟
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        runTime++;
-        
-        // 每30秒输出一次状态
-        if (runTime % 30 == 0) {
-            WriteLog(logPath, "[QEMU] VM运行正常，运行时间: " + std::to_string(runTime) + "秒");
-        }
-    }
-    
-    if (g_qemu_shutdown_requested) {
-        WriteLog(logPath, "[QEMU] 收到关闭请求，正在关闭VM...");
-    } else {
-        WriteLog(logPath, "[QEMU] VM运行超时，自动关闭");
-    }
-    
-    WriteLog(logPath, "[QEMU] VM已关闭");
-    return 0;
+    // 无核心库，立即失败，避免误导UI
+    return -1;
 }
 
 // QEMU关闭请求实现
 extern "C" void qemu_system_shutdown_request(int reason) {
-    WriteLog(g_current_log_path, "[QEMU] 收到系统关闭请求，原因代码: " + std::to_string(reason));
+    if (g_qemu_core_shutdown) {
+        g_qemu_core_shutdown(reason);
+        return;
+    }
+    WriteLog(g_current_log_path, "[QEMU] 收到关闭请求(Stub)，原因代码: " + std::to_string(reason));
     g_qemu_shutdown_requested = true;
 }
 
 // NAPI函数实现
 static napi_value GetVersion(napi_env env, napi_callback_info info) {
+    (void)info; // unused
     // 尝试获取真实的QEMU版本
     const char* ver = nullptr;
     
@@ -515,6 +686,7 @@ static napi_value KvmSupported(napi_env env, napi_callback_info info) {
 }
 
 static napi_value StartVm(napi_env env, napi_callback_info info) {
+    HilogPrint("QEMU: StartVm function called!");
     size_t argc = 1;
     napi_value argv[1];
     napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
@@ -536,9 +708,12 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
     
     // 检查VM是否已在运行
     if (g_vmRunning.find(config.name) != g_vmRunning.end() && g_vmRunning[config.name]->load()) {
+        HilogPrint("QEMU: VM '" + config.name + "' is already running");
         napi_get_boolean(env, false, &result);
         return result;
     }
+    
+    HilogPrint("QEMU: Starting VM '" + config.name + "' with accel=" + config.accel + " display=" + config.display);
     
     // 创建VM目录结构
     if (!CreateVMDirectory(config.name)) {
@@ -573,13 +748,17 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
     
     // 构建QEMU参数
     std::vector<std::string> args = BuildQemuArgs(config);
-    WriteLog(config.logPath, "Starting VM with command: " + [&args]() {
-        std::string cmd;
-        for (const auto& arg : args) {
-            cmd += arg + " ";
-        }
-        return cmd;
-    }());
+    std::string cmdStr = "Starting VM with command: ";
+    for (const auto& arg : args) {
+        cmdStr += arg + " ";
+    }
+    WriteLog(config.logPath, cmdStr);
+    HilogPrint("QEMU: " + cmdStr);
+
+    // 检查关键文件是否存在
+    WriteLog(config.logPath, "Checking VM files...");
+    WriteLog(config.logPath, "Disk path: " + config.diskPath + " (exists: " + (FileExists(config.diskPath) ? "yes" : "no") + ")");
+    HilogPrint("QEMU: Disk exists: " + std::string(FileExists(config.diskPath) ? "yes" : "no"));
     
     // 初始化日志缓冲区
     g_vmLogBuffers[config.name].clear();
@@ -590,6 +769,15 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
     g_current_vm_name = config.name;
     g_current_log_path = config.logPath;
     
+    // 启动前确保核心库可用（避免Stub导致UI误判）
+    EnsureQemuCoreLoaded(config.logPath);
+    if (!g_qemu_core_main) {
+        WriteLog(config.logPath, "[QEMU] Core library not loaded. Aborting start.");
+        UpdateVMStatus(config.name, "failed");
+        napi_get_boolean(env, false, &result);
+        return result;
+    }
+
     // 启动VM线程
     if (g_vmRunning.find(config.name) == g_vmRunning.end()) {
         g_vmRunning[config.name] = new std::atomic<bool>(false);
@@ -606,7 +794,7 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
         }
         
         WriteLog(config.logPath, "VM thread started");
-        int exitCode = qemu_main(static_cast<int>(cargs.size()), cargs.data());
+        int exitCode = QemuCoreMainOrStub(static_cast<int>(cargs.size()), cargs.data());
         WriteLog(config.logPath, "VM exited with code: " + std::to_string(exitCode));
         
         // 更新VM状态为已停止
@@ -631,13 +819,8 @@ static napi_value StopVm(napi_env env, napi_callback_info info) {
     }
     
     // 获取VM名称
-    size_t nameLen;
-    if (napi_get_value_string_utf8(env, argv[0], nullptr, 0, &nameLen) != napi_ok) {
-        napi_get_boolean(env, false, &result);
-        return result;
-    }
-    std::string vmName(nameLen, '\0');
-    if (napi_get_value_string_utf8(env, argv[0], &vmName[0], nameLen + 1, &nameLen) != napi_ok) {
+    std::string vmName;
+    if (!NapiGetStringUtf8(env, argv[0], vmName)) {
         napi_get_boolean(env, false, &result);
         return result;
     }
@@ -677,13 +860,8 @@ static napi_value GetVmLogs(napi_env env, napi_callback_info info) {
     }
     
     // 获取VM名称
-    size_t nameLen;
-    if (napi_get_value_string_utf8(env, argv[0], nullptr, 0, &nameLen) != napi_ok) {
-        napi_throw_error(env, nullptr, "Invalid VM name parameter");
-        return nullptr;
-    }
-    std::string vmName(nameLen, '\0');
-    if (napi_get_value_string_utf8(env, argv[0], &vmName[0], nameLen + 1, &nameLen) != napi_ok) {
+    std::string vmName;
+    if (!NapiGetStringUtf8(env, argv[0], vmName)) {
         napi_throw_error(env, nullptr, "Failed to get VM name");
         return nullptr;
     }
@@ -727,13 +905,8 @@ static napi_value GetVmStatus(napi_env env, napi_callback_info info) {
     }
     
     // 获取VM名称
-    size_t nameLen;
-    if (napi_get_value_string_utf8(env, argv[0], nullptr, 0, &nameLen) != napi_ok) {
-        napi_throw_error(env, nullptr, "Invalid VM name parameter");
-        return nullptr;
-    }
-    std::string vmName(nameLen, '\0');
-    if (napi_get_value_string_utf8(env, argv[0], &vmName[0], nameLen + 1, &nameLen) != napi_ok) {
+    std::string vmName;
+    if (!NapiGetStringUtf8(env, argv[0], vmName)) {
         napi_throw_error(env, nullptr, "Failed to get VM name");
         return nullptr;
     }
@@ -751,6 +924,7 @@ static napi_value GetVmStatus(napi_env env, napi_callback_info info) {
 
 // 创建RDP客户端
 static napi_value CreateRdpClient(napi_env env, napi_callback_info info) {
+    (void)info;  // 添加
     napi_value result;
     napi_create_object(env, &result);
     
@@ -787,13 +961,8 @@ static napi_value ConnectRdp(napi_env env, napi_callback_info info) {
     }
     
     // 获取客户端ID
-    size_t id_len;
-    if (napi_get_value_string_utf8(env, argv[0], nullptr, 0, &id_len) != napi_ok) {
-        napi_throw_error(env, nullptr, "Invalid client ID");
-        return nullptr;
-    }
-    std::string client_id(id_len, '\0');
-    if (napi_get_value_string_utf8(env, argv[0], &client_id[0], id_len + 1, &id_len) != napi_ok) {
+    std::string client_id;
+    if (!NapiGetStringUtf8(env, argv[0], client_id)) {
         napi_throw_error(env, nullptr, "Failed to get client ID");
         return nullptr;
     }
@@ -805,14 +974,11 @@ static napi_value ConnectRdp(napi_env env, napi_callback_info info) {
     rdp_connection_config_t rdp_config = {};
     
     // 主机地址
+    std::string hostStr;
     napi_value host_value;
     if (napi_get_named_property(env, config, "host", &host_value) == napi_ok) {
-        size_t host_len;
-        if (napi_get_value_string_utf8(env, host_value, nullptr, 0, &host_len) == napi_ok) {
-            std::string host(host_len, '\0');
-            napi_get_value_string_utf8(env, host_value, &host[0], host_len + 1, &host_len);
-            rdp_config.host = host.c_str();
-        }
+        NapiGetStringUtf8(env, host_value, hostStr);
+        if (!hostStr.empty()) rdp_config.host = hostStr.c_str();
     }
     
     // 端口
@@ -825,25 +991,19 @@ static napi_value ConnectRdp(napi_env env, napi_callback_info info) {
     }
     
     // 用户名
+    std::string usernameStr;
     napi_value username_value;
     if (napi_get_named_property(env, config, "username", &username_value) == napi_ok) {
-        size_t username_len;
-        if (napi_get_value_string_utf8(env, username_value, nullptr, 0, &username_len) == napi_ok) {
-            std::string username(username_len, '\0');
-            napi_get_value_string_utf8(env, username_value, &username[0], username_len + 1, &username_len);
-            rdp_config.username = username.c_str();
-        }
+        NapiGetStringUtf8(env, username_value, usernameStr);
+        if (!usernameStr.empty()) rdp_config.username = usernameStr.c_str();
     }
     
     // 密码
+    std::string passwordStr;
     napi_value password_value;
     if (napi_get_named_property(env, config, "password", &password_value) == napi_ok) {
-        size_t password_len;
-        if (napi_get_value_string_utf8(env, password_value, nullptr, 0, &password_len) == napi_ok) {
-            std::string password(password_len, '\0');
-            napi_get_value_string_utf8(env, password_value, &password[0], password_len + 1, &password_len);
-            rdp_config.password = password.c_str();
-        }
+        NapiGetStringUtf8(env, password_value, passwordStr);
+        if (!passwordStr.empty()) rdp_config.password = passwordStr.c_str();
     }
     
     // 显示设置
@@ -898,13 +1058,8 @@ static napi_value DisconnectRdp(napi_env env, napi_callback_info info) {
     }
     
     // 获取客户端ID
-    size_t id_len;
-    if (napi_get_value_string_utf8(env, argv[0], nullptr, 0, &id_len) != napi_ok) {
-        napi_throw_error(env, nullptr, "Invalid client ID");
-        return nullptr;
-    }
-    std::string client_id(id_len, '\0');
-    if (napi_get_value_string_utf8(env, argv[0], &client_id[0], id_len + 1, &id_len) != napi_ok) {
+    std::string client_id;
+    if (!NapiGetStringUtf8(env, argv[0], client_id)) {
         napi_throw_error(env, nullptr, "Failed to get client ID");
         return nullptr;
     }
@@ -934,13 +1089,8 @@ static napi_value GetRdpStatus(napi_env env, napi_callback_info info) {
     }
     
     // 获取客户端ID
-    size_t id_len;
-    if (napi_get_value_string_utf8(env, argv[0], nullptr, 0, &id_len) != napi_ok) {
-        napi_throw_error(env, nullptr, "Invalid client ID");
-        return nullptr;
-    }
-    std::string client_id(id_len, '\0');
-    if (napi_get_value_string_utf8(env, argv[0], &client_id[0], id_len + 1, &id_len) != napi_ok) {
+    std::string client_id;
+    if (!NapiGetStringUtf8(env, argv[0], client_id)) {
         napi_throw_error(env, nullptr, "Failed to get client ID");
         return nullptr;
     }
@@ -968,6 +1118,90 @@ static napi_value GetRdpStatus(napi_env env, napi_callback_info info) {
     return result;
 }
 
+// 检测核心库存在性（真实检测，不加载到全局）
+static napi_value CheckCoreLib(napi_env env, napi_callback_info info) {
+    (void)info;
+    napi_value result;
+    napi_create_object(env, &result);
+
+    auto set_bool = [&](const char* name, bool v){ napi_value b; napi_get_boolean(env, v, &b); napi_set_named_property(env, result, name, b); };
+    auto set_str = [&](const char* name, const std::string& s){ napi_value v; napi_create_string_utf8(env, s.c_str(), NAPI_AUTO_LENGTH, &v); napi_set_named_property(env, result, name, v); };
+
+    // 已加载到全局？
+    set_bool("loaded", g_qemu_core_main != nullptr);
+
+    // 1) 直接从默认搜索路径
+    {
+        void* h1 = dlopen("libqemu_full.so", RTLD_LAZY);
+        set_bool("foundLd", h1 != nullptr);
+        if (!h1) {
+            const char* err = dlerror();
+            set_str("errLd", err ? std::string(err) : std::string(""));
+        } else {
+            // 尝试获取符号
+            void* sym = dlsym(h1, "qemu_main");
+            set_bool("symFound", sym != nullptr);
+            if (!sym) {
+                const char* err = dlerror();
+                set_str("symErr", err ? std::string(err) : std::string(""));
+            }
+            dlclose(h1);
+        }
+    }
+
+    // 2) 从自身同目录（通过 dladdr 定位当前 so 所在目录）
+    {
+        Dl_info info{};
+        std::string selfDir;
+        if (dladdr((void*)&CheckCoreLib, &info) != 0 && info.dli_fname) {
+            std::string soPath = info.dli_fname;
+            // 提取目录部分
+            auto pos = soPath.find_last_of('/') ;
+            if (pos != std::string::npos) {
+                selfDir = soPath.substr(0, pos);
+            }
+        }
+        set_str("selfDir", selfDir);
+        bool foundSelf = false;
+        if (!selfDir.empty()) {
+            std::string abs = selfDir + "/libqemu_full.so";
+            void* h2 = dlopen(abs.c_str(), RTLD_LAZY);
+            foundSelf = (h2 != nullptr);
+            set_bool("foundSelfDir", foundSelf);
+            if (!h2) {
+                const char* err = dlerror();
+                set_str("errSelfDir", err ? std::string(err) : std::string(""));
+            } else {
+                dlclose(h2);
+            }
+        } else {
+            set_bool("foundSelfDir", false);
+        }
+    }
+
+    // 3) 从 files 目录
+    std::string filesPath = "/data/storage/el2/base/haps/entry/files/libqemu_full.so";
+    bool existsFiles = FileExists(filesPath);
+    set_bool("existsFilesPath", existsFiles);
+    set_str("filesPath", filesPath);
+    bool foundFiles = false;
+    if (existsFiles) {
+        void* h3 = dlopen(filesPath.c_str(), RTLD_LAZY);
+        foundFiles = (h3 != nullptr);
+        set_bool("foundFiles", foundFiles);
+        if (!h3) {
+            const char* err = dlerror();
+            set_str("errFiles", err ? std::string(err) : std::string(""));
+        } else {
+            dlclose(h3);
+        }
+    } else {
+        set_bool("foundFiles", false);
+    }
+
+    return result;
+}
+
 // 销毁RDP客户端
 static napi_value DestroyRdpClient(napi_env env, napi_callback_info info) {
     size_t argc = 1;
@@ -980,13 +1214,8 @@ static napi_value DestroyRdpClient(napi_env env, napi_callback_info info) {
     }
     
     // 获取客户端ID
-    size_t id_len;
-    if (napi_get_value_string_utf8(env, argv[0], nullptr, 0, &id_len) != napi_ok) {
-        napi_throw_error(env, nullptr, "Invalid client ID");
-        return nullptr;
-    }
-    std::string client_id(id_len, '\0');
-    if (napi_get_value_string_utf8(env, argv[0], &client_id[0], id_len + 1, &id_len) != napi_ok) {
+    std::string client_id;
+    if (!NapiGetStringUtf8(env, argv[0], client_id)) {
         napi_throw_error(env, nullptr, "Failed to get client ID");
         return nullptr;
     }
@@ -1005,9 +1234,258 @@ static napi_value DestroyRdpClient(napi_env env, napi_callback_info info) {
     return result;
 }
 
+// ----------------------------- Native VNC (LibVNCClient) -----------------------------
+#ifdef LIBVNC_HAVE_CLIENT
+#include "third_party/libvncclient/include/rfb/rfbclient.h"
+#endif
+
+static std::mutex g_vnc_mutex;
+static int g_vnc_next_id = 1;
+
+struct VncSession {
+    int id{0};
+#ifdef LIBVNC_HAVE_CLIENT
+    rfbClient* client{nullptr};
+#endif
+    std::thread worker;
+    std::atomic<bool> running{false};
+    int width{0};
+    int height{0};
+    std::vector<uint8_t> frame; // RGBA8888
+    std::mutex mtx;
+};
+
+static std::map<int, std::unique_ptr<VncSession>> g_vnc_sessions;
+
+static napi_value VncAvailable(napi_env env, napi_callback_info info) {
+    (void)info;  // 添加
+    napi_value out;
+#ifdef LIBVNC_HAVE_CLIENT
+    napi_get_boolean(env, true, &out);
+#else
+    napi_get_boolean(env, false, &out);
+#endif
+    return out;
+}
+
+static napi_value VncCreate(napi_env env, napi_callback_info info) {
+    (void)info;  // 添加
+    std::lock_guard<std::mutex> lock(g_vnc_mutex);
+    int id = g_vnc_next_id++;
+    auto s = std::make_unique<VncSession>();
+    s->id = id;
+    g_vnc_sessions[id] = std::move(s);
+    napi_value out; napi_create_int32(env, id, &out); return out;
+}
+
+#ifdef LIBVNC_HAVE_CLIENT
+static rfbBool VncMallocFB(rfbClient* cl)
+{
+    if (!cl) return false;
+    // Ensure 32bpp
+    cl->format.bitsPerPixel = 32;
+    cl->format.depth = 24;
+    cl->format.bigEndian = 0;
+    cl->format.trueColour = 1;
+    cl->format.redMax = 255; cl->format.greenMax = 255; cl->format.blueMax = 255;
+    cl->format.redShift = 16; cl->format.greenShift = 8; cl->format.blueShift = 0;
+
+    const int w = cl->width;
+    const int h = cl->height;
+    const size_t bytes = (size_t)w * (size_t)h * 4;
+    if (cl->frameBuffer) free(cl->frameBuffer);
+    cl->frameBuffer = (uint8_t*)malloc(bytes);
+    if (!cl->frameBuffer) return false;
+
+    // Find our session by matching pointer
+    std::lock_guard<std::mutex> lock(g_vnc_mutex);
+    for (auto& kv : g_vnc_sessions) {
+        if (kv.second->client == cl) {
+            std::lock_guard<std::mutex> lk(kv.second->mtx);
+            kv.second->width = w;
+            kv.second->height = h;
+            kv.second->frame.resize(bytes);
+            break;
+        }
+    }
+    return true;
+}
+
+static void VncGotUpdate(rfbClient* cl, int x, int y, int w, int h)
+{
+    (void)x; (void)y; (void)w; (void)h; // unused parameters
+    if (!cl || !cl->frameBuffer) return;
+    std::lock_guard<std::mutex> lock(g_vnc_mutex);
+    for (auto& kv : g_vnc_sessions) {
+        auto& s = kv.second;
+        if (s->client == cl) {
+            std::lock_guard<std::mutex> lk(s->mtx);
+            if (s->width != cl->width || s->height != cl->height) {
+                s->width = cl->width; s->height = cl->height; s->frame.resize((size_t)s->width * s->height * 4);
+            }
+            // Copy entire framebuffer for simplicity
+            size_t bytes = (size_t)cl->width * cl->height * 4;
+            if (s->frame.size() >= bytes) {
+                std::memcpy(s->frame.data(), cl->frameBuffer, bytes);
+            }
+            break;
+        }
+    }
+}
+
+static void VncWorker(VncSession* s)
+{
+    if (!s || !s->client) return;
+    s->running.store(true);
+    while (s->running.load()) {
+        int ret = WaitForMessage(s->client, 100000); // 100ms
+        if (ret < 0) break;
+        if (ret > 0) {
+            if (!HandleRFBServerMessage(s->client)) {
+                break;
+            }
+        }
+    }
+    s->running.store(false);
+}
+#endif
+
+static napi_value VncConnect(napi_env env, napi_callback_info info) {
+    size_t argc = 3; napi_value argv[3];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    napi_value out; napi_get_boolean(env, false, &out);
+    if (argc < 3) return out;
+    int32_t id = 0; napi_get_value_int32(env, argv[0], &id);
+    std::string host; if (!NapiGetStringUtf8(env, argv[1], host)) return out;
+    int32_t port = 0; napi_get_value_int32(env, argv[2], &port);
+
+    VncSession* s = nullptr; // unused placeholder
+    {
+        std::lock_guard<std::mutex> lock(g_vnc_mutex);
+        if (g_vnc_sessions.find(id) == g_vnc_sessions.end()) return out;
+    }
+
+#ifdef LIBVNC_HAVE_CLIENT
+    s = g_vnc_sessions[id].get();
+    if (s->worker.joinable()) { s->running.store(false); s->worker.join(); }
+    if (s->client) { rfbClientCleanup(s->client); s->client = nullptr; }
+
+    rfbClient* cl = rfbGetClient(8, 3, 4); // 32-bit truecolor
+    if (!cl) return out;
+    cl->MallocFrameBuffer = VncMallocFB;
+    cl->GotFrameBufferUpdate = VncGotUpdate;
+    cl->canHandleNewFBSize = 1;
+    cl->appData.shareDesktop = TRUE;
+    cl->serverHost = strdup(host.c_str());
+    cl->serverPort = port;
+
+    if (!rfbClientConnect(cl)) {
+        rfbClientCleanup(cl);
+        return out;
+    }
+    if (!rfbClientInitialise(cl)) {
+        rfbClientCleanup(cl);
+        return out;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_vnc_mutex);
+        s->client = cl;
+        s->worker = std::thread(VncWorker, s);
+    }
+    napi_get_boolean(env, true, &out);
+#else
+    (void)host; (void)port;
+    // Client lib not available
+#endif
+    return out;
+}
+
+static napi_value VncDisconnect(napi_env env, napi_callback_info info) {
+    size_t argc = 1; napi_value argv[1];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    if (argc < 1) return nullptr;
+    int32_t id = 0; napi_get_value_int32(env, argv[0], &id);
+    VncSession* sess = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_vnc_mutex);
+        auto it = g_vnc_sessions.find(id);
+        if (it != g_vnc_sessions.end()) {
+            sess = it->second.get();
+            if (sess) sess->running.store(false);
+        }
+    }
+    if (sess) {
+        if (sess->worker.joinable()) sess->worker.join();
+#ifdef LIBVNC_HAVE_CLIENT
+        if (sess->client) { rfbClientCleanup(sess->client); sess->client = nullptr; }
+#endif
+    }
+    napi_value out; napi_get_boolean(env, true, &out); return out;
+}
+
+static napi_value VncGetFrame(napi_env env, napi_callback_info info) {
+    size_t argc = 1; napi_value argv[1];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    napi_value outNull; napi_get_null(env, &outNull);
+    if (argc < 1) return outNull;
+    int32_t id = 0; napi_get_value_int32(env, argv[0], &id);
+    std::lock_guard<std::mutex> lock(g_vnc_mutex);
+    auto it = g_vnc_sessions.find(id);
+    if (it == g_vnc_sessions.end()) return outNull;
+    auto& s = it->second;
+    std::lock_guard<std::mutex> lk(s->mtx);
+    if (s->width <= 0 || s->height <= 0 || s->frame.empty()) return outNull;
+
+    napi_value obj; napi_create_object(env, &obj);
+    napi_value w, h; napi_create_int32(env, s->width, &w); napi_create_int32(env, s->height, &h);
+    napi_set_named_property(env, obj, "width", w);
+    napi_set_named_property(env, obj, "height", h);
+
+    void* data = nullptr; size_t len = s->frame.size();
+    napi_value ab;
+    napi_create_arraybuffer(env, len, &data, &ab);
+    if (data && len) std::memcpy(data, s->frame.data(), len);
+    napi_set_named_property(env, obj, "pixels", ab);
+    return obj;
+}
+// --------------------------------------------------------------------------------------------
+
+static napi_value TestFunction(napi_env env, napi_callback_info info) {
+    HilogPrint("QEMU: TestFunction called!");
+    napi_value result;
+    napi_get_boolean(env, true, &result);
+    return result;
+}
+
 // 模块初始化
 EXTERN_C_START
-static void Init(napi_env env, napi_value exports) {
+static napi_value Init(napi_env env, napi_value exports) {
+    HilogPrint("QEMU: NAPI Init function called!");
+#if defined(__OHOS__)
+    napi_property_descriptor desc[] = {
+        { "version", 0, GetVersion, 0, 0, 0, napi_default, 0 },
+        { "enableJit", 0, EnableJit, 0, 0, 0, napi_default, 0 },
+        { "kvmSupported", 0, KvmSupported, 0, 0, 0, napi_default, 0 },
+        { "startVm", 0, StartVm, 0, 0, 0, napi_default, 0 },
+        { "stopVm", 0, StopVm, 0, 0, 0, napi_default, 0 },
+        { "getVmLogs", 0, GetVmLogs, 0, 0, 0, napi_default, 0 },
+        { "getVmStatus", 0, GetVmStatus, 0, 0, 0, napi_default, 0 },
+        { "checkCoreLib", 0, CheckCoreLib, 0, 0, 0, napi_default, 0 },
+        { "createRdpClient", 0, CreateRdpClient, 0, 0, 0, napi_default, 0 },
+        { "connectRdp", 0, ConnectRdp, 0, 0, 0, napi_default, 0 },
+        { "disconnectRdp", 0, DisconnectRdp, 0, 0, 0, napi_default, 0 },
+        { "getRdpStatus", 0, GetRdpStatus, 0, 0, 0, napi_default, 0 },
+        { "destroyRdpClient", 0, DestroyRdpClient, 0, 0, 0, napi_default, 0 },
+        // Native VNC (client)
+        { "vncAvailable", 0, VncAvailable, 0, 0, 0, napi_default, 0 },
+        { "vncCreate", 0, VncCreate, 0, 0, 0, napi_default, 0 },
+        { "vncConnect", 0, VncConnect, 0, 0, 0, napi_default, 0 },
+        { "vncDisconnect", 0, VncDisconnect, 0, 0, 0, napi_default, 0 },
+        { "vncGetFrame", 0, VncGetFrame, 0, 0, 0, napi_default, 0 },
+        { "testFunction", 0, TestFunction, 0, 0, 0, napi_default, 0 },
+    };
+#else
     napi_property_descriptor__ desc[] = {
         { "version", GetVersion, 0 },
         { "enableJit", EnableJit, 0 },
@@ -1016,17 +1494,63 @@ static void Init(napi_env env, napi_value exports) {
         { "stopVm", StopVm, 0 },
         { "getVmLogs", GetVmLogs, 0 },
         { "getVmStatus", GetVmStatus, 0 },
-        // RDP客户端接口
+        { "checkCoreLib", CheckCoreLib, 0 },
         { "createRdpClient", CreateRdpClient, 0 },
         { "connectRdp", ConnectRdp, 0 },
         { "disconnectRdp", DisconnectRdp, 0 },
         { "getRdpStatus", GetRdpStatus, 0 },
         { "destroyRdpClient", DestroyRdpClient, 0 },
+        // Native VNC (client)
+        { "vncAvailable", VncAvailable, 0 },
+        { "vncCreate", VncCreate, 0 },
+        { "vncConnect", VncConnect, 0 },
+        { "vncDisconnect", VncDisconnect, 0 },
+        { "vncGetFrame", VncGetFrame, 0 },
+        { "testFunction", TestFunction, 0 },
     };
-    napi_define_properties(env, exports, 12, (napi_property_descriptor*)desc);
+#endif
+    size_t count = sizeof(desc) / sizeof(desc[0]);
+#if defined(__OHOS__)
+    napi_define_properties(env, exports, count, desc);
+#else
+    napi_define_properties(env, exports, count, (const napi_property_descriptor*)desc);
+#endif
+    return exports;
 }
 EXTERN_C_END
 
+#if defined(__OHOS__)
+static napi_module g_qemu_module = {
+    .nm_version = 1,
+    .nm_flags = 0,
+    .nm_filename = nullptr,
+    .nm_register_func = Init,
+    .nm_modname = "libqemu_hmos.so",
+    .nm_priv = nullptr,
+    .reserved = { 0 },
+};
+
+// 使用HarmonyOS特定的模块注册方式
+extern "C" __attribute__((constructor)) void NAPI_qemu_hmos_Register(void) {
+    HilogPrint("QEMU: NAPI constructor called!");
+    napi_module_register(&g_qemu_module);
+}
+
+// 添加HarmonyOS特定的模块注册
+extern "C" __attribute__((constructor)) void RegisterQemuModule(void) {
+    HilogPrint("QEMU: RegisterQemuModule constructor called!");
+    napi_module_register(&g_qemu_module);
+}
+
+// 添加HarmonyOS特定的模块注册 - 使用不同的名称
+extern "C" __attribute__((constructor)) void RegisterLibQemuHmos(void) {
+    HilogPrint("QEMU: RegisterLibQemuHmos constructor called!");
+    napi_module_register(&g_qemu_module);
+}
+
+// 使用HarmonyOS的模块注册宏
+NAPI_MODULE(libqemu_hmos, Init)
+#else
 static napi_module_simple qemuModule = {
     .nm_version = 1,
     .nm_flags = 0,
@@ -1036,7 +1560,7 @@ static napi_module_simple qemuModule = {
     .nm_priv = ((void*)0),
     .reserved = { 0 },
 };
-
 extern "C" __attribute__((constructor)) void RegisterQemuModule(void) {
     napi_module_register(&qemuModule);
 }
+#endif

@@ -1,0 +1,38 @@
+#!/bin/bash
+echo "=== 详细QEMU诊断脚本 ==="
+echo ""
+
+echo "🔍 问题分析:"
+echo "从日志看，VM启动失败但没有看到详细的QEMU日志。"
+echo "这说明问题发生在StartVm函数早期，g_qemu_core_main可能为null。"
+echo ""
+
+echo "📋 诊断步骤:"
+echo "1. 启动应用"
+echo "2. 进入原生VNC页面"  
+echo "3. 点击'诊断依赖'按钮"
+echo "4. 查看Core.loaded状态"
+echo "5. 如果Core.loaded为false，核心库加载失败"
+echo "6. 如果Core.loaded为true但VM仍启动失败，检查QEMU参数"
+echo ""
+
+echo "🎯 关键检查点:"
+echo "- Core.loaded: 核心库是否加载成功"
+echo "- Core.symFound: qemu_main符号是否存在"  
+echo "- QEMU命令行参数是否正确"
+echo "- 磁盘文件是否存在"
+echo "- 固件文件路径是否正确"
+echo ""
+
+echo "🔧 可能的解决方案:"
+echo "1. 重新安装应用 (已完成)"
+echo "2. 检查诊断状态 (需要用户操作)"
+echo "3. 如果Core.loaded为false，需要检查库文件"
+echo "4. 如果Core.loaded为true，检查QEMU参数和文件路径"
+echo ""
+
+echo "📱 当前状态:"
+echo "- 应用已安装 ✅"
+echo "- 进程运行中 ✅"  
+echo "- VNC库可用 ✅"
+echo "- 等待用户诊断操作..."

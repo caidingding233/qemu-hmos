@@ -9,15 +9,15 @@ export class FirmwareManager {
    * 确保 UEFI 固件存在：优先从 rawfile 复制到 files 目录
    * @param ctx 可选 UIAbility 上下文；若提供可直接读取 rawfile
    */
-  static async ensureUefi(ctx?: common.UIAbilityContext | common.Context): Promise<boolean> {
+  static async ensureUefi(ctx: common.UIAbilityContext): Promise<boolean> {
     try {
       if (await FirmwareManager.exists(TARGET_PATH)) {
         return true
       }
 
       // 若缺失，尝试从 rawfile 复制
-      const rm = (ctx as any)?.resourceManager
-      if (!rm || typeof rm.getRawFileContent !== 'function') {
+      const rm = ctx.resourceManager
+      if (!rm || typeof (rm as object) !== 'object') {
         console.error('[Firmware] 无法获取 resourceManager，无法从 rawfile 复制固件')
         return false
       }

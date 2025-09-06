@@ -10,6 +10,8 @@
     ],
     "deliveryWithInstall": true,
     "installationFree": false,
+    "libIsolation": false,
+    "compressNativeLibs": false,
     "pages": "$profile:main_pages",
     "abilities": [
       {
@@ -31,6 +33,30 @@
             ]
           }
         ]
+      }
+    ],
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.INTERNET"
+      },
+      {
+        "name": "ohos.permission.READ_MEDIA",
+        "reason": "$string:permission_read_media_reason",
+        "usedScene": {
+          "when": "always",
+          "abilities": ["EntryAbility"]
+        }
+      },
+      {
+        "name": "ohos.permission.WRITE_MEDIA",
+        "reason": "$string:permission_write_media_reason",
+        "usedScene": {
+          "when": "always",
+          "abilities": ["EntryAbility"]
+        }
+      },
+      {
+        "name": "ohos.permission.GET_NETWORK_INFO"
       }
     ],
     "extensionAbilities": [
