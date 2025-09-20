@@ -37,7 +37,7 @@
 - 打包/构建（hvigor + CMake）
   - 确保原生输出落盘到 `entry/src/main/libs/arm64-v8a/`，便于 HAP 打包：
     - `CMakeLists.txt` 新增：
-      - `copy_qemu_full` 自定义目标：将 `entry/src/main/cpp/libqemu_full.so` 复制到 `entry/src/main/libs/arm64-v8a/`。
+      - `copy_qemu_full` 自定义目标：将 `entry/src/main/libs/arm64-v8a/libqemu_full.so` 同步到构建产物与 `oh_modules/`，保证运行时可用。
       - `qemu_full_prebuilt` IMPORTED SHARED 目标并链接（配合 `-Wl,--no-as-needed`）强制生成 DT_NEEDED，
         防止打包器裁剪。
   - `module.json5`：`libIsolation=false`、`compressNativeLibs=false`，减少打包裁剪/压缩带来的问题。
