@@ -198,6 +198,42 @@
   - 提供 noVNC 打包产物（UMD/ESM）说明与脚本；默认优先 UMD 以规避 ESModule 兼容性；
   - 持续保障静态库 `libvncclient.a` 与核心库 `libqemu_full.so` 为 `-fPIC`；
   - 打包规则覆盖 Release 签名/压缩策略，防止原生库裁剪。
+
+---
+
+## 今日进展（NAPI加载修复）
+
+日期：2025-09-07
+
+问题复盘：ArkTS 侧使用 `import qemu from 'libqemu_hmos.so'`，但 C++ 侧既通过 `napi_module` 结构体注册了模块名 `libqemu_hmos.so`，又同时使用 `NAPI_MODULE(libqemu_hmos, Init)` 宏注册了另一个名字（`libqemu_hmos`）。在 HarmonyOS 上，重复/不一致的模块名可能导致加载流程与导出对象出现偏差，表现为：
+
+- ArkTS 调用返回对象存在，但看不到对应的 C++ 侧 HILOG（怀疑命中错误的导出或未触发 Init）。
+- `startVm` 行为与 C++ 预期不一致，VNC 也随之失败。
+
+解决方案（已实施）：
+
+- 去除重复注册与名称不一致：仅保留一个构造器注册点，模块名固定为 `libqemu_hmos.so`，确保与 ArkTS 导入字符串完全一致。
+- 在构造器与 Init 中添加明确的 HILOG（`QEMU: NAPI module constructor running...` / `QEMU: NAPI Init function called!`），便于现场确认模块真正完成加载与导出。
+
+落地变更：
+
+- 文件：`entry/src/main/cpp/napi_init.cpp`
+  - 删除多余的注册构造器与 `NAPI_MODULE(...)` 宏（避免名称分叉）。
+  - 保留并统一 `g_qemu_module.nm_modname = "libqemu_hmos.so"`。
+  - 新增/强化加载日志，方便用 `hilog` 直接观察。
+
+验证方法：
+
+1. 构建并安装 HAP（Debug）：`hvigor assembleDebug` → `hdc install -r ./entry/build/outputs/hap/*.hap`
+2. 启动应用后，查看日志：`hdc shell hilog -x | grep QEMU`，应看到：
+   - `QEMU: NAPI module constructor running, registering libqemu_hmos.so`
+   - `QEMU: NAPI Init function called!`
+3. 进入首页后，`qemu.version/enableJit/kvmSupported` 的日志应正常打印；执行 `startVm` 失败时也会写入更详细的 `dlopen/dlsym` 失败信息。
+
+后续观察点：
+
+- 若仍出现 `dlopen libqemu_full.so` 失败，优先检查 HAP 内 `libs/arm64-v8a/` 是否包含该文件，或关闭 `compressNativeLibs` 以防被打包成 `.z.so`（当前已为 false）。
+- 如设备路径不同（厂商定制），`EnsureQemuCoreLoaded` 已支持自定位（`dladdr` 同目录）与显式 libs 路径的回退加载。
 - KVM/TCG 自适应（中优先）
   - `kvmSupported()` 失败时显式切换到 `-accel tcg` 并提示；
   - 记录性能/稳定性指标，辅助选择参数（thread=multi 等）。

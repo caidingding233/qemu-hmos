@@ -32,7 +32,9 @@
 - 目标设备：HarmonyOS NEXT 平板或电脑（开启开发者选项）
 - 构建依赖（本机）：`cmake` / `meson` / `ninja` / C/C++ toolchain  
   （用于编译 `libqemu.so` 与可选的 FreeRDP）
-
+---   
+## 🚗 路线图
+见[路线图](docs/ROADMAP.md) 或者是[草稿路线图](docs/ROADMAP-DRAFT.md)
 ---
 
 ## 🏗️ 架构简述
@@ -46,7 +48,7 @@ app/
   assets/tools/                    ← 首启脚本、驱动等（可选）
 ```
 
-- **QEMU 作为库**：导出 `qemu_main(argc, argv)`；App 内以线程方式启动主循环  
+- **QEMU 作为库**：导出 `libqemu_full(argc, argv)`；App 内以线程方式启动主循环  
 - **显示**：安装期 `-display vnc=:1`；日常嵌入 RDP 视图连接 `127.0.0.1:3390`
 - **网络**：user-net + `hostfwd`（离线也可用）
 - **KVM/JIT**：运行时 `open("/dev/kvm") + KVM_GET_API_VERSION` 探测；前置调用 `prctl("jit",1)`（开发签名下）
@@ -69,9 +71,10 @@ app/
                  --enable-tcg --disable-debug-info \
                  --disable-modules
      make -j$(nproc)
-     # 产出 libqemu.so（或将 qemu-system-aarch64 的入口重命名为 qemu_main 并链接为 .so）
+     # 产出 libqemu_full.so（或将 qemu-system-aarch64 的入口重命名为 libqemu_full 并链接为 .so）
      ```
-   - 将产物放入：`app/entry/libs/arm64-v8a/libqemu.so`
+   - 或者是在Release界面下载我上传的预编译好的so库
+   - 将产物放入：`app/entry/libs/arm64-v8a/libqemu_full.so`
 4. **准备固件与资源**
    - 将 `QEMU_EFI.fd` 放入 `app/entry/src/main/resources/rawfile/`（或 assets）
 5. **运行到设备**
@@ -103,8 +106,8 @@ app/
 
 ## 🧰 首启增强（可选，一键配置）
 
-- 启用 RDP、添加本地账户、放通防火墙
-- 安装 VirtIO 驱动、QEMU Guest Agent（Windows）
+- 启用 RDP、放通防火墙
+- 安装 VirtIO等虚拟机用到的驱动、魔改版的QEMU Guest Agent（Windows）、小白调试助手（用于固定虚拟机内Apps到鸿蒙的桌面）、鸿蒙工具链等等
 - 将 App 沙箱目录映射为 `Z:`（RDP 驱动器重定向）
 - （WIP）媒体桥（GSMTC）自启，支持播放状态透传
 

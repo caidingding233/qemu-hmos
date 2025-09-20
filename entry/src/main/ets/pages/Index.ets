@@ -3,9 +3,11 @@ import common from '@ohos.app.ability.common'
 import { FirmwareManager } from '../utils/FirmwareManager'
 import router from '@ohos.router'
 import qemu from 'libqemu_hmos.so'
+import type { CoreDiag } from '../types/qemu'
 import picker from '@ohos.file.picker'
 import fs from '@ohos.file.fs'
 import { VmStore, type VMMetaPersist } from '../managers/VmStore'
+
 
 // 辅助类型：ISO 复制结果
 interface CopyResult { ok: boolean; path: string }
@@ -25,6 +27,12 @@ interface VMConfig {
 // QEMU API接口
 // 使用真实 NAPI 模块
 
+// 本地扩展接口：仅用于类型守卫访问可选诊断方法
+interface QemuDiagAPI {
+  testFunction?: () => boolean
+  checkCoreLib?: () => CoreDiag
+}
+
 // QEMU配置类
 class QemuConfig {
   name: string = '';
@@ -35,25 +43,7 @@ class QemuConfig {
   isoPath?: string;
 }
 
-// 依赖诊断类型（供 runDiagnostics 使用）
-interface CoreDiag {
-  loaded: boolean;
-  foundLd: boolean;
-  symFound?: boolean;
-  selfDir: string;
-  foundSelfDir: boolean;
-  existsFilesPath: boolean;
-  filesPath: string;
-  foundFiles: boolean;
-  errLd?: string;
-  symErr?: string;
-  errSelfDir?: string;
-  errFiles?: string;
-}
-
-interface QemuCoreProbe {
-  checkCoreLib?: () => CoreDiag;
-}
+// CoreDiag 类型由 ../types/qemu 提供
 
 // VM元数据类
 class VMMeta {
@@ -147,6 +137,32 @@ struct Index {
       // 测试KVM支持
       const kvmSupported: boolean = qemu.kvmSupported();
       hilog.info(0x0000, 'QEMU_TEST', 'KVM支持: %{public}s', kvmSupported ? '支持' : '不支持');
+
+      // 触发一次原生侧最小调用，便于观察 C++ HILOG（QEMU_CORE）
+      try {
+        const qd = qemu as QemuDiagAPI
+        const ok: boolean = typeof qd.testFunction === 'function' ? qd.testFunction!() : false
+        hilog.info(0x0000, 'QEMU_TEST', 'NAPI TestFunction 调用结果: %{public}s', ok ? 'true' : 'false')
+      } catch (e) {
+        hilog.error(0x0000, 'QEMU_TEST', 'NAPI TestFunction 调用失败: %{public}s', (e as Error).message)
+      }
+
+      // 输出核心库诊断，确认 dlopen/dlsym 可用性
+      try {
+        const qd = qemu as QemuDiagAPI
+        const diag: CoreDiag | undefined = typeof qd.checkCoreLib === 'function' ? qd.checkCoreLib!() : undefined
+        if (diag) {
+          hilog.info(0x0000, 'QEMU_TEST', 'Core.loaded=%{public}s, foundSelfDir=%{public}s, symFound=%{public}s', String(diag.loaded), String(diag.foundSelfDir), String(diag.symFound))
+          hilog.info(0x0000, 'QEMU_TEST', 'Core.selfDir=%{public}s, filesPath=%{public}s', diag.selfDir, diag.filesPath)
+          if (diag.errLd || diag.errSelfDir || diag.errFiles) {
+            hilog.error(0x0000, 'QEMU_TEST', 'Core.errLd=%{public}s, errSelfDir=%{public}s, errFiles=%{public}s', String(diag.errLd || ''), String(diag.errSelfDir || ''), String(diag.errFiles || ''))
+          }
+        } else {
+          hilog.info(0x0000, 'QEMU_TEST', 'Core诊断接口返回空')
+        }
+      } catch (e) {
+        hilog.error(0x0000, 'QEMU_TEST', 'Core诊断接口调用失败: %{public}s', (e as Error).message)
+      }
       
       this.testResult = `QEMU ${version}\nJIT: ${jitEnabled ? '✓' : '✗'}\nKVM: ${kvmSupported ? '✓' : '✗'}`;
     } catch (error) {
@@ -1130,7 +1146,6 @@ struct Index {
       const ctx: common.UIAbilityContext = getContext(this) as common.UIAbilityContext
       const rm = ctx.resourceManager
       // 检测核心库（真实NAPI接口）
-      const probe: QemuCoreProbe = qemu as QemuCoreProbe
       const defaultCore: CoreDiag = {
         loaded: false,
         foundLd: false,
@@ -1140,8 +1155,9 @@ struct Index {
         filesPath: '/data/storage/el2/base/haps/entry/files/libqemu_full.so',
         foundFiles: false
       }
-      const core: CoreDiag = (probe.checkCoreLib && typeof probe.checkCoreLib === 'function')
-        ? (probe.checkCoreLib() as CoreDiag)
+      const qd = qemu as QemuDiagAPI
+      const core: CoreDiag = (typeof qd.checkCoreLib === 'function')
+        ? qd.checkCoreLib!()
         : defaultCore
       // 检测 noVNC 资源（真实 rawfile 探测）
       let hasMin = false, hasEsm = false

@@ -1520,36 +1520,24 @@ static napi_value Init(napi_env env, napi_value exports) {
 EXTERN_C_END
 
 #if defined(__OHOS__)
+// 单一入口：HarmonyOS NAPI 模块注册
 static napi_module g_qemu_module = {
     .nm_version = 1,
     .nm_flags = 0,
     .nm_filename = nullptr,
     .nm_register_func = Init,
+    // 关键：与 ArkTS 侧 `import qemu from 'libqemu_hmos.so'` 完全一致
     .nm_modname = "libqemu_hmos.so",
     .nm_priv = nullptr,
     .reserved = { 0 },
 };
 
-// 使用HarmonyOS特定的模块注册方式
-extern "C" __attribute__((constructor)) void NAPI_qemu_hmos_Register(void) {
-    HilogPrint("QEMU: NAPI constructor called!");
+extern "C" __attribute__((constructor)) void NAPI_qemu_hmos_Register(void)
+{
+    // 通过 HILOG 明确记录模块被加载/注册，用于现场诊断
+    HilogPrint("QEMU: NAPI module constructor running, registering libqemu_hmos.so");
     napi_module_register(&g_qemu_module);
 }
-
-// 添加HarmonyOS特定的模块注册
-extern "C" __attribute__((constructor)) void RegisterQemuModule(void) {
-    HilogPrint("QEMU: RegisterQemuModule constructor called!");
-    napi_module_register(&g_qemu_module);
-}
-
-// 添加HarmonyOS特定的模块注册 - 使用不同的名称
-extern "C" __attribute__((constructor)) void RegisterLibQemuHmos(void) {
-    HilogPrint("QEMU: RegisterLibQemuHmos constructor called!");
-    napi_module_register(&g_qemu_module);
-}
-
-// 使用HarmonyOS的模块注册宏
-NAPI_MODULE(libqemu_hmos, Init)
 #else
 static napi_module_simple qemuModule = {
     .nm_version = 1,

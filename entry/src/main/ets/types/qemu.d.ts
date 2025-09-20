@@ -25,6 +25,9 @@ export interface QemuAPI {
   stopVm(name: string): boolean;
   getVmLogs(name: string, startLine?: number): string[];
   getVmStatus(name: string): string;
+  // Diagnostics and testing (optional)
+  testFunction?: () => boolean;
+  checkCoreLib?: () => CoreDiag;
   // Native VNC (LibVNCClient)
   vncAvailable(): boolean;
   vncCreate(): number;
@@ -44,4 +47,20 @@ export interface VncFrame {
 declare module 'libqemu_hmos.so' {
   const qemu: QemuAPI;
   export default qemu;
+}
+
+// Diagnostics result for core library probing
+export interface CoreDiag {
+  loaded: boolean;
+  foundLd: boolean;
+  symFound?: boolean;
+  selfDir: string;
+  foundSelfDir: boolean;
+  existsFilesPath: boolean;
+  filesPath: string;
+  foundFiles: boolean;
+  errLd?: string;
+  symErr?: string;
+  errSelfDir?: string;
+  errFiles?: string;
 }
