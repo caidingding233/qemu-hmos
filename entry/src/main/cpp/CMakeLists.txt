@@ -403,7 +403,7 @@ set_target_properties(qemu_hmos PROPERTIES
 
 # ---- Bundle prebuilt QEMU core into native outputs (so Hvigor packs it) ----
 # Copy prebuilt core from cpp folder to Hvigor expected directory
-set(QEMU_FULL_SRC "${CMAKE_CURRENT_SOURCE_DIR}/libqemu_full.so")
+set(QEMU_FULL_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a/libqemu_full.so")
 set(QEMU_FULL_DST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../build/default/intermediates/libs/default/arm64-v8a")
 set(QEMU_FULL_DST "${QEMU_FULL_DST_DIR}/libqemu_full.so")
 

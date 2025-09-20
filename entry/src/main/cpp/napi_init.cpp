@@ -377,13 +377,12 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         }
     }
     
-    if (biosPath.empty()) {
-        HilogPrint(std::string("QEMU: WARNING - BIOS file not found, using default path"));
-        biosPath = "edk2-aarch64-code.fd";
+    if (!biosPath.empty()) {
+        args.push_back("-bios");
+        args.push_back(biosPath);
+    } else {
+        HilogPrint(std::string("QEMU: WARNING - BIOS file not found, letting QEMU use built-in default"));
     }
-    
-    args.push_back("-bios");
-    args.push_back(biosPath);
     
     // 磁盘配置
     if (FileExists(config.diskPath)) {
