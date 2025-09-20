@@ -76,7 +76,7 @@ app/
    - 或者是在Release界面下载我上传的预编译好的so库
    - 将产物放入：`app/entry/libs/arm64-v8a/libqemu_full.so`
 4. **准备固件与资源**
-   - 将 `QEMU_EFI.fd` 放入 `app/entry/src/main/resources/rawfile/`（或 assets）
+   - 推荐将 `edk2-aarch64-code.fd`（EDK2 固件）放入 `app/entry/src/main/resources/rawfile/`（或 assets）；若暂时缺失，App 会自动跳过 `-bios` 参数并让 QEMU 使用内置缺省固件，方便快速验证能否起机
 5. **运行到设备**
    - 连接鸿蒙设备（平板/电脑），运行工程
 
@@ -95,7 +95,7 @@ app/
 -machine virt,gic-version=3,virtualization=on
 -cpu max -smp 4 -m 6144
 -accel tcg,thread=multi,tb-size=128
--bios QEMU_EFI.fd
+-bios edk2-aarch64-code.fd（若未提供固件，运行时将省略该参数）
 -drive if=none,id=d0,file=win11arm.qcow2,format=qcow2,cache=writeback,aio=threads,discard=unmap
 -device nvme,drive=d0,serial=nvme0
 -netdev user,id=n0,hostfwd=tcp:127.0.0.1:3390-:3389
