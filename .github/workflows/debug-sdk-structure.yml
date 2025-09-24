@@ -1,0 +1,56 @@
+name: Debug SDK Structure
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - name: Download and setup SDK
+      run: |
+        echo "=== Downloading SDK ==="
+        curl -OL https://repo.huaweicloud.com/openharmony/os/5.1.0-Release/ohos-sdk-windows_linux-public.tar.gz
+        
+        echo "=== Extracting SDK ==="
+        tar -xzf ohos-sdk-windows_linux-public.tar.gz
+        rm ohos-sdk-windows_linux-public.tar.gz
+        rm -rf ohos-sdk/{ohos,windows}
+        
+        echo "=== Processing SDK ==="
+        cd ohos-sdk/linux
+        
+        # Extract files one by one
+        find . -type f -name "*.zip" | while read -r file; do
+          echo "Extracting: $file"
+          if unzip -q "$file"; then
+            rm "$file"
+          fi
+        done
+        
+        cd ../..
+        
+        echo "=== SDK Structure Analysis ==="
+        echo "Root structure:"
+        ls -la ohos-sdk/linux/
+        
+        echo ""
+        echo "All directories:"
+        find ohos-sdk/linux -type d | head -20
+        
+        echo ""
+        echo "All clang files:"
+        find ohos-sdk/linux -name "*clang*" -type f
+        
+        echo ""
+        echo "LLVM directories:"
+        find ohos-sdk/linux -name "llvm" -type d
+        
+        echo ""
+        echo "Native directories:"
+        find ohos-sdk/linux -name "native" -type d
+        
+        echo ""
+        echo "Looking for aarch64-unknown-linux-ohos-clang:"
+        find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f
