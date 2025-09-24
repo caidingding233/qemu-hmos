@@ -1,0 +1,76 @@
+name: Simple Compiler Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: false
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget unzip tree
+
+    - name: Download and setup SDK
+      run: |
+        echo "=== Downloading SDK ==="
+        curl -OL https://repo.huaweicloud.com/openharmony/os/5.1.0-Release/ohos-sdk-windows_linux-public.tar.gz
+        
+        echo "=== Extracting SDK ==="
+        tar -xzf ohos-sdk-windows_linux-public.tar.gz
+        rm ohos-sdk-windows_linux-public.tar.gz
+        rm -rf ohos-sdk/{ohos,windows}
+        
+        echo "=== Processing SDK ==="
+        cd ohos-sdk/linux
+        
+        # Extract files one by one to avoid pipe issues
+        echo "Extracting SDK files..."
+        find . -type f -name "*.zip" | while read -r file; do
+          echo "Extracting: $file"
+          if unzip -q "$file"; then
+            rm "$file"
+            echo "✅ Extracted: $file"
+          else
+            echo "❌ Failed to extract: $file"
+          fi
+        done
+        
+        cd ../..
+        
+        echo "=== SDK Structure ==="
+        echo "Root contents:"
+        ls -la ohos-sdk/linux/ || echo "Cannot list root"
+        
+        echo ""
+        echo "=== Finding Clang ==="
+        echo "All clang files:"
+        find ohos-sdk/linux -name "*clang*" -type f 2>/dev/null || echo "No clang files found"
+        
+        echo ""
+        echo "=== Target Compiler ==="
+        TARGET_CLANG=$(find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
+        if [ -n "$TARGET_CLANG" ]; then
+          echo "✅ Found: $TARGET_CLANG"
+          echo "File info:"
+          ls -la "$TARGET_CLANG"
+          file "$TARGET_CLANG"
+          
+          # Test compiler
+          echo ""
+          echo "=== Testing Compiler ==="
+          if "$TARGET_CLANG" --version 2>&1 | head -3; then
+            echo "✅ Compiler works!"
+          else
+            echo "❌ Compiler failed"
+          fi
+        else
+          echo "❌ Target compiler not found"
+        fi
