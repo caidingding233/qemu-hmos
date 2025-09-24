@@ -55,6 +55,7 @@ jobs:
         
         echo "=== Finding NDK ==="
         # Look for the compiler using find command
+        echo "Searching for aarch64-unknown-linux-ohos-clang..."
         CLANG_PATH=$(find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
         
         if [ -z "$CLANG_PATH" ]; then
@@ -71,6 +72,9 @@ jobs:
         fi
         
         echo "✅ Found clang at: $CLANG_PATH"
+        echo "Clang file info:"
+        ls -la "$CLANG_PATH" || echo "Cannot list clang file"
+        file "$CLANG_PATH" || echo "Cannot get file type"
         
         # Set environment variables
         NDK_PATH=$(dirname "$CLANG_PATH")
@@ -141,10 +145,6 @@ jobs:
           --target-list=aarch64-softmmu \
           --cc="$CC" \
           --cxx="$CXX" \
-          --ar="$AR" \
-          --strip="$STRIP" \
-          --ranlib="$RANLIB" \
-          --ld="$LD" \
           --host-cc="/usr/bin/cc" \
           --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
           --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \

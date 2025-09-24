@@ -19,9 +19,10 @@
 .cursor/
 .cursor/**
 
-# 排除所有test开头的文件
+# 排除所有test开头的文件（除了workflow文件）
 test*
 **/test*
+!.github/workflows/test-*
 
 # 排除工具和脚本的临时文件
 /tools
