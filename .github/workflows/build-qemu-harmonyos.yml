@@ -20,7 +20,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        submodules: recursive
+        submodules: false
         fetch-depth: 0
 
     - name: Setup environment
@@ -41,12 +41,14 @@ jobs:
           libpam0g-dev \
           libbz2-dev \
           libzstd-dev \
+          libpcre2-dev \
           python3 \
           python3-pip \
           meson \
           git \
           wget \
-          unzip
+          unzip \
+          cmake
 
     - name: Download HarmonyOS SDK
       run: |
