@@ -24,7 +24,7 @@ jobs:
                               libglib2.0-dev libpixman-1-dev libssl-dev \
                               libcurl4-openssl-dev libssh-dev libgnutls28-dev \
                               libsasl2-dev libpam0g-dev libbz2-dev libzstd-dev \
-                              libpcre2-dev pkg-config meson
+                              libpcre2-dev pkg-config meson tree
 
     - name: Download and setup SDK
       run: |
@@ -54,14 +54,8 @@ jobs:
         cd ../..
         
         echo "=== Finding NDK ==="
-        # Simple approach: look for the compiler directly
-        CLANG_PATH=""
-        for path in ohos-sdk/linux/*/llvm/bin/aarch64-unknown-linux-ohos-clang; do
-          if [ -f "$path" ]; then
-            CLANG_PATH="$path"
-            break
-          fi
-        done
+        # Look for the compiler using find command
+        CLANG_PATH=$(find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
         
         if [ -z "$CLANG_PATH" ]; then
           echo "❌ Could not find clang compiler"
@@ -70,6 +64,9 @@ jobs:
           echo ""
           echo "Available directories:"
           ls -la ohos-sdk/linux/ 2>/dev/null || echo "Cannot list SDK directory"
+          echo ""
+          echo "Directory tree (first 3 levels):"
+          tree ohos-sdk/linux -L 3 2>/dev/null || echo "Tree command not available"
           exit 1
         fi
         
@@ -79,6 +76,20 @@ jobs:
         NDK_PATH=$(dirname "$CLANG_PATH")
         NDK_PATH=$(dirname "$NDK_PATH")
         NDK_PATH=$(dirname "$NDK_PATH")
+        
+        echo "✅ NDK Path: $NDK_PATH"
+        echo "✅ Clang Path: $CLANG_PATH"
+        
+        # Verify paths exist
+        if [ ! -f "$CLANG_PATH" ]; then
+          echo "❌ Clang compiler not found at: $CLANG_PATH"
+          exit 1
+        fi
+        
+        if [ ! -d "$NDK_PATH/sysroot" ]; then
+          echo "❌ Sysroot not found at: $NDK_PATH/sysroot"
+          exit 1
+        fi
         
         echo "OHOS_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
         echo "SYSROOT=$NDK_PATH/sysroot" >> $GITHUB_ENV
