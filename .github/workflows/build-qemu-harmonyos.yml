@@ -301,3 +301,6 @@ jobs:
         nm -D artifacts/entry/src/main/libs/arm64-v8a/libqemu_hmos.so | grep -E "(napi|NAPI)" | head -5
         
         echo "✅ All libraries verified successfully!"
+    - name: Build summary
+      run: |
+        echo MOMPIG大母猪🐷认证完成

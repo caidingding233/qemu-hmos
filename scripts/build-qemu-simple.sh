@@ -21,12 +21,26 @@ elif [ -d "$SDK_ROOT/default/openharmony/native" ]; then
     echo "Found SDK at: $OHOS_NDK_HOME"
 else
     echo "Searching for NDK structure..."
-    NDK_PATH=$(find $SDK_ROOT -name "aarch64-unknown-linux-ohos-clang" -type f | head -1 | xargs dirname | xargs dirname | xargs dirname)
-    if [ -n "$NDK_PATH" ]; then
+    echo "SDK root exists: $([ -d "$SDK_ROOT" ] && echo "Yes" || echo "No")"
+    echo "SDK root contents:"
+    ls -la "$SDK_ROOT" 2>/dev/null || echo "Cannot list SDK root"
+    
+    # Find clang compiler
+    CLANG_PATH=$(find "$SDK_ROOT" -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
+    if [ -n "$CLANG_PATH" ]; then
+        echo "Found clang at: $CLANG_PATH"
+        # Get NDK home by going up 3 levels from clang
+        NDK_PATH=$(dirname "$CLANG_PATH")
+        NDK_PATH=$(dirname "$NDK_PATH")
+        NDK_PATH=$(dirname "$NDK_PATH")
         export OHOS_NDK_HOME="$NDK_PATH"
         echo "Found SDK at: $OHOS_NDK_HOME"
     else
-        echo "❌ Error: Could not find HarmonyOS NDK"
+        echo "❌ Error: Could not find aarch64-unknown-linux-ohos-clang"
+        echo "Available files in SDK:"
+        find "$SDK_ROOT" -name "*clang*" -type f 2>/dev/null | head -10
+        echo "Available directories in SDK:"
+        find "$SDK_ROOT" -type d -name "*llvm*" -o -name "*native*" -o -name "*toolchain*" 2>/dev/null | head -10
         exit 1
     fi
 fi

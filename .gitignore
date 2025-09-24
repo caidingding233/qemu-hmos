@@ -9,10 +9,21 @@
 /.clang-tidy
 **/.test
 /.appanalyzer
+# 排除所有以点开头的文件和文件夹（除了.github）
+.*
+!.github/
+!.github/**
 .DS_Store
 .trae/
 .claude/
-AGENTS.md
+.cursor/
+.cursor/**
+
+# 排除所有test开头的文件
+test*
+**/test*
+
+# 排除工具和脚本的临时文件
 /tools
 third_party/novnc/
 third_party/novnc_bundle/
@@ -25,16 +36,55 @@ third_party/*/linux-user/*/vdso*.so
 third_party/qemu/build*/
 third_party/qemu/contrib/plugins/*.so
 third_party/qemu/linux-user/*/vdso*.so
-# 排除大文件
+# 排除所有库文件和构建产物
 *.so
 *.dylib
 *.a
+*.lib
+*.dll
+
 # 排除特定的大文件
-entry/src/main/libs/arm64-v8a/libqemu_full.so
 entry/src/main/resources/rawfile/edk2-aarch64-code.fd
-# 但保留源代码目录
+
+# 排除所有构建产物中的库文件
+entry/oh_modules/*.so
+entry/src/oh_modules/*.so
+entry/src/main/cpp/*.so
+entry/src/main/cpp/*.dylib
+entry/src/main/cpp/libs/**/*.so
+entry/src/main/cpp/third_party/**/*.a
+entry/src/main/libs/**/*.so
+entry/src/main/libs/**/*.dylib
+
+# 排除第三方库的构建产物
+third_party/**/*.so
+third_party/**/*.a
+third_party/**/*.dylib
+third_party/**/*.lib
+third_party/**/*.dll
+
+# 但保留源代码目录和文件
 !third_party/qemu/
 !third_party/freerdp/
 !third_party/deps/
+!third_party/novnc/
+!third_party/novnc_bundle/
+
+# 但保留源代码文件
+!third_party/**/*.h
+!third_party/**/*.c
+!third_party/**/*.cpp
+!third_party/**/*.hpp
+!third_party/**/*.S
+!third_party/**/*.inc
+!third_party/**/*.build
+!third_party/**/*.mak
+!third_party/**/*.json
+!third_party/**/*.txt
+!third_party/**/*.rst
+!third_party/**/*.py
+!third_party/**/*.sh
+!third_party/**/*.toml
+!third_party/**/*.wrap
 .cursor/rules
 WARP.md
