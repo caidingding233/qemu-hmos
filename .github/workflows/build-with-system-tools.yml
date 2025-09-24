@@ -1,0 +1,205 @@
+name: Build with System Tools
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-system:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: false
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          pkg-config \
+          libglib2.0-dev \
+          libpixman-1-dev \
+          libssl-dev \
+          libcurl4-openssl-dev \
+          libssh-dev \
+          libgnutls28-dev \
+          libsasl2-dev \
+          libpam0g-dev \
+          libbz2-dev \
+          libzstd-dev \
+          libpcre2-dev \
+          python3 \
+          python3-pip \
+          meson \
+          cmake \
+          git \
+          wget \
+          unzip \
+          gcc-aarch64-linux-gnu \
+          g++-aarch64-linux-gnu
+
+    - name: Build QEMU with system tools
+      run: |
+        echo "=== Building QEMU with System Tools ==="
+        
+        cd third_party/qemu
+        
+        # Clean previous builds
+        rm -rf build_system
+        mkdir -p build_system
+        cd build_system
+        
+        # Configure QEMU for cross-compilation
+        echo "Configuring QEMU..."
+        ../configure \
+          --target-list=aarch64-softmmu \
+          --cross-prefix=aarch64-linux-gnu- \
+          --enable-tcg \
+          --disable-kvm \
+          --disable-xen \
+          --disable-werror \
+          --disable-vnc \
+          --disable-vhost-user \
+          --disable-vhost-user-blk-server \
+          --disable-libvduse \
+          --disable-vduse-blk-export \
+          --disable-vhost-net \
+          --disable-vhost-kernel \
+          --disable-keyring \
+          --disable-guest-agent \
+          --disable-slirp \
+          --disable-curl \
+          --disable-fdt \
+          --static
+        
+        # Build QEMU
+        echo "Building QEMU..."
+        make -j$(nproc)
+        
+        # Verify build results
+        echo "=== Build Verification ==="
+        if [ ! -f "libqemu-aarch64-softmmu.a" ]; then
+          echo "❌ Error: libqemu-aarch64-softmmu.a not found"
+          exit 1
+        fi
+        
+        if [ ! -f "libqemuutil.a" ]; then
+          echo "❌ Error: libqemuutil.a not found"
+          exit 1
+        fi
+        
+        echo "✅ QEMU build successful"
+        
+        # Show build results
+        echo "=== Build Results ==="
+        ls -la *.a
+        du -h *.a
+        
+        # Test creating shared library
+        echo "=== Creating Shared Library ==="
+        aarch64-linux-gnu-g++ -shared -fPIC -Wl,--no-undefined \
+          -Wl,--whole-archive \
+          libqemu-aarch64-softmmu.a \
+          libqemuutil.a \
+          -Wl,--no-whole-archive \
+          -lpthread -ldl -lm -lz \
+          -o libqemu_system.so
+        
+        if [ -f "libqemu_system.so" ]; then
+          echo "✅ Shared library created successfully"
+          file libqemu_system.so
+          du -h libqemu_system.so
+        else
+          echo "❌ Failed to create shared library"
+        fi
+
+    - name: Build NAPI module
+      run: |
+        echo "=== Building NAPI Module ==="
+        
+        cd entry/src/main/cpp
+        
+        # Create build directory
+        rm -rf build_system
+        mkdir -p build_system
+        cd build_system
+        
+        # Create minimal CMakeLists.txt
+        cat > ../CMakeLists_system.txt << 'EOF'
+        cmake_minimum_required(VERSION 3.5)
+        project(qemu_hmos_system VERSION 1.0.0)
+        
+        set(CMAKE_CXX_STANDARD 17)
+        set(CMAKE_CXX_STANDARD_REQUIRED ON)
+        
+        # Set cross-compilation
+        set(CMAKE_C_COMPILER "aarch64-linux-gnu-gcc")
+        set(CMAKE_CXX_COMPILER "aarch64-linux-gnu-g++")
+        set(CMAKE_AR "aarch64-linux-gnu-ar")
+        set(CMAKE_STRIP "aarch64-linux-gnu-strip")
+        set(CMAKE_RANLIB "aarch64-linux-gnu-ranlib")
+        
+        # Create NAPI module
+        add_library(qemu_hmos_system SHARED napi_init.cpp)
+        
+        # Set output properties
+        set_target_properties(qemu_hmos_system PROPERTIES
+          OUTPUT_NAME "qemu_hmos"
+          LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a"
+        )
+        EOF
+        
+        # Configure with system tools
+        echo "Configuring NAPI module..."
+        cmake -f ../CMakeLists_system.txt \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_SYSTEM_NAME=Linux \
+          -DCMAKE_SYSTEM_PROCESSOR=aarch64
+        
+        # Build NAPI module
+        echo "Building NAPI module..."
+        make -j$(nproc)
+        
+        # Verify NAPI module
+        if [ ! -f "libqemu_hmos.so" ]; then
+          echo "❌ Error: libqemu_hmos.so not created"
+          exit 1
+        fi
+        
+        echo "✅ NAPI module built successfully"
+        file libqemu_hmos.so
+        du -h libqemu_hmos.so
+
+    - name: Copy libraries
+      run: |
+        echo "=== Copying Libraries ==="
+        
+        # Create target directories
+        mkdir -p entry/src/main/libs/arm64-v8a
+        mkdir -p entry/src/main/oh_modules
+        
+        # Copy QEMU library
+        cp third_party/qemu/build_system/libqemu_system.so entry/src/main/libs/arm64-v8a/libqemu_full.so
+        cp third_party/qemu/build_system/libqemu_system.so entry/src/main/oh_modules/libqemu_full.so
+        
+        # Copy NAPI module
+        cp entry/src/main/cpp/build_system/libqemu_hmos.so entry/src/main/libs/arm64-v8a/
+        
+        echo "✅ Libraries copied successfully"
+        
+        # Show final results
+        echo "=== Final Results ==="
+        ls -la entry/src/main/libs/arm64-v8a/
+        du -h entry/src/main/libs/arm64-v8a/*
+        file entry/src/main/libs/arm64-v8a/*
+
+    - name: Archive build results
+      uses: actions/upload-artifact@v4
+      with:
+        name: system-build-results
+        path: |
+          entry/src/main/libs/arm64-v8a/
+          entry/src/main/oh_modules/
+        retention-days: 7
