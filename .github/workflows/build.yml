@@ -110,6 +110,32 @@ jobs:
       run: |
         echo "=== Building QEMU ==="
         
+        # Re-setup environment variables (they don't persist between steps)
+        echo "=== Re-setting Environment ==="
+        CLANG_PATH=$(find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
+        if [ -z "$CLANG_PATH" ]; then
+          echo "❌ Could not find clang compiler in Build QEMU step"
+          exit 1
+        fi
+        
+        NDK_PATH=$(dirname "$CLANG_PATH")
+        NDK_PATH=$(dirname "$NDK_PATH")
+        NDK_PATH=$(dirname "$NDK_PATH")
+        
+        export OHOS_NDK_HOME="$NDK_PATH"
+        export SYSROOT="$NDK_PATH/sysroot"
+        export CC="$CLANG_PATH"
+        export CXX="$NDK_PATH/llvm/bin/aarch64-unknown-linux-ohos-clang++"
+        export AR="$NDK_PATH/llvm/bin/llvm-ar"
+        export STRIP="$NDK_PATH/llvm/bin/llvm-strip"
+        export RANLIB="$NDK_PATH/llvm/bin/llvm-ranlib"
+        export LD="$NDK_PATH/llvm/bin/ld.lld"
+        
+        echo "✅ Environment re-set:"
+        echo "CC: $CC"
+        echo "CXX: $CXX"
+        echo "SYSROOT: $SYSROOT"
+        
         cd third_party/qemu
         
         # Clean and create build directory
@@ -178,6 +204,29 @@ jobs:
       run: |
         echo "=== Creating Shared Library ==="
         
+        # Re-setup environment variables
+        echo "=== Re-setting Environment ==="
+        CLANG_PATH=$(find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
+        if [ -z "$CLANG_PATH" ]; then
+          echo "❌ Could not find clang compiler in Create shared library step"
+          exit 1
+        fi
+        
+        NDK_PATH=$(dirname "$CLANG_PATH")
+        NDK_PATH=$(dirname "$NDK_PATH")
+        NDK_PATH=$(dirname "$NDK_PATH")
+        
+        export OHOS_NDK_HOME="$NDK_PATH"
+        export SYSROOT="$NDK_PATH/sysroot"
+        export CC="$CLANG_PATH"
+        export CXX="$NDK_PATH/llvm/bin/aarch64-unknown-linux-ohos-clang++"
+        export AR="$NDK_PATH/llvm/bin/llvm-ar"
+        export STRIP="$NDK_PATH/llvm/bin/llvm-strip"
+        export RANLIB="$NDK_PATH/llvm/bin/llvm-ranlib"
+        export LD="$NDK_PATH/llvm/bin/ld.lld"
+        
+        echo "✅ Environment re-set for shared library creation"
+        
         cd third_party/qemu/build_simple
         
         # Create shared library with all dependencies
@@ -217,6 +266,29 @@ jobs:
     - name: Build NAPI module
       run: |
         echo "=== Building NAPI Module ==="
+        
+        # Re-setup environment variables
+        echo "=== Re-setting Environment ==="
+        CLANG_PATH=$(find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
+        if [ -z "$CLANG_PATH" ]; then
+          echo "❌ Could not find clang compiler in Build NAPI module step"
+          exit 1
+        fi
+        
+        NDK_PATH=$(dirname "$CLANG_PATH")
+        NDK_PATH=$(dirname "$NDK_PATH")
+        NDK_PATH=$(dirname "$NDK_PATH")
+        
+        export OHOS_NDK_HOME="$NDK_PATH"
+        export SYSROOT="$NDK_PATH/sysroot"
+        export CC="$CLANG_PATH"
+        export CXX="$NDK_PATH/llvm/bin/aarch64-unknown-linux-ohos-clang++"
+        export AR="$NDK_PATH/llvm/bin/llvm-ar"
+        export STRIP="$NDK_PATH/llvm/bin/llvm-strip"
+        export RANLIB="$NDK_PATH/llvm/bin/llvm-ranlib"
+        export LD="$NDK_PATH/llvm/bin/ld.lld"
+        
+        echo "✅ Environment re-set for NAPI module build"
         
         cd entry/src/main/cpp
         
