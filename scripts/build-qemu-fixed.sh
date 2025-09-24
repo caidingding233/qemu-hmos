@@ -111,11 +111,16 @@ cd build_harmonyos_fixed
 
 # Configure QEMU with full functionality
 echo "Configuring QEMU..."
+# Set environment variables to override any cross-prefix logic
+export CROSS_PREFIX=""
+export cross_prefix=""
+
 ../configure \
   --target-list=aarch64-softmmu \
   --cc="$CC" \
   --cxx="$CXX" \
   --host-cc="/usr/bin/cc" \
+  --cross-prefix="" \
   --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
   --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
   -Db_staticpic=true \
