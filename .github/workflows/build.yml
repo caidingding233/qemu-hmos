@@ -104,6 +104,9 @@ jobs:
         
         # Configure QEMU
         echo "Configuring QEMU..."
+        echo "Current directory: $(pwd)"
+        echo "Looking for configure script..."
+        ls -la ../
         ../configure \
           --target-list=aarch64-softmmu \
           --cross-prefix=aarch64-unknown-linux-ohos- \
