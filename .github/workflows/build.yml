@@ -143,13 +143,25 @@ jobs:
         
         cd third_party/qemu/build_simple
         
-        # Create shared library
+        # Create shared library with all dependencies
         $CXX -shared -fPIC -Wl,--no-undefined \
           -target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} \
           -Wl,--whole-archive \
           libqemu-aarch64-softmmu.a \
           libqemuutil.a \
           -Wl,--no-whole-archive \
+          # Include dependency libraries
+          ../../deps/glib/build/glib/libglib-2.0.a \
+          ../../deps/glib/build/gobject/libgobject-2.0.a \
+          ../../deps/glib/build/gthread/libgthread-2.0.a \
+          ../../deps/glib/build/glib/libcharset/libcharset.a \
+          ../../deps/glib/build/glib/gnulib/libgnulib.a \
+          ../../deps/pixman/build/pixman/libpixman-1.a \
+          ../../deps/pixman/build/pixman/libpixman-arm-neon.a \
+          ../../deps/openssl/build/libssl.a \
+          ../../deps/openssl/build/libcrypto.a \
+          ../../deps/pcre2/build/libpcre2-8.a \
+          ../../deps/pcre2/build/libpcre2-posix.a \
           -lpthread -ldl -lm -lz \
           -o libqemu_full.so
         
