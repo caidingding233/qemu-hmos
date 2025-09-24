@@ -113,8 +113,12 @@ cd build_harmonyos_fixed
 echo "Configuring QEMU..."
 ../configure \
   --target-list=aarch64-softmmu \
-  --cross-prefix=aarch64-unknown-linux-ohos- \
   --cc="$CC" \
+  --cxx="$CXX" \
+  --ar="$AR" \
+  --strip="$STRIP" \
+  --ranlib="$RANLIB" \
+  --ld="$LD" \
   --host-cc="/usr/bin/cc" \
   --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
   --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \

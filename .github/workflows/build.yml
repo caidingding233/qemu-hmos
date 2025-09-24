@@ -118,10 +118,33 @@ jobs:
         echo "Current directory: $(pwd)"
         echo "Looking for configure script..."
         ls -la ../
+        echo ""
+        echo "=== Compiler Environment ==="
+        echo "CC: $CC"
+        echo "CXX: $CXX"
+        echo "AR: $AR"
+        echo "STRIP: $STRIP"
+        echo "RANLIB: $RANLIB"
+        echo "LD: $LD"
+        echo "SYSROOT: $SYSROOT"
+        echo ""
+        echo "=== Verifying Compiler ==="
+        if [ -f "$CC" ]; then
+          echo "✅ CC exists: $CC"
+          echo "CC version:"
+          "$CC" --version 2>&1 | head -3 || echo "Failed to get CC version"
+        else
+          echo "❌ CC not found: $CC"
+        fi
+        echo ""
         ../configure \
           --target-list=aarch64-softmmu \
-          --cross-prefix=aarch64-unknown-linux-ohos- \
           --cc="$CC" \
+          --cxx="$CXX" \
+          --ar="$AR" \
+          --strip="$STRIP" \
+          --ranlib="$RANLIB" \
+          --ld="$LD" \
           --host-cc="/usr/bin/cc" \
           --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
           --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
