@@ -1,0 +1,282 @@
+name: Build QEMU for HarmonyOS
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  OHOS_SDK_VERSION: "6.0.0.848"
+  QEMU_VERSION: "8.2.0"
+  TARGET_ARCH: "aarch64"
+
+jobs:
+  build-qemu:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Setup environment
+      run: |
+        echo "Setting up build environment..."
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          ninja-build \
+          pkg-config \
+          libglib2.0-dev \
+          libpixman-1-dev \
+          libssl-dev \
+          libcurl4-openssl-dev \
+          libssh-dev \
+          libgnutls28-dev \
+          libsasl2-dev \
+          libpam0g-dev \
+          libbz2-dev \
+          libzstd-dev \
+          python3 \
+          python3-pip \
+          meson \
+          git \
+          wget \
+          unzip
+
+    - name: Download HarmonyOS SDK
+      run: |
+        echo "Downloading HarmonyOS SDK..."
+        wget -O harmonyos-sdk.zip "https://contentcenter-vali-drcn.dbankcdn.cn/pvt_2/DeveloperAlliance_package_901_9/f1/v3/VhLKThVXTe6w9PHylZ0IxA/commandline-tools-linux-x64-6.0.0.848.zip?HW-CC-KV=V1&HW-CC-Date=20250924T181625Z&HW-CC-Expire=7200&HW-CC-Sign=9AF08E32538FCAF37F97DD9110A4A5FF162146FE5A794ED41ED9BBC4DD426926"
+        unzip -q harmonyos-sdk.zip
+        sudo mv commandline-tools /opt/harmonyos-sdk
+        sudo chmod -R 755 /opt/harmonyos-sdk
+
+    - name: Setup HarmonyOS environment
+      run: |
+        echo "Setting up HarmonyOS environment variables..."
+        export OHOS_NDK_HOME="/opt/harmonyos-sdk/sdk/default/openharmony/native"
+        export SYSROOT="${OHOS_NDK_HOME}/sysroot"
+        export CC="${OHOS_NDK_HOME}/llvm/bin/aarch64-unknown-linux-ohos-clang"
+        export CXX="${OHOS_NDK_HOME}/llvm/bin/aarch64-unknown-linux-ohos-clang++"
+        export AR="${OHOS_NDK_HOME}/llvm/bin/llvm-ar"
+        export STRIP="${OHOS_NDK_HOME}/llvm/bin/llvm-strip"
+        export RANLIB="${OHOS_NDK_HOME}/llvm/bin/llvm-ranlib"
+        export LD="${OHOS_NDK_HOME}/llvm/bin/ld.lld"
+        export CMAKE="${OHOS_NDK_HOME}/build-tools/cmake/bin/cmake"
+        
+        echo "OHOS_NDK_HOME=${OHOS_NDK_HOME}" >> $GITHUB_ENV
+        echo "SYSROOT=${SYSROOT}" >> $GITHUB_ENV
+        echo "CC=${CC}" >> $GITHUB_ENV
+        echo "CXX=${CXX}" >> $GITHUB_ENV
+        echo "AR=${AR}" >> $GITHUB_ENV
+        echo "STRIP=${STRIP}" >> $GITHUB_ENV
+        echo "RANLIB=${RANLIB}" >> $GITHUB_ENV
+        echo "LD=${LD}" >> $GITHUB_ENV
+        echo "CMAKE=${CMAKE}" >> $GITHUB_ENV
+        
+        # Verify tools exist
+        ls -la "${OHOS_NDK_HOME}/llvm/bin/"
+        ls -la "${OHOS_NDK_HOME}/build-tools/cmake/bin/"
+
+    - name: Build QEMU static libraries
+      run: |
+        echo "Building QEMU static libraries..."
+        cd third_party/qemu
+        
+        # Create build directory
+        rm -rf build_harmonyos_full
+        mkdir -p build_harmonyos_full
+        cd build_harmonyos_full
+        
+        # Configure QEMU
+        echo "Configuring QEMU..."
+        ../configure \
+          --target-list=aarch64-softmmu \
+          --cross-prefix=aarch64-unknown-linux-ohos- \
+          --cc="$CC" \
+          --host-cc="/usr/bin/cc" \
+          --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
+          --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
+          -Db_staticpic=true \
+          -Db_pie=false \
+          -Ddefault_library=static \
+          -Dtools=disabled \
+          --enable-tcg \
+          --enable-fdt=internal \
+          --disable-kvm \
+          --disable-xen \
+          --disable-werror \
+          -Dvhost_user=disabled \
+          -Dvhost_user_blk_server=disabled \
+          -Dlibvduse=disabled \
+          -Dvduse_blk_export=disabled \
+          -Dvhost_net=disabled \
+          -Dvhost_kernel=disabled \
+          -Dkeyring=disabled \
+          -Dguest_agent=disabled
+        
+        # Build QEMU
+        echo "Building QEMU..."
+        make -j$(nproc)
+        
+        # Verify build results
+        echo "Verifying build results..."
+        ls -la libqemu-aarch64-softmmu.a
+        ls -la libqemuutil.a
+        ls -la qemu-system-aarch64
+        
+        # Check library contents
+        file libqemu-aarch64-softmmu.a
+        nm -D libqemu-aarch64-softmmu.a | head -10
+
+    - name: Build QEMU full shared library
+      run: |
+        echo "Building QEMU full shared library..."
+        cd third_party/qemu/build_harmonyos_full
+        
+        # Create libqemu_full.so
+        echo "Creating libqemu_full.so..."
+        $CXX -shared -fPIC -Wl,--no-undefined \
+          -target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} \
+          -Wl,--whole-archive \
+          libqemu-aarch64-softmmu.a \
+          libqemuutil.a \
+          subprojects/dtc/libfdt/libfdt.a \
+          subprojects/berkeley-softfloat-3/libsoftfloat.a \
+          -Wl,--no-whole-archive \
+          -lpthread -ldl -lm -lz -lzstd -lpng -ljpeg -lgnutls \
+          -lglib-2.0 -lgio-2.0 -lgobject-2.0 -lpixman-1 \
+          -o libqemu_full.so
+        
+        # Strip debug symbols
+        $STRIP -S libqemu_full.so
+        
+        # Verify the shared library
+        echo "Verifying libqemu_full.so..."
+        file libqemu_full.so
+        ls -la libqemu_full.so
+
+    - name: Build NAPI module
+      run: |
+        echo "Building NAPI module..."
+        cd entry/src/main/cpp
+        
+        # Create build directory
+        rm -rf build
+        mkdir -p build
+        cd build
+        
+        # Configure with CMake
+        echo "Configuring NAPI module..."
+        $CMAKE .. \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER="$CC" \
+          -DCMAKE_CXX_COMPILER="$CXX" \
+          -DCMAKE_AR="$AR" \
+          -DCMAKE_STRIP="$STRIP" \
+          -DCMAKE_RANLIB="$RANLIB" \
+          -DCMAKE_SYSROOT="$SYSROOT" \
+          -DCMAKE_FIND_ROOT_PATH="$SYSROOT" \
+          -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
+          -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
+          -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+          -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY
+        
+        # Build NAPI module
+        echo "Building NAPI module..."
+        make -j$(nproc)
+        
+        # Verify build results
+        echo "Verifying NAPI module..."
+        ls -la libqemu_hmos.so
+        file libqemu_hmos.so
+        nm -D libqemu_hmos.so | grep -E "(napi|NAPI)" | head -10
+
+    - name: Copy libraries to target directories
+      run: |
+        echo "Copying libraries to target directories..."
+        
+        # Create target directories
+        mkdir -p entry/src/main/libs/arm64-v8a
+        mkdir -p entry/src/main/oh_modules
+        
+        # Copy QEMU full library
+        cp third_party/qemu/build_harmonyos_full/libqemu_full.so entry/src/main/libs/arm64-v8a/
+        cp third_party/qemu/build_harmonyos_full/libqemu_full.so entry/src/main/oh_modules/
+        
+        # Copy NAPI module
+        cp entry/src/main/cpp/build/libqemu_hmos.so entry/src/main/libs/arm64-v8a/
+        
+        # Verify copies
+        echo "Verifying copied libraries..."
+        ls -la entry/src/main/libs/arm64-v8a/
+        ls -la entry/src/main/oh_modules/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: qemu-harmonyos-libraries
+        path: |
+          entry/src/main/libs/arm64-v8a/
+          entry/src/main/oh_modules/
+          third_party/qemu/build_harmonyos_full/libqemu-aarch64-softmmu.a
+          third_party/qemu/build_harmonyos_full/libqemuutil.a
+        retention-days: 30
+
+    - name: Build summary
+      run: |
+        echo "=== Build Summary ==="
+        echo "QEMU Version: $QEMU_VERSION"
+        echo "HarmonyOS SDK: $OHOS_SDK_VERSION"
+        echo "Target Architecture: $TARGET_ARCH"
+        echo ""
+        echo "Generated Libraries:"
+        ls -la entry/src/main/libs/arm64-v8a/
+        echo ""
+        echo "Library Sizes:"
+        du -h entry/src/main/libs/arm64-v8a/*
+        echo ""
+        echo "Build completed successfully!"
+
+  test-build:
+    runs-on: ubuntu-latest
+    needs: build-qemu
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: qemu-harmonyos-libraries
+        path: ./artifacts
+
+    - name: Verify library integrity
+      run: |
+        echo "Verifying library integrity..."
+        
+        # Check if all required libraries exist
+        if [ ! -f "artifacts/entry/src/main/libs/arm64-v8a/libqemu_full.so" ]; then
+          echo "❌ libqemu_full.so not found"
+          exit 1
+        fi
+        
+        if [ ! -f "artifacts/entry/src/main/libs/arm64-v8a/libqemu_hmos.so" ]; then
+          echo "❌ libqemu_hmos.so not found"
+          exit 1
+        fi
+        
+        # Check library types
+        file artifacts/entry/src/main/libs/arm64-v8a/libqemu_full.so
+        file artifacts/entry/src/main/libs/arm64-v8a/libqemu_hmos.so
+        
+        # Check NAPI symbols
+        nm -D artifacts/entry/src/main/libs/arm64-v8a/libqemu_hmos.so | grep -E "(napi|NAPI)" | head -5
+        
+        echo "✅ All libraries verified successfully!"

@@ -2,7 +2,8 @@ import hilog from '@ohos.hilog';
 import common from '@ohos.app.ability.common'
 import { FirmwareManager } from '../utils/FirmwareManager'
 import router from '@ohos.router'
-import qemu from 'libqemu_hmos.so'
+// 动态导入QEMU模块
+let qemu: any = null;
 import type { CoreDiag } from '../types/qemu'
 import picker from '@ohos.file.picker'
 import fs from '@ohos.file.fs'
@@ -27,10 +28,18 @@ interface VMConfig {
 // QEMU API接口
 // 使用真实 NAPI 模块
 
+// 模块信息接口
+interface ModuleInfo {
+  name: string;
+  version: string;
+  status: string;
+}
+
 // 本地扩展接口：仅用于类型守卫访问可选诊断方法
 interface QemuDiagAPI {
   testFunction?: () => boolean
   checkCoreLib?: () => CoreDiag
+  getModuleInfo?: () => ModuleInfo
 }
 
 // QEMU配置类
@@ -76,10 +85,23 @@ struct Index {
   private store?: VmStore;
 
   aboutToAppear() {
+    // 动态导入QEMU模块
+    this.initQemuModule();
     // 初始化持久化并加载
     this.initStoreAndLoad();
     // 触发一次系统能力检测
     this.testQemuFunctions();
+  }
+
+  private async initQemuModule() {
+    try {
+      // 动态导入QEMU模块
+      const qemuModule = await eval('import("qemu_hmos")');
+      qemu = qemuModule.default;
+      hilog.info(0x0000, 'QEMU_TEST', 'QEMU模块动态导入成功');
+    } catch (error) {
+      hilog.error(0x0000, 'QEMU_TEST', 'QEMU模块动态导入失败: %{public}s', (error as Error).message);
+    }
   }
 
   private async initStoreAndLoad() {
@@ -143,6 +165,13 @@ struct Index {
         const qd = qemu as QemuDiagAPI
         const ok: boolean = typeof qd.testFunction === 'function' ? qd.testFunction!() : false
         hilog.info(0x0000, 'QEMU_TEST', 'NAPI TestFunction 调用结果: %{public}s', ok ? 'true' : 'false')
+        
+        // 测试新的模块信息函数
+        const qd2 = qemu as QemuDiagAPI
+        if (typeof qd2.getModuleInfo === 'function') {
+          const moduleInfo = qd2.getModuleInfo!()
+          hilog.info(0x0000, 'QEMU_TEST', 'NAPI ModuleInfo: %{public}s', JSON.stringify(moduleInfo))
+        }
       } catch (e) {
         hilog.error(0x0000, 'QEMU_TEST', 'NAPI TestFunction 调用失败: %{public}s', (e as Error).message)
       }
@@ -394,9 +423,9 @@ struct Index {
       const buf = new ArrayBuffer(chunkSize)
       const u8 = new Uint8Array(buf)
       while (true) {
-        const n: number = await fs.read(src.fd, u8)
+        const n: number = await fs.read(src.fd, buf)
         if (!n || n <= 0) break
-        await fs.write(dst.fd, u8.subarray(0, n))
+        await fs.write(dst.fd, buf.slice(0, n))
         if (n < chunkSize) break
       }
       await fs.close(src)

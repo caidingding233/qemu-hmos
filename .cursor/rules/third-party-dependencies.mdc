@@ -1,0 +1,41 @@
+---
+description: 第三方依赖和工具说明
+---
+
+# 第三方依赖和工具
+
+## QEMU相关
+- **QEMU源码**: [third_party/qemu/](mdc:third_party/qemu/) - 完整的QEMU 8.x源码
+- **构建产物**: [third_party/qemu/build_harmonyos_full/](mdc:third_party/qemu/build_harmonyos_full/) - 静态库构建输出
+- **依赖库**: glib, openssl, pcre2, pixman等
+
+## VNC支持
+- **LibVNC**: 用于VNC服务器和客户端功能
+- **NoVNC**: [third_party/novnc/](mdc:third_party/novnc/) - Web VNC客户端
+- **NoVNC Bundle**: [third_party/novnc_bundle/](mdc:third_party/novnc_bundle/) - 打包的NoVNC
+
+## RDP支持  
+- **FreeRDP**: [third_party/freerdp/](mdc:third_party/freerdp/) - RDP客户端实现
+- **构建产物**: libfreerdp.a等静态库
+
+## 开发工具
+- **构建脚本**: [tools/](mdc:tools/) - 各种构建和调试脚本
+- **HDC工具**: hdc_collect_qemu.sh, hdc_vm_logs.sh等
+- **NoVNC构建**: build_novnc_umd.sh
+
+## 文档资源
+- **项目文档**: [docs/](mdc:docs/) - 详细的技术文档
+- **NAPI文档**: [docs/NAPI.md](mdc:docs/NAPI.md) - NAPI桥接说明
+- **预构建库**: [docs/PrebuiltLibs.md](mdc:docs/PrebuiltLibs.md) - 预构建库说明
+- **路线图**: [docs/ROADMAP.md](mdc:docs/ROADMAP.md) - 项目发展路线
+
+## 测试文件
+- **E2E测试**: test_e2e_qemu_integration.cpp
+- **NAPI测试**: test_napi_*.js, test_napi_*.cpp
+- **VM配置**: test_vm_config.json
+
+## 构建依赖
+- **CMake**: 3.5+版本
+- **Meson**: QEMU构建系统
+- **Ninja**: 构建工具
+- **Clang**: HarmonyOS NDK编译器

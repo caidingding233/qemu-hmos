@@ -1,0 +1,32 @@
+---
+globs: *.cpp,*.h,*.cmake
+description: Native C++层结构和NAPI桥接说明
+---
+
+# Native C++层结构
+
+## 核心文件
+- **NAPI初始化**: [entry/src/main/cpp/napi_init.cpp](mdc:entry/src/main/cpp/napi_init.cpp) - NAPI模块入口和函数导出
+- **QEMU包装器**: [entry/src/main/cpp/qemu_wrapper.cpp](mdc:entry/src/main/cpp/qemu_wrapper.cpp) - QEMU启动和生命周期管理
+- **RDP客户端**: [entry/src/main/cpp/rdp_client.cpp](mdc:entry/src/main/cpp/rdp_client.cpp) - RDP连接和显示处理
+
+## 构建配置
+- **CMake主配置**: [entry/src/main/cpp/CMakeLists.txt](mdc:entry/src/main/cpp/CMakeLists.txt) - 完整的构建配置
+- **HarmonyOS NDK**: 使用交叉编译，目标aarch64-linux-ohos
+- **QEMU集成**: 链接QEMU静态库和依赖库
+
+## 关键功能
+- **虚拟机启动**: 通过NAPI调用启动QEMU进程
+- **KVM探测**: 运行时检测KVM可用性，自动降级到TCG
+- **网络映射**: 配置hostfwd实现端口转发
+- **RDP集成**: 原生RDP客户端支持
+
+## 依赖库
+- **QEMU核心**: libqemu-aarch64-softmmu.a等静态库
+- **VNC支持**: libvncserver.a, libvncclient.a
+- **FreeRDP**: libfreerdp.a用于RDP客户端
+- **系统库**: hilog_ndk, ace_napi等HarmonyOS系统库
+
+## 构建输出
+- **主库**: libqemu_hmos.so - NAPI桥接库
+- **QEMU核心**: libqemu_full.so - 预构建的QEMU核心库
