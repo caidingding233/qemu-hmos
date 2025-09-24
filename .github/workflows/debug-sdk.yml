@@ -1,0 +1,83 @@
+name: Debug SDK Download
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug-sdk:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download and analyze HarmonyOS SDK
+      run: |
+        echo "=== Downloading HarmonyOS SDK ==="
+        wget -O harmonyos-sdk.zip "https://contentcenter-vali-drcn.dbankcdn.cn/pvt_2/DeveloperAlliance_package_901_9/f1/v3/VhLKThVXTe6w9PHylZ0IxA/commandline-tools-linux-x64-6.0.0.848.zip?HW-CC-KV=V1&HW-CC-Date=20250924T181625Z&HW-CC-Expire=7200&HW-CC-Sign=9AF08E32538FCAF37F97DD9110A4A5FF162146FE5A794ED41ED9BBC4DD426926"
+        
+        echo "=== File info ==="
+        ls -la harmonyos-sdk.zip
+        file harmonyos-sdk.zip
+        
+        echo "=== Extracting SDK ==="
+        unzip -q harmonyos-sdk.zip
+        
+        echo "=== Analyzing extracted structure ==="
+        echo "Root directory contents:"
+        ls -la
+        
+        echo "=== Finding all directories ==="
+        find . -maxdepth 3 -type d | sort
+        
+        echo "=== Looking for SDK-related files ==="
+        find . -name "*sdk*" -o -name "*openharmony*" -o -name "*native*" -o -name "*llvm*" -o -name "*clang*" | head -20
+        
+        echo "=== Checking for common SDK structures ==="
+        if [ -d "commandline-tools" ]; then
+          echo "Found commandline-tools directory:"
+          ls -la commandline-tools/
+          find commandline-tools -name "*sdk*" -o -name "*native*" | head -10
+        fi
+        
+        if [ -d "sdk" ]; then
+          echo "Found sdk directory:"
+          ls -la sdk/
+          find sdk -name "*native*" -o -name "*llvm*" | head -10
+        fi
+        
+        echo "=== Creating directory structure map ==="
+        tree -L 4 || find . -type d | head -30
+
+    - name: Test SDK installation
+      run: |
+        echo "=== Testing SDK installation ==="
+        
+        # Try different installation methods
+        if [ -d "commandline-tools" ]; then
+          echo "Installing from commandline-tools..."
+          sudo mv commandline-tools /opt/harmonyos-sdk
+        elif [ -d "sdk" ]; then
+          echo "Installing from sdk directory..."
+          sudo mv sdk /opt/harmonyos-sdk
+        else
+          echo "Creating symlink to current directory..."
+          sudo ln -s $(pwd) /opt/harmonyos-sdk
+        fi
+        
+        echo "=== Verifying installation ==="
+        ls -la /opt/harmonyos-sdk/
+        
+        echo "=== Searching for tools ==="
+        find /opt/harmonyos-sdk -name "clang" -type f | head -5
+        find /opt/harmonyos-sdk -name "cmake" -type f | head -5
+        find /opt/harmonyos-sdk -name "llvm-ar" -type f | head -5
+        
+        echo "=== Testing tool execution ==="
+        if find /opt/harmonyos-sdk -name "aarch64-unknown-linux-ohos-clang" -type f | head -1 | xargs test -f; then
+          CLANG_PATH=$(find /opt/harmonyos-sdk -name "aarch64-unknown-linux-ohos-clang" -type f | head -1)
+          echo "Found clang at: $CLANG_PATH"
+          $CLANG_PATH --version || echo "Clang version check failed"
+        else
+          echo "❌ Could not find aarch64-unknown-linux-ohos-clang"
+        fi

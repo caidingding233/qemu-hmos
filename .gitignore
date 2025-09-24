@@ -10,7 +10,6 @@
 **/.test
 /.appanalyzer
 .DS_Store
-/QEMU_HARMONYOS_INTEGRATION.md
 .trae/
 .claude/
 AGENTS.md
@@ -37,3 +36,5 @@ entry/src/main/resources/rawfile/edk2-aarch64-code.fd
 !third_party/qemu/
 !third_party/freerdp/
 !third_party/deps/
+.cursor/rules
+WARP.md

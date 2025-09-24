@@ -8,8 +8,29 @@ echo "=== Simplified QEMU HarmonyOS Build ==="
 echo "Target: aarch64-linux-ohos"
 echo ""
 
-# Environment setup
-export OHOS_NDK_HOME="/opt/harmonyos-sdk/sdk/default/openharmony/native"
+# Environment setup - dynamically find SDK paths
+echo "=== Finding HarmonyOS SDK ==="
+SDK_ROOT="/opt/harmonyos-sdk"
+
+# Try different possible SDK structures
+if [ -d "$SDK_ROOT/sdk/default/openharmony/native" ]; then
+    export OHOS_NDK_HOME="$SDK_ROOT/sdk/default/openharmony/native"
+    echo "Found SDK at: $OHOS_NDK_HOME"
+elif [ -d "$SDK_ROOT/default/openharmony/native" ]; then
+    export OHOS_NDK_HOME="$SDK_ROOT/default/openharmony/native"
+    echo "Found SDK at: $OHOS_NDK_HOME"
+else
+    echo "Searching for NDK structure..."
+    NDK_PATH=$(find $SDK_ROOT -name "aarch64-unknown-linux-ohos-clang" -type f | head -1 | xargs dirname | xargs dirname | xargs dirname)
+    if [ -n "$NDK_PATH" ]; then
+        export OHOS_NDK_HOME="$NDK_PATH"
+        echo "Found SDK at: $OHOS_NDK_HOME"
+    else
+        echo "❌ Error: Could not find HarmonyOS NDK"
+        exit 1
+    fi
+fi
+
 export SYSROOT="${OHOS_NDK_HOME}/sysroot"
 export CC="${OHOS_NDK_HOME}/llvm/bin/aarch64-unknown-linux-ohos-clang"
 export CXX="${OHOS_NDK_HOME}/llvm/bin/aarch64-unknown-linux-ohos-clang++"
