@@ -1,0 +1,148 @@
+name: Debug ZIP Structure
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: false
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y curl wget unzip tree
+
+    - name: Download and analyze SDK
+      run: |
+        echo "=== Downloading SDK ==="
+        curl -OL https://repo.huaweicloud.com/openharmony/os/5.1.0-Release/ohos-sdk-windows_linux-public.tar.gz
+        
+        echo "=== Extracting main SDK ==="
+        tar -xzf ohos-sdk-windows_linux-public.tar.gz
+        rm ohos-sdk-windows_linux-public.tar.gz
+        rm -rf ohos-sdk/{ohos,windows}
+        
+        echo "=== Main SDK structure ==="
+        tree ohos-sdk/linux -L 3 || find ohos-sdk/linux -type d | head -20
+        
+        echo ""
+        echo "=== All files in linux directory ==="
+        find ohos-sdk/linux -type f | head -20
+
+    - name: Find and analyze native ZIP
+      run: |
+        cd ohos-sdk/linux
+        
+        echo "=== Finding native ZIP ==="
+        NATIVE_ZIP=$(find . -name "native-linux-x64-*.zip" | head -1)
+        if [ -z "$NATIVE_ZIP" ]; then
+          echo "❌ No native-linux-x64-*.zip found"
+          echo "All zip files:"
+          find . -name "*.zip" -type f
+          exit 1
+        fi
+        
+        echo "✅ Found: $NATIVE_ZIP"
+        
+        echo "=== Analyzing ZIP contents without extracting ==="
+        unzip -l "$NATIVE_ZIP" | head -50
+        
+        echo ""
+        echo "=== Looking for clang in ZIP ==="
+        unzip -l "$NATIVE_ZIP" | grep -i clang || echo "No clang found in ZIP"
+        
+        echo ""
+        echo "=== Looking for llvm in ZIP ==="
+        unzip -l "$NATIVE_ZIP" | grep -i llvm || echo "No llvm found in ZIP"
+        
+        echo ""
+        echo "=== Looking for cmake in ZIP ==="
+        unzip -l "$NATIVE_ZIP" | grep -i cmake || echo "No cmake found in ZIP"
+        
+        echo ""
+        echo "=== Looking for bin directories in ZIP ==="
+        unzip -l "$NATIVE_ZIP" | grep -i bin || echo "No bin directories found in ZIP"
+
+    - name: Extract and analyze native ZIP
+      run: |
+        cd ohos-sdk/linux
+        
+        NATIVE_ZIP=$(find . -name "native-linux-x64-*.zip" | head -1)
+        echo "=== Extracting $NATIVE_ZIP ==="
+        unzip -q "$NATIVE_ZIP"
+        rm "$NATIVE_ZIP"
+        
+        echo "=== Contents after extraction ==="
+        ls -la
+        
+        echo ""
+        echo "=== Directory structure ==="
+        tree . -L 4 || find . -type d | head -30
+        
+        echo ""
+        echo "=== All clang files ==="
+        find . -name "*clang*" -type f
+        
+        echo ""
+        echo "=== All llvm files ==="
+        find . -name "*llvm*" -type f
+        
+        echo ""
+        echo "=== All cmake files ==="
+        find . -name "*cmake*" -type f
+        
+        echo ""
+        echo "=== All executable files ==="
+        find . -type f -executable | head -20
+        
+        echo ""
+        echo "=== All bin directories ==="
+        find . -name "bin" -type d
+        
+        echo ""
+        echo "=== Contents of each bin directory ==="
+        for bin_dir in $(find . -name "bin" -type d); do
+          echo "--- $bin_dir ---"
+          ls -la "$bin_dir" | head -10
+        done
+
+    - name: Find actual compiler paths
+      run: |
+        cd ohos-sdk/linux
+        
+        echo "=== Finding actual compiler paths ==="
+        
+        # Find any executable that might be a compiler
+        echo "All executables with 'clang' in name:"
+        find . -name "*clang*" -type f -executable
+        
+        echo ""
+        echo "All executables with 'gcc' in name:"
+        find . -name "*gcc*" -type f -executable
+        
+        echo ""
+        echo "All executables with 'cc' in name:"
+        find . -name "*cc*" -type f -executable
+        
+        echo ""
+        echo "All executables in llvm directories:"
+        find . -name "llvm" -type d -exec find {} -type f -executable \;
+        
+        echo ""
+        echo "All executables in bin directories:"
+        find . -name "bin" -type d -exec find {} -type f -executable \;
+        
+        echo ""
+        echo "=== Testing found compilers ==="
+        for compiler in $(find . -name "*clang*" -type f -executable | head -5); do
+          echo "Testing: $compiler"
+          file "$compiler"
+          "$compiler" --version 2>&1 | head -2 || echo "Version check failed"
+          echo "---"
+        done
