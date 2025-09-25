@@ -54,21 +54,62 @@ jobs:
         cd ../..
         
         echo "=== Finding NDK ==="
-        # Look for the compiler using find command
-        echo "Searching for aarch64-unknown-linux-ohos-clang..."
-        CLANG_PATH=$(find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
+        # Look for the compiler using find command with better search strategy
+        echo "Searching for aarch64-unknown-linux-ohos-clang in multiple locations..."
+        
+        # Try multiple possible paths
+        CLANG_PATH=""
+        for search_path in \
+          "ohos-sdk/linux/*/native/llvm/bin/aarch64-unknown-linux-ohos-clang" \
+          "ohos-sdk/linux/native/llvm/bin/aarch64-unknown-linux-ohos-clang" \
+          "ohos-sdk/linux/*/llvm/bin/aarch64-unknown-linux-ohos-clang" \
+          "ohos-sdk/linux/llvm/bin/aarch64-unknown-linux-ohos-clang"; do
+          
+          echo "Checking pattern: $search_path"
+          for path in $search_path; do
+            if [ -f "$path" ]; then
+              CLANG_PATH="$path"
+              echo "✅ Found compiler at: $CLANG_PATH"
+              break 2
+            fi
+          done
+        done
+        
+        # If not found with patterns, use find command
+        if [ -z "$CLANG_PATH" ]; then
+          echo "Pattern search failed, using find command..."
+          CLANG_PATH=$(find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
+        fi
         
         if [ -z "$CLANG_PATH" ]; then
-          echo "❌ Could not find clang compiler"
-          echo "SDK structure:"
+          echo "❌ Could not find clang compiler with standard methods"
+          echo "SDK structure analysis:"
           find ohos-sdk/linux -name "*clang*" -type f 2>/dev/null | head -10 || echo "No clang files found"
           echo ""
           echo "Available directories:"
           ls -la ohos-sdk/linux/ 2>/dev/null || echo "Cannot list SDK directory"
           echo ""
           echo "Directory tree (first 3 levels):"
-          tree ohos-sdk/linux -L 3 2>/dev/null || echo "Tree command not available"
-          exit 1
+          tree ohos-sdk/linux -L 3 2>/dev/null || find ohos-sdk/linux -type d | head -20
+          
+          # Try to find any clang compiler and use it
+          echo ""
+          echo "=== Attempting to find any clang compiler ==="
+          ANY_CLANG=$(find ohos-sdk/linux -name "*clang" -type f 2>/dev/null | grep -E "(clang|clang-[0-9]+)$" | head -1)
+          if [ -n "$ANY_CLANG" ]; then
+            echo "Found alternative clang: $ANY_CLANG"
+            # Check if it's a cross-compiler or if we need to find the cross-compiler
+            if echo "$ANY_CLANG" | grep -q "aarch64.*ohos"; then
+              CLANG_PATH="$ANY_CLANG"
+              echo "✅ Using alternative clang: $CLANG_PATH"
+            else
+              echo "❌ Found clang but not the cross-compiler version"
+              exit 1
+            fi
+          else
+            echo "❌ No clang compiler found at all"
+            exit 1
+          fi
         fi
         
         echo "✅ Found clang at: $CLANG_PATH"
