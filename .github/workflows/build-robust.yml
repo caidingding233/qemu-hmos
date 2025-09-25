@@ -113,23 +113,42 @@ jobs:
         echo "Contents after extraction:"
         ls -la
         
-        # Look for the extracted directory
+        # Look for the extracted directory with multiple patterns
+        echo ""
+        echo "=== Looking for native directory ==="
         NATIVE_DIR=""
+        
+        # Try different patterns
         for pattern in "native-linux-x64-*" "native-*" "*native*"; do
+          echo "Searching for pattern: $pattern"
           found=$(find . -name "$pattern" -type d | head -1)
           if [ -n "$found" ]; then
             NATIVE_DIR="$found"
-            echo "✅ Found native directory: $NATIVE_DIR"
+            echo "✅ Found with pattern '$pattern': $NATIVE_DIR"
             break
           fi
         done
+        
+        # If still not found, try generic 'native' directory
+        if [ -z "$NATIVE_DIR" ]; then
+          echo "Trying generic 'native' directory search..."
+          NATIVE_DIR=$(find . -type d -name 'native' | head -1)
+          if [ -n "$NATIVE_DIR" ]; then
+            echo "✅ Found generic native directory: $NATIVE_DIR"
+          fi
+        fi
         
         if [ -z "$NATIVE_DIR" ]; then
           echo "❌ No native directory found after extraction"
           echo "Available directories:"
           find . -type d | head -20
+          echo ""
+          echo "Available files:"
+          find . -type f | head -20
           exit 1
         fi
+        
+        echo "✅ Final native directory: $NATIVE_DIR"
 
         echo "=== Analyzing native directory ==="
         echo "Contents of $NATIVE_DIR:"
