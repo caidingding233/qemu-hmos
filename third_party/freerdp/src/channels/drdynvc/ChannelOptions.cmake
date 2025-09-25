@@ -1,0 +1,20 @@
+set(OPTION_DEFAULT ON)
+set(OPTION_CLIENT_DEFAULT ON)
+set(OPTION_SERVER_DEFAULT ON)
+
+define_channel_options(
+  NAME
+  "drdynvc"
+  TYPE
+  "static"
+  DESCRIPTION
+  "Dynamic Virtual Channel Extension"
+  SPECIFICATIONS
+  "[MS-RDPEDYC]"
+  DEFAULT
+  ${OPTION_DEFAULT}
+  CLIENT_DEFAULT
+  ${OPTION_CLIENT_DEFAULT}
+  SERVER_DEFAULT
+  ${OPTION_SERVER_DEFAULT}
+)

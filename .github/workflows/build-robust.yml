@@ -2,6 +2,9 @@ name: Build QEMU for HarmonyOS (Robust)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   build:

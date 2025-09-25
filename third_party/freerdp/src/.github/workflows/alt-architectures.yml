@@ -1,0 +1,56 @@
+name: '[arm,ppc,ricsv] architecture builds'
+on:
+  workflow_dispatch:
+    branches: [ master, stable* ]
+  schedule:
+    - cron: '30 5 * * SUN'
+
+jobs:
+  build_job:
+    runs-on: ubuntu-latest
+    name: "Test on ${{ matrix.distro }}/${{ matrix.arch }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: armv7
+            distro: bookworm
+          - arch: aarch64
+            distro: bookworm
+          - arch: s390x
+            distro: bookworm
+          - arch: ppc64le
+            distro: bookworm
+          - arch: riscv64
+            distro: ubuntu24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: uraimo/run-on-arch-action@v3.0.1
+        name: "Run tests"
+        id: build
+        with:
+          arch: ${{ matrix.arch }}
+          distro: ${{ matrix.distro }}
+          githubToken: ${{ github.token }}
+          env: |
+            CTEST_OUTPUT_ON_FAILURE: 1
+            WLOG_LEVEL: 'trace'
+          install: |
+            echo "whoami: $(whoami)"
+            echo "working directory: $(pwd)"
+            apt-get update -q -y
+            apt-get install -q -y devscripts clang ninja-build ccache equivs
+
+          run: |
+            echo "whoami: $(whoami)"
+            echo "working directory: $(pwd)"
+            find . -name control -exec mk-build-deps -i -t "apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends -y" {} \;
+            cmake -GNinja \
+              -C ci/cmake-preloads/config-linux-alt-arch.txt \
+              -B ci-build \
+              -S . \
+              -DCMAKE_INSTALL_PREFIX=/tmp/ci-test \
+              -DCMAKE_C_COMPILER=/usr/bin/clang \
+              -DCMAKE_CXX_COMPILER=/usr/bin/clang++
+            cmake --build ci-build --parallel $(nproc) --target install
+            cmake --build ci-build --parallel $(nproc) --target test

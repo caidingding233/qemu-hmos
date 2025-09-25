@@ -1,4 +1,4 @@
-name: Build QEMU with System GCC
+name: Build QEMU with Linux GCC
 
 on:
   workflow_dispatch:

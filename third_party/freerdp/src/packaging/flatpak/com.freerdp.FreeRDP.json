@@ -1,0 +1,123 @@
+{
+	"add-build-extensions": {
+		"org.freedesktop.Platform.ffmpeg-full": {
+			"add-ld-path": ".",
+			"directory": "lib/ffmpeg",
+			"version": "24.08"
+		},
+		"org.freedesktop.Platform.openh264": {
+			"add-ld-path": ".",
+			"directory": "lib/openh264",
+			"version": "2.5.1"
+		}
+	},
+	"app-id": "com.freerdp.FreeRDP",
+	"build-options": {
+		"cflags": "-O3",
+		"cxxflags": "-O3"
+	},
+	"cleanup": [
+		"*.a",
+		"*.la",
+		"/include",
+		"/lib/cmake",
+		"/lib/pkgconfig",
+		"/sbin",
+		"/share/doc",
+		"/share/examples",
+		"/share/man"
+	],
+	"command": "sdl-freerdp",
+	"finish-args": [
+		"--device=dri",
+		"--share=ipc",
+		"--socket=x11",
+		"--share=network",
+		"--socket=pulseaudio",
+		"--socket=cups",
+		"--socket=wayland",
+		"--filesystem=xdg-download",
+		"--talk-name=com.microsoft.identity.broker1",
+		"--env=OPENSSL_CONF=/app/share/legacy-openssl.cnf"
+	],
+	"modules": [
+		"modules/openssl.json",
+		"modules/libusb.json",
+		"modules/uriparser.json",
+		"modules/cJSON.json",
+		"modules/xprop.json",
+		"modules/pcsc.json",
+		"modules/krb5.json",
+		"modules/opensc.json",
+		"modules/pkcs11-helper.json",
+		"modules/SDL3.json",
+		"modules/SDL3_image.json",
+		"modules/SDL3_ttf.json",
+		"modules/sso-mib.json",
+		{
+			"builddir": true,
+			"buildsystem": "cmake-ninja",
+			"cleanup": [],
+			"config-opts": [
+				"-DCMAKE_VERBOSE_MAKEFILE=ON",
+				"-DCMAKE_BUILD_TYPE:STRING=Release",
+				"-DCMAKE_INSTALL_LIBDIR:PATH=lib",
+				"-DWITHOUT_FREERDP_3x_DEPRECATED=ON",
+				"-DWITH_SSO_MIB=ON",
+				"-DWITH_FREERDP_DEPRECATED_COMMANDLINE=ON",
+				"-DCHANNEL_TSMF:BOOL=OFF",
+				"-DCHANNEL_URBDRC:BOOL=ON",
+				"-DCHANNEL_RDPECAM_CLIENT:BOOL=ON",
+				"-DBUILD_TESTING:BOOL=OFF",
+				"-DWITH_MANPAGES:BOOL=OFF",
+				"-DWITH_KRB5:BOOL=ON",
+				"-DWITH_PCSC:BOOL=ON",
+				"-DWITH_SDL_IMAGE_DIALOGS:BOOL=ON",
+				"-DWITH_INTERNAL_MD4:BOOL=ON",
+				"-DWITH_INTERNAL_MD5:BOOL=ON",
+				"-DWITH_INTERNAL_RC4:BOOL=ON",
+				"-DWITH_PKCS11:BOOL=ON",
+				"-DWITH_SWSCALE:BOOL=ON",
+				"-DWITH_SERVER:BOOL=ON",
+				"-DWITH_SAMPLE:BOOL=ON",
+				"-DWITH_CUPS:BOOL=ON",
+				"-DWITH_OPUS:BOOL=ON",
+				"-DWITH_FUSE:BOOL=OFF",
+				"-DWITH_FFMPEG:BOOL=ON",
+				"-DWINPR_UTILS_IMAGE_PNG:BOOL=ON",
+				"-DWINPR_UTILS_IMAGE_WEBP:BOOL=ON",
+				"-DWINPR_UTILS_IMAGE_JPEG:BOOL=ON",
+				"-DWITH_URIPARSER:BOOL=ON",
+				"-DWITH_DSP_FFMPEG:BOOL=ON",
+				"-DWITH_OSS:BOOL=OFF",
+				"-DWITH_WEBVIEW:BOOL=OFF",
+				"-DWITH_PULSE:BOOL=ON"
+			],
+			"name": "freerdp",
+			"sources": [
+				{
+					"path": "../..",
+					"type": "dir"
+				}
+			]
+		},
+		{
+			"build-commands": [
+				"install -D legacy-openssl.cnf $FLATPAK_DEST/share/legacy-openssl.cnf",
+				"mkdir -p /app/lib/ffmpeg",
+				"mkdir -p /app/lib/openh264"
+			],
+			"buildsystem": "simple",
+			"name": "wrapper",
+			"sources": [
+				{
+					"path": "legacy-openssl.cnf",
+					"type": "file"
+				}
+			]
+		}
+	],
+	"runtime": "org.freedesktop.Platform",
+	"runtime-version": "24.08",
+	"sdk": "org.freedesktop.Sdk"
+}

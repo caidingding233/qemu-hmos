@@ -1,0 +1,20 @@
+set(OPTION_DEFAULT ON)
+set(OPTION_CLIENT_DEFAULT ON)
+set(OPTION_SERVER_DEFAULT OFF)
+
+define_channel_options(
+  NAME
+  "geometry"
+  TYPE
+  "dynamic"
+  DESCRIPTION
+  "Geometry tracking Virtual Channel Extension"
+  SPECIFICATIONS
+  "[MS-RDPEGT]"
+  DEFAULT
+  ${OPTION_DEFAULT}
+  CLIENT_DEFAULT
+  ${OPTION_CLIENT_DEFAULT}
+  SERVER_DEFAULT
+  ${OPTION_SERVER_DEFAULT}
+)

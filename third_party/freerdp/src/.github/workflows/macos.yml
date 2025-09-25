@@ -1,0 +1,22 @@
+name: macos-builder
+on:
+  workflow_dispatch:
+    branches: [ master, stable* ]
+  schedule:
+    - cron: '30 5 * * SUN'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    name: "Run macos build on mac-latest"
+    steps:
+      - name: "Check out source"
+        uses: actions/checkout@v4
+
+      - name: "Prepare environment"
+        run: |
+          brew install autoconf automake git libtool meson
+
+      - name: "Run mac os build..."
+        run: |
+          ./scripts/bundle-mac-os.sh
