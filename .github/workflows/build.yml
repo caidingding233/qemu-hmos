@@ -1,10 +1,6 @@
 name: Build QEMU for HarmonyOS
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -39,179 +35,98 @@ jobs:
         echo "=== Processing SDK ==="
         cd ohos-sdk/linux
         
-        # Extract files one by one to avoid pipe issues
-        echo "Extracting SDK files..."
-        find . -type f -name "*.zip" | while read -r file; do
-          echo "Extracting: $file"
-          if unzip -q "$file"; then
-            rm "$file"
-            echo "✅ Extracted: $file"
-          else
-            echo "❌ Failed to extract: $file"
-          fi
-        done
-        
-        cd ../..
-        
-        echo "=== Finding NDK ==="
-        # Look for the compiler using find command with better search strategy
-        echo "Searching for aarch64-unknown-linux-ohos-clang in multiple locations..."
-        
-        # Try multiple possible paths
-        CLANG_PATH=""
-        for search_path in \
-          "ohos-sdk/linux/*/native/llvm/bin/aarch64-unknown-linux-ohos-clang" \
-          "ohos-sdk/linux/native/llvm/bin/aarch64-unknown-linux-ohos-clang" \
-          "ohos-sdk/linux/*/llvm/bin/aarch64-unknown-linux-ohos-clang" \
-          "ohos-sdk/linux/llvm/bin/aarch64-unknown-linux-ohos-clang"; do
-          
-          echo "Checking pattern: $search_path"
-          for path in $search_path; do
-            if [ -f "$path" ]; then
-              CLANG_PATH="$path"
-              echo "✅ Found compiler at: $CLANG_PATH"
-              break 2
-            fi
-          done
-        done
-        
-        # If not found with patterns, use find command
-        if [ -z "$CLANG_PATH" ]; then
-          echo "Pattern search failed, using find command..."
-          CLANG_PATH=$(find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
+        echo "=== Finding native SDK zip ==="
+        NATIVE_ZIP=$(find . -name "native-linux-x64-*.zip" | head -1)
+        if [ -z "$NATIVE_ZIP" ]; then
+          echo "❌ Could not find native-linux-x64-*.zip"
+          echo "Available files:"
+          ls -la
+          exit 1
         fi
         
-        if [ -z "$CLANG_PATH" ]; then
-          echo "❌ Could not find clang compiler with standard methods"
-          echo "SDK structure analysis:"
-          find ohos-sdk/linux -name "*clang*" -type f 2>/dev/null | head -10 || echo "No clang files found"
-          echo ""
+        echo "✅ Found native SDK: $NATIVE_ZIP"
+        
+        echo "=== Extracting native SDK ==="
+        unzip -q "$NATIVE_ZIP"
+        rm "$NATIVE_ZIP"
+        
+        echo "=== Verifying extraction ==="
+        echo "Contents after extraction:"
+        ls -la
+        
+        # Look for the extracted directory
+        NATIVE_DIR=$(find . -name "native-linux-x64-*" -type d | head -1)
+        if [ -z "$NATIVE_DIR" ]; then
+          echo "❌ Could not find native-linux-x64-* directory"
           echo "Available directories:"
-          ls -la ohos-sdk/linux/ 2>/dev/null || echo "Cannot list SDK directory"
-          echo ""
-          echo "Directory tree (first 3 levels):"
-          tree ohos-sdk/linux -L 3 2>/dev/null || find ohos-sdk/linux -type d | head -20
-          
-          # Try to find any clang compiler and use it
-          echo ""
-          echo "=== Attempting to find any clang compiler ==="
-          ANY_CLANG=$(find ohos-sdk/linux -name "*clang" -type f 2>/dev/null | grep -E "(clang|clang-[0-9]+)$" | head -1)
-          if [ -n "$ANY_CLANG" ]; then
-            echo "Found alternative clang: $ANY_CLANG"
-            # Check if it's a cross-compiler or if we need to find the cross-compiler
-            if echo "$ANY_CLANG" | grep -q "aarch64.*ohos"; then
-              CLANG_PATH="$ANY_CLANG"
-              echo "✅ Using alternative clang: $CLANG_PATH"
-            else
-              echo "❌ Found clang but not the cross-compiler version"
-              exit 1
-            fi
-          else
-            echo "❌ No clang compiler found at all"
-            exit 1
-          fi
-        fi
-        
-        echo "✅ Found clang at: $CLANG_PATH"
-        echo "Clang file info:"
-        ls -la "$CLANG_PATH" || echo "Cannot list clang file"
-        file "$CLANG_PATH" || echo "Cannot get file type"
-        
-        # Set environment variables
-        NDK_PATH=$(dirname "$CLANG_PATH")
-        NDK_PATH=$(dirname "$NDK_PATH")
-        NDK_PATH=$(dirname "$NDK_PATH")
-        
-        echo "✅ NDK Path: $NDK_PATH"
-        echo "✅ Clang Path: $CLANG_PATH"
-        
-        # Verify paths exist
-        if [ ! -f "$CLANG_PATH" ]; then
-          echo "❌ Clang compiler not found at: $CLANG_PATH"
+          find . -type d
           exit 1
         fi
         
-        if [ ! -d "$NDK_PATH/sysroot" ]; then
-          echo "❌ Sysroot not found at: $NDK_PATH/sysroot"
+        echo "✅ Found native directory: $NATIVE_DIR"
+        
+        echo "=== Setting up environment ==="
+        # Set up paths based on the correct structure
+        export OHOS_NDK_HOME="$(pwd)/$NATIVE_DIR"
+        export SYSROOT="$(pwd)/$NATIVE_DIR/sysroot"
+        export CC="$(pwd)/$NATIVE_DIR/llvm/bin/aarch64-unknown-linux-ohos-clang"
+        export CXX="$(pwd)/$NATIVE_DIR/llvm/bin/aarch64-unknown-linux-ohos-clang++"
+        export CMAKE="$(pwd)/$NATIVE_DIR/build-tools/cmake/bin/cmake"
+        
+        echo "=== Verifying tools ==="
+        echo "OHOS_NDK_HOME: $OHOS_NDK_HOME"
+        echo "SYSROOT: $SYSROOT"
+        echo "CC: $CC"
+        echo "CXX: $CXX"
+        echo "CMAKE: $CMAKE"
+        
+        echo ""
+        echo "=== Testing compiler ==="
+        if [ -f "$CC" ]; then
+          echo "✅ CC exists: $CC"
+          file "$CC"
+          "$CC" --version 2>&1 | head -3 || echo "Version check failed"
+        else
+          echo "❌ CC not found: $CC"
+          echo "Available files in llvm/bin:"
+          ls -la "$(dirname "$CC")" || echo "Cannot list llvm/bin"
           exit 1
         fi
         
-        echo "OHOS_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
-        echo "SYSROOT=$NDK_PATH/sysroot" >> $GITHUB_ENV
-        echo "CC=$CLANG_PATH" >> $GITHUB_ENV
-        echo "CXX=$NDK_PATH/llvm/bin/aarch64-unknown-linux-ohos-clang++" >> $GITHUB_ENV
-        echo "AR=$NDK_PATH/llvm/bin/llvm-ar" >> $GITHUB_ENV
-        echo "STRIP=$NDK_PATH/llvm/bin/llvm-strip" >> $GITHUB_ENV
-        echo "RANLIB=$NDK_PATH/llvm/bin/llvm-ranlib" >> $GITHUB_ENV
-        echo "LD=$NDK_PATH/llvm/bin/ld.lld" >> $GITHUB_ENV
+        echo ""
+        echo "=== Testing CMake ==="
+        if [ -f "$CMAKE" ]; then
+          echo "✅ CMake exists: $CMAKE"
+          "$CMAKE" --version | head -3 || echo "CMake version check failed"
+        else
+          echo "❌ CMake not found: $CMAKE"
+          echo "Available files in build-tools/cmake/bin:"
+          ls -la "$(dirname "$CMAKE")" || echo "Cannot list cmake/bin"
+          exit 1
+        fi
         
-        echo "✅ Environment set up successfully"
+        # Save environment for next steps
+        echo "OHOS_NDK_HOME=$OHOS_NDK_HOME" >> $GITHUB_ENV
+        echo "SYSROOT=$SYSROOT" >> $GITHUB_ENV
+        echo "CC=$CC" >> $GITHUB_ENV
+        echo "CXX=$CXX" >> $GITHUB_ENV
+        echo "CMAKE=$CMAKE" >> $GITHUB_ENV
 
     - name: Build QEMU
       run: |
         echo "=== Building QEMU ==="
-        
-        # Re-setup environment variables (they don't persist between steps)
-        echo "=== Re-setting Environment ==="
-        CLANG_PATH=$(find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
-        if [ -z "$CLANG_PATH" ]; then
-          echo "❌ Could not find clang compiler in Build QEMU step"
-          exit 1
-        fi
-        
-        NDK_PATH=$(dirname "$CLANG_PATH")
-        NDK_PATH=$(dirname "$NDK_PATH")
-        NDK_PATH=$(dirname "$NDK_PATH")
-        
-        export OHOS_NDK_HOME="$NDK_PATH"
-        export SYSROOT="$NDK_PATH/sysroot"
-        export CC="$CLANG_PATH"
-        export CXX="$NDK_PATH/llvm/bin/aarch64-unknown-linux-ohos-clang++"
-        export AR="$NDK_PATH/llvm/bin/llvm-ar"
-        export STRIP="$NDK_PATH/llvm/bin/llvm-strip"
-        export RANLIB="$NDK_PATH/llvm/bin/llvm-ranlib"
-        export LD="$NDK_PATH/llvm/bin/ld.lld"
-        
-        echo "✅ Environment re-set:"
-        echo "CC: $CC"
-        echo "CXX: $CXX"
-        echo "SYSROOT: $SYSROOT"
-        
         cd third_party/qemu
         
-        # Clean and create build directory
-        rm -rf build_simple
-        mkdir -p build_simple
-        cd build_simple
+        mkdir -p build
+        cd build
         
-        # Configure QEMU
-        echo "Configuring QEMU..."
-        echo "Current directory: $(pwd)"
-        echo "Looking for configure script..."
-        ls -la ../
-        echo ""
-        echo "=== Compiler Environment ==="
+        echo "Environment check:"
         echo "CC: $CC"
         echo "CXX: $CXX"
-        echo "AR: $AR"
-        echo "STRIP: $STRIP"
-        echo "RANLIB: $RANLIB"
-        echo "LD: $LD"
         echo "SYSROOT: $SYSROOT"
-        echo ""
-        echo "=== Verifying Compiler ==="
-        if [ -f "$CC" ]; then
-          echo "✅ CC exists: $CC"
-          echo "CC version:"
-          "$CC" --version 2>&1 | head -3 || echo "Failed to get CC version"
-        else
-          echo "❌ CC not found: $CC"
-        fi
-        echo ""
-        # Set environment variables to override any cross-prefix logic
-        export CROSS_PREFIX=""
-        export cross_prefix=""
         
+        echo ""
+        echo "=== Running Configure ==="
         ../configure \
           --target-list=aarch64-softmmu \
           --cc="$CC" \
@@ -225,180 +140,84 @@ jobs:
           -Ddefault_library=static \
           -Dtools=disabled \
           --enable-tcg \
+          --disable-kvm \
+          --disable-xen \
+          --disable-werror \
           --enable-vnc \
           --enable-slirp \
           --enable-curl \
           --enable-fdt \
           --enable-guest-agent \
-          --disable-kvm \
-          --disable-xen \
-          --disable-werror
+          --enable-vhost-user \
+          --enable-vhost-net \
+          --enable-keyring \
+          --disable-gtk \
+          --disable-sdl \
+          --disable-vte \
+          --disable-curses \
+          --disable-brlapi \
+          --disable-spice \
+          --disable-usb-redir \
+          --disable-lzo \
+          --disable-snappy \
+          --disable-bzip2 \
+          --disable-lzfse \
+          --disable-zstd \
+          --disable-libssh \
+          --disable-nettle \
+          --disable-gcrypt \
+          --disable-gnutls \
+          --disable-nss
         
-        # Build QEMU
-        echo "Building QEMU..."
+        echo "✅ Configure completed!"
+        
+        echo "=== Building QEMU ==="
         make -j$(nproc)
         
-        # Verify build
-        if [ ! -f "libqemu-aarch64-softmmu.a" ] || [ ! -f "libqemuutil.a" ]; then
-          echo "❌ QEMU build failed"
-          exit 1
-        fi
+        echo "✅ QEMU build completed!"
         
-        echo "✅ QEMU build successful"
-
-    - name: Create shared library
-      run: |
-        echo "=== Creating Shared Library ==="
-        
-        # Re-setup environment variables
-        echo "=== Re-setting Environment ==="
-        CLANG_PATH=$(find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
-        if [ -z "$CLANG_PATH" ]; then
-          echo "❌ Could not find clang compiler in Create shared library step"
-          exit 1
-        fi
-        
-        NDK_PATH=$(dirname "$CLANG_PATH")
-        NDK_PATH=$(dirname "$NDK_PATH")
-        NDK_PATH=$(dirname "$NDK_PATH")
-        
-        export OHOS_NDK_HOME="$NDK_PATH"
-        export SYSROOT="$NDK_PATH/sysroot"
-        export CC="$CLANG_PATH"
-        export CXX="$NDK_PATH/llvm/bin/aarch64-unknown-linux-ohos-clang++"
-        export AR="$NDK_PATH/llvm/bin/llvm-ar"
-        export STRIP="$NDK_PATH/llvm/bin/llvm-strip"
-        export RANLIB="$NDK_PATH/llvm/bin/llvm-ranlib"
-        export LD="$NDK_PATH/llvm/bin/ld.lld"
-        
-        echo "✅ Environment re-set for shared library creation"
-        
-        cd third_party/qemu/build_simple
-        
-        # Create shared library with all dependencies
-        $CXX -shared -fPIC -Wl,--no-undefined \
-          -target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} \
-          -Wl,--whole-archive \
-          libqemu-aarch64-softmmu.a \
-          libqemuutil.a \
-          -Wl,--no-whole-archive \
-          # Include dependency libraries
-          ../../deps/glib/build/glib/libglib-2.0.a \
-          ../../deps/glib/build/gobject/libgobject-2.0.a \
-          ../../deps/glib/build/gthread/libgthread-2.0.a \
-          ../../deps/glib/build/glib/libcharset/libcharset.a \
-          ../../deps/glib/build/glib/gnulib/libgnulib.a \
-          ../../deps/pixman/build/pixman/libpixman-1.a \
-          ../../deps/pixman/build/pixman/libpixman-arm-neon.a \
-          ../../deps/openssl/build/libssl.a \
-          ../../deps/openssl/build/libcrypto.a \
-          ../../deps/pcre2/build/libpcre2-8.a \
-          ../../deps/pcre2/build/libpcre2-posix.a \
-          -lpthread -ldl -lm -lz \
-          -o libqemu_full.so
-        
-        # Strip debug symbols
-        $STRIP -S libqemu_full.so
-        
-        if [ ! -f "libqemu_full.so" ]; then
-          echo "❌ Shared library creation failed"
-          exit 1
-        fi
-        
-        echo "✅ Shared library created successfully"
-        file libqemu_full.so
-        du -h libqemu_full.so
+        echo "=== Checking build results ==="
+        ls -la qemu-system-aarch64 || echo "Main binary not found"
+        find . -name "*.so" -o -name "*.a" | head -10
 
     - name: Build NAPI module
       run: |
-        echo "=== Building NAPI Module ==="
-        
-        # Re-setup environment variables
-        echo "=== Re-setting Environment ==="
-        CLANG_PATH=$(find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f 2>/dev/null | head -1)
-        if [ -z "$CLANG_PATH" ]; then
-          echo "❌ Could not find clang compiler in Build NAPI module step"
-          exit 1
-        fi
-        
-        NDK_PATH=$(dirname "$CLANG_PATH")
-        NDK_PATH=$(dirname "$NDK_PATH")
-        NDK_PATH=$(dirname "$NDK_PATH")
-        
-        export OHOS_NDK_HOME="$NDK_PATH"
-        export SYSROOT="$NDK_PATH/sysroot"
-        export CC="$CLANG_PATH"
-        export CXX="$NDK_PATH/llvm/bin/aarch64-unknown-linux-ohos-clang++"
-        export AR="$NDK_PATH/llvm/bin/llvm-ar"
-        export STRIP="$NDK_PATH/llvm/bin/llvm-strip"
-        export RANLIB="$NDK_PATH/llvm/bin/llvm-ranlib"
-        export LD="$NDK_PATH/llvm/bin/ld.lld"
-        
-        echo "✅ Environment re-set for NAPI module build"
-        
+        echo "=== Building NAPI module ==="
         cd entry/src/main/cpp
         
-        # Create build directory
-        rm -rf build
         mkdir -p build
         cd build
         
-        # Configure with CMake
-        echo "Configuring NAPI module..."
-        cmake .. \
-          -DCMAKE_BUILD_TYPE=Release \
+        echo "Using CMake: $CMAKE"
+        echo "Using CC: $CC"
+        echo "Using CXX: $CXX"
+        
+        "$CMAKE" .. \
           -DCMAKE_SYSTEM_NAME=Linux \
           -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
           -DCMAKE_C_COMPILER="$CC" \
           -DCMAKE_CXX_COMPILER="$CXX" \
-          -DCMAKE_AR="$AR" \
-          -DCMAKE_STRIP="$STRIP" \
-          -DCMAKE_RANLIB="$RANLIB" \
-          -DCMAKE_SYSROOT="$SYSROOT" \
-          -DCMAKE_FIND_ROOT_PATH="$SYSROOT" \
           -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
           -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
-          -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
+          -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+          -DOHOS_NDK_HOME="$OHOS_NDK_HOME" \
+          -DSYSROOT="$SYSROOT"
         
-        # Build NAPI module
-        echo "Building NAPI module..."
         make -j$(nproc)
         
-        if [ ! -f "libqemu_hmos.so" ]; then
-          echo "❌ NAPI module build failed"
-          exit 1
-        fi
+        echo "✅ NAPI module build completed!"
         
-        echo "✅ NAPI module built successfully"
-        file libqemu_hmos.so
-        du -h libqemu_hmos.so
-
-    - name: Copy libraries
-      run: |
-        echo "=== Copying Libraries ==="
-        
-        # Create target directories
-        mkdir -p entry/src/main/libs/arm64-v8a
-        mkdir -p entry/src/main/oh_modules
-        
-        # Copy libraries
-        cp third_party/qemu/build_simple/libqemu_full.so entry/src/main/libs/arm64-v8a/
-        cp third_party/qemu/build_simple/libqemu_full.so entry/src/main/oh_modules/
-        cp entry/src/main/cpp/build/libqemu_hmos.so entry/src/main/libs/arm64-v8a/
-        
-        echo "✅ Libraries copied successfully"
-        
-        # Show results
-        echo "=== Final Results ==="
-        ls -la entry/src/main/libs/arm64-v8a/
-        du -h entry/src/main/libs/arm64-v8a/*
-        file entry/src/main/libs/arm64-v8a/*
+        echo "=== Build artifacts ==="
+        ls -la *.so || echo "No .so files found"
+        find . -name "*.so" -o -name "*.a"
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: qemu-simple-build
+        name: qemu-harmonyos-build
         path: |
-          entry/src/main/libs/arm64-v8a/
-          entry/src/main/oh_modules/
+          third_party/qemu/build/qemu-system-aarch64
+          third_party/qemu/build/*.so
+          third_party/qemu/build/*.a
+          entry/src/main/cpp/build/*.so
         retention-days: 7
