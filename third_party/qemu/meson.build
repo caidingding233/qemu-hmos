@@ -3928,11 +3928,11 @@ subdir('bsd-user')
 subdir('linux-user')
 
 # needed for fuzzing binaries
-subdir('tests/qtest/libqos')
-subdir('tests/qtest/fuzz')
+# subdir('tests/qtest/libqos')
+# subdir('tests/qtest/fuzz')
 
 # accel modules
-target_modules += { 'accel' : { 'qtest': qtest_module_ss }}
+# target_modules += { 'accel' : { 'qtest': qtest_module_ss }}
 
 ##############################################
 # Internal static_libraries and dependencies #
