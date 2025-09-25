@@ -199,6 +199,20 @@ jobs:
           echo "❌ No clang compiler found"
           echo "Available files in native directory:"
           find "$NATIVE_DIR" -type f | head -20
+          LLVM_BIN_DIR="$(pwd)/$NATIVE_DIR/llvm/bin"
+          if [ -d "$LLVM_BIN_DIR" ]; then
+            echo ""
+            echo "Attempting fallback discovery in $LLVM_BIN_DIR"
+            CLANG_AUTO=$(find "$LLVM_BIN_DIR" -maxdepth 1 -name "clang*" -type f | head -1)
+            if [ -n "$CLANG_AUTO" ]; then
+              echo "✅ Auto-detected CC candidate: $CLANG_AUTO"
+              CC="$CLANG_AUTO"
+            fi
+          fi
+        fi
+
+        if [ -z "$CC" ]; then
+          echo "❌ Still no clang compiler found"
           exit 1
         fi
         
@@ -221,6 +235,18 @@ jobs:
         
         if [ -z "$CXX" ]; then
           echo "⚠️ No C++ compiler found, using CC for CXX"
+          LLVM_BIN_DIR="$(pwd)/$NATIVE_DIR/llvm/bin"
+          if [ -d "$LLVM_BIN_DIR" ]; then
+            CLANGXX_AUTO=$(find "$LLVM_BIN_DIR" -maxdepth 1 -name "clang++*" -type f | head -1)
+            if [ -n "$CLANGXX_AUTO" ]; then
+              echo "✅ Auto-detected clang++ candidate: $CLANGXX_AUTO"
+              CXX="$CLANGXX_AUTO"
+            fi
+          fi
+        fi
+
+        if [ -z "$CXX" ]; then
+          echo "⚠️ Falling back to CC for CXX"
           CXX="$CC"
         fi
         
@@ -323,9 +349,7 @@ jobs:
           --disable-zstd \
           --disable-libssh \
           --disable-nettle \
-          --disable-gcrypt \
-          --disable-gnutls \
-          --disable-nss
+          --disable-gcrypt
         
         echo "✅ Configure completed!"
         

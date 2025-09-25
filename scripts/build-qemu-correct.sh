@@ -150,9 +150,7 @@ echo "=== Running Configure ==="
   --disable-zstd \
   --disable-libssh \
   --disable-nettle \
-  --disable-gcrypt \
-  --disable-gnutls \
-  --disable-nss
+  --disable-gcrypt
 
 echo "✅ Configure completed!"
 
