@@ -130,10 +130,13 @@ jobs:
           find . -type d | head -20
           exit 1
         fi
-        
+
         echo "=== Analyzing native directory ==="
         echo "Contents of $NATIVE_DIR:"
         ls -la "$NATIVE_DIR"
+
+        # Persist native directory path for later steps
+        echo "NATIVE_DIR=$NATIVE_DIR" >> $GITHUB_ENV
         
         echo ""
         echo "Looking for llvm directory:"
