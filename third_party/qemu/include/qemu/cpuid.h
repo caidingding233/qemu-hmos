@@ -7,11 +7,37 @@
 #ifndef QEMU_CPUID_H
 #define QEMU_CPUID_H
 
+#if defined(__x86_64__) || defined(__i386__)
 #ifndef CONFIG_CPUID_H
 # error "<cpuid.h> is unusable with this compiler"
 #endif
-
 #include <cpuid.h>
+#else
+/* ARM and other architectures don't have cpuid.h */
+/* Define dummy macros for non-x86 architectures */
+#define bit_CMOV        (1 << 15)
+#define bit_SSE2        (1 << 26)
+#define bit_PCLMUL      (1 << 1)
+#define bit_SSE4_1      (1 << 19)
+#define bit_MOVBE       (1 << 22)
+#define bit_OSXSAVE     (1 << 27)
+#define bit_AVX         (1 << 28)
+#define bit_BMI         (1 << 3)
+#define bit_AVX2        (1 << 5)
+#define bit_BMI2        (1 << 8)
+#define bit_AVX512F     (1 << 16)
+#define bit_AVX512DQ    (1 << 17)
+#define bit_AVX512BW    (1 << 30)
+#define bit_AVX512VL    (1u << 31)
+#define bit_AVX512VBMI2 (1 << 6)
+#define bit_LZCNT       (1 << 5)
+#define signature_INTEL_ebx     0x756e6547
+#define signature_INTEL_edx     0x49656e69
+#define signature_INTEL_ecx     0x6c65746e
+#define signature_AMD_ebx       0x68747541
+#define signature_AMD_edx       0x69746e65
+#define signature_AMD_ecx       0x444d4163
+#endif
 
 /* Cover the uses that we have within qemu.  */
 /* ??? Irritating that we have the same information in target/i386/.  */
