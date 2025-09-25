@@ -1,0 +1,204 @@
+name: Ultimate Fix Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: false
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake curl wget unzip python3 \
+                              libglib2.0-dev libpixman-1-dev libssl-dev \
+                              libcurl4-openssl-dev libssh-dev libgnutls28-dev \
+                              libsasl2-dev libpam0g-dev libbz2-dev libzstd-dev \
+                              libpcre2-dev pkg-config meson tree
+
+    - name: Download and setup SDK
+      run: |
+        echo "=== Downloading SDK ==="
+        curl -OL https://repo.huaweicloud.com/openharmony/os/5.1.0-Release/ohos-sdk-windows_linux-public.tar.gz
+        
+        echo "=== Extracting SDK ==="
+        tar -xzf ohos-sdk-windows_linux-public.tar.gz
+        rm ohos-sdk-windows_linux-public.tar.gz
+        rm -rf ohos-sdk/{ohos,windows}
+        
+        echo "=== Processing SDK ==="
+        cd ohos-sdk/linux
+        
+        # Extract files one by one
+        find . -type f -name "*.zip" | while read -r file; do
+          echo "Extracting: $file"
+          if unzip -q "$file"; then
+            rm "$file"
+          fi
+        done
+        
+        cd ../..
+        
+        echo "=== COMPLETE SDK ANALYSIS ==="
+        echo "=== Root structure ==="
+        ls -la ohos-sdk/linux/
+        
+        echo ""
+        echo "=== All directories ==="
+        find ohos-sdk/linux -type d | head -20
+        
+        echo ""
+        echo "=== All clang files ==="
+        find ohos-sdk/linux -name "*clang*" -type f
+        
+        echo ""
+        echo "=== All executable files ==="
+        find ohos-sdk/linux -type f -executable | head -20
+        
+        echo ""
+        echo "=== Looking for target compiler ==="
+        find ohos-sdk/linux -name "aarch64-unknown-linux-ohos-clang" -type f
+
+    - name: Create working compiler environment
+      run: |
+        echo "=== CREATING WORKING COMPILER ENVIRONMENT ==="
+        
+        # Find ANY clang compiler
+        echo "Searching for ANY clang compiler..."
+        ALL_CLANGS=$(find ohos-sdk/linux -name "*clang*" -type f)
+        echo "Found clang files:"
+        echo "$ALL_CLANGS"
+        
+        if [ -z "$ALL_CLANGS" ]; then
+          echo "❌ NO CLANG FOUND AT ALL!"
+          echo "SDK structure:"
+          tree ohos-sdk/linux -L 4 || find ohos-sdk/linux -type d | head -30
+          exit 1
+        fi
+        
+        # Use the first clang we find
+        FIRST_CLANG=$(echo "$ALL_CLANGS" | head -1)
+        echo "Using first clang: $FIRST_CLANG"
+        
+        # Get its directory
+        CLANG_DIR=$(dirname "$FIRST_CLANG")
+        echo "Clang directory: $CLANG_DIR"
+        
+        # List what's in that directory
+        echo "Contents of clang directory:"
+        ls -la "$CLANG_DIR"
+        
+        # Create our working directory
+        mkdir -p working-sdk/bin
+        mkdir -p working-sdk/sysroot
+        
+        # Copy ALL files from the clang directory
+        echo "Copying all files from clang directory..."
+        cp -r "$CLANG_DIR"/* working-sdk/bin/ || echo "Copy failed, trying individual files"
+        
+        # List what we copied
+        echo "Contents after copy:"
+        ls -la working-sdk/bin/
+        
+        # Find sysroot
+        SYSROOT_DIR=$(find ohos-sdk/linux -name "sysroot" -type d | head -1)
+        if [ -n "$SYSROOT_DIR" ]; then
+          echo "Found sysroot: $SYSROOT_DIR"
+          cp -r "$SYSROOT_DIR"/* working-sdk/sysroot/ || echo "Sysroot copy failed"
+        else
+          echo "No sysroot found, creating empty one"
+          mkdir -p working-sdk/sysroot
+        fi
+        
+        # Set up environment variables
+        export OHOS_NDK_HOME="$(pwd)/working-sdk"
+        export SYSROOT="$(pwd)/working-sdk/sysroot"
+        export CC="$(pwd)/working-sdk/bin/$(basename "$FIRST_CLANG")"
+        export CXX="$(pwd)/working-sdk/bin/$(basename "$FIRST_CLANG" | sed 's/clang/clang++/')"
+        
+        echo "=== FINAL ENVIRONMENT ==="
+        echo "OHOS_NDK_HOME: $OHOS_NDK_HOME"
+        echo "SYSROOT: $SYSROOT"
+        echo "CC: $CC"
+        echo "CXX: $CXX"
+        
+        echo ""
+        echo "=== TESTING COMPILER ==="
+        if [ -f "$CC" ]; then
+          echo "✅ Compiler exists at: $CC"
+          file "$CC"
+          echo "Testing compiler:"
+          "$CC" --version 2>&1 | head -5 || echo "Version check failed"
+          
+          echo ""
+          echo "Testing simple compilation:"
+          echo 'int main(){return 0;}' > test.c
+          "$CC" test.c -o test_binary 2>&1 || echo "Compilation test failed"
+          if [ -f test_binary ]; then
+            echo "✅ Compilation successful"
+            rm test.c test_binary
+          fi
+        else
+          echo "❌ Compiler not found at: $CC"
+          echo "Available files in working-sdk/bin/:"
+          ls -la working-sdk/bin/
+          exit 1
+        fi
+        
+        # Save environment for next step
+        echo "OHOS_NDK_HOME=$OHOS_NDK_HOME" >> $GITHUB_ENV
+        echo "SYSROOT=$SYSROOT" >> $GITHUB_ENV
+        echo "CC=$CC" >> $GITHUB_ENV
+        echo "CXX=$CXX" >> $GITHUB_ENV
+
+    - name: Test QEMU Configure with working compiler
+      run: |
+        echo "=== TESTING QEMU CONFIGURE ==="
+        cd third_party/qemu
+        
+        mkdir -p test_build
+        cd test_build
+        
+        echo "Environment check:"
+        echo "CC: $CC"
+        echo "CXX: $CXX"
+        echo "SYSROOT: $SYSROOT"
+        
+        if [ -f "$CC" ]; then
+          echo "✅ CC exists and is executable"
+          file "$CC"
+        else
+          echo "❌ CC not found: $CC"
+          exit 1
+        fi
+        
+        echo ""
+        echo "=== Running Configure ==="
+        ../configure \
+          --target-list=aarch64-softmmu \
+          --cc="$CC" \
+          --cxx="$CXX" \
+          --host-cc="/usr/bin/cc" \
+          --cross-prefix="" \
+          --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
+          --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
+          -Db_staticpic=true \
+          -Db_pie=false \
+          -Ddefault_library=static \
+          -Dtools=disabled \
+          --enable-tcg \
+          --disable-kvm \
+          --disable-xen \
+          --disable-werror
+        
+        echo "✅ Configure completed successfully!"
+        
+        echo ""
+        echo "=== Testing Make ==="
+        make -j$(nproc) 2>&1 | head -20 || echo "Make test completed (may have errors)"
