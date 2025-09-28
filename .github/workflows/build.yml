@@ -263,8 +263,8 @@ jobs:
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT}" \
-          --extra-cxxflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT}" \
+          --extra-cflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include" \
+          --extra-cxxflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include" \
           --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT}" \
           -Db_staticpic=true \
           -Db_pie=false \
@@ -296,7 +296,8 @@ jobs:
           --disable-zstd \
           --disable-libssh \
           --disable-nettle \
-          --disable-gcrypt
+          --disable-gcrypt \
+          --enable-gnutls
         
         echo "✅ Configure completed!"
         
