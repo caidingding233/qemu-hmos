@@ -1,4 +1,4 @@
-name: Build QEMU for HarmonyOS (Smart)
+name: Build QEMU with Huawei's toolchain (Smart)
 
 on:
   workflow_dispatch:

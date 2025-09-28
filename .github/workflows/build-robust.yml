@@ -1,4 +1,4 @@
-name: Build QEMU for HarmonyOS (Robust)
+name: Build QEMU for Huawei's toolchain (Robust)
 
 on:
   workflow_dispatch:

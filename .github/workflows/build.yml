@@ -1,4 +1,4 @@
-name: Build QEMU for HarmonyOS
+name: Build QEMU for HarmonyOS, using Huawei's toolchain
 
 on:
   workflow_dispatch:
