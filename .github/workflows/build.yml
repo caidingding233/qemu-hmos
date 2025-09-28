@@ -332,6 +332,11 @@ jobs:
         export CXX="$CXX"
         export CMAKE="$CMAKE"
 
+        echo "Debug: OHOS_NDK_HOME=$OHOS_NDK_HOME"
+        echo "Debug: SYSROOT=$SYSROOT"
+        echo "Debug: CC=$CC"
+        echo "Debug: CXX=$CXX"
+
         echo "=== Building NAPI module ==="
         cd entry/src/main/cpp
 
