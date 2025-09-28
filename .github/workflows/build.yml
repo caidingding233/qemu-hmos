@@ -258,6 +258,12 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
+        # 设置pkg-config使用HarmonyOS SDK的库配置
+        export PKG_CONFIG_LIBDIR=""
+        export PKG_CONFIG_PATH=""
+        # 禁用glib依赖，使用内部实现
+        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT}"
+        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT}"
         ../configure \
           --target-list=aarch64-softmmu \
           --cc="$CC" \
@@ -284,6 +290,7 @@ jobs:
           --enable-vhost-net \
           --enable-keyring \
           --disable-gtk \
+          --disable-glib \
           --disable-sdl \
           --disable-vte \
           --disable-curses \
