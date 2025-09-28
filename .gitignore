@@ -89,3 +89,4 @@ third_party/**/*.dll
 !third_party/**/*.wrap
 .cursor/rules
 WARP.md
+AGENTS.md
