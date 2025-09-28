@@ -258,9 +258,9 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
-        # 使用系统glib配置，跳过sizeof检查（因为是交叉编译）
-        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT}"
-        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT}"
+        # 使用系统头文件和HarmonyOS sysroot混合模式
+        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include"
+        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include"
         ../configure \
           --target-list=aarch64-softmmu \
           --cc="$CC" \
