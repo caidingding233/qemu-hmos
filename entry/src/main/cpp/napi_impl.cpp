@@ -76,10 +76,40 @@ napi_status napi_get_boolean(napi_env env, bool value, napi_value* result) {
     return napi_ok;
 }
 
+napi_status napi_get_null(napi_env env, napi_value* result) {
+    (void)env;
+    if (result) {
+        *result = nullptr;
+    }
+    return napi_ok;
+}
+
+napi_status napi_create_arraybuffer(napi_env env, size_t length, void** data, napi_value* result) {
+    (void)env;
+    void* buffer = nullptr;
+    if (length > 0) {
+        buffer = malloc(length);
+        if (buffer && data) {
+            memset(buffer, 0, length);
+        }
+    }
+    if (data) {
+        *data = buffer;
+    }
+    if (result) {
+        *result = (napi_value)buffer;
+    }
+    return napi_ok;
+}
+
 napi_status napi_define_properties(napi_env env, napi_value object,
                                   size_t property_count,
                                   const napi_property_descriptor* properties) {
     // 简化实现，返回成功
+    (void)env;
+    (void)object;
+    (void)property_count;
+    (void)properties;
     return napi_ok;
 }
 
@@ -96,12 +126,17 @@ napi_status napi_create_array(napi_env env, napi_value* result) {
 
 napi_status napi_set_element(napi_env env, napi_value object, uint32_t index, napi_value value) {
     // 简化实现，返回成功
+    (void)env;
+    (void)object;
+    (void)index;
+    (void)value;
     return napi_ok;
 }
 
 void napi_module_register(napi_module_simple* mod) {
-    // 简化实现，什么都不做
-    (void)mod;
+    if (mod && mod->nm_register_func) {
+        mod->nm_register_func(nullptr, nullptr);
+    }
 }
 
 } // extern "C"
