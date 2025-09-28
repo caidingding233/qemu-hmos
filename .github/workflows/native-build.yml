@@ -6,7 +6,6 @@ on:
       - main
       - master
       - work
-  pull_request:
 
 jobs:
   build-host-shim:
