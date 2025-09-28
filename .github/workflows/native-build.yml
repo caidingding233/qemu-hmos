@@ -20,3 +20,17 @@ jobs:
 
       - name: Build host shim
         run: cmake --build build/host --parallel
+      - name: say ojbk
+        run: echo "MOMPIG says ojbk"
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-harmonyos-build
+          path: |
+            third_party/qemu/build/qemu-system-aarch64
+            third_party/qemu/build/*.so
+            third_party/qemu/build/*.a
+            entry/src/main/libs/arm64-v8a/*.so
+          retention-days: 7
+  
