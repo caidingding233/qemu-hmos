@@ -301,12 +301,20 @@ jobs:
 
     - name: Build QEMU
       run: |
+        echo "=== Restoring environment variables ==="
+        # Restore environment variables from previous step
+        export OHOS_NDK_HOME="$OHOS_NDK_HOME"
+        export SYSROOT="$SYSROOT"
+        export CC="$CC"
+        export CXX="$CXX"
+        export CMAKE="$CMAKE"
+
         echo "=== Building QEMU ==="
         cd third_party/qemu
-        
+
         mkdir -p build
         cd build
-        
+
         echo "Environment check:"
         echo "CC: $CC"
         echo "CXX: $CXX"
