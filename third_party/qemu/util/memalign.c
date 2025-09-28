@@ -55,6 +55,11 @@ void *qemu_try_memalign(size_t alignment, size_t size)
         errno = ret;
         ptr = NULL;
     }
+#elif defined(CONFIG_ALIGNED_ALLOC)
+    if (!QEMU_IS_ALIGNED(size, alignment)) {
+        size = QEMU_ALIGN_UP(size, alignment);
+    }
+    ptr = aligned_alloc(alignment, size);
 #elif defined(CONFIG_ALIGNED_MALLOC)
     ptr = _aligned_malloc(size, alignment);
 #elif defined(CONFIG_VALLOC)

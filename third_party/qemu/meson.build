@@ -2695,6 +2695,7 @@ config_host_data.set('CONFIG_SCHED_GETCPU', cc.has_function('sched_getcpu', pref
 # Note that we need to specify prefix: here to avoid incorrectly
 # thinking that Windows has posix_memalign()
 config_host_data.set('CONFIG_POSIX_MEMALIGN', cc.has_function('posix_memalign', prefix: '#include <stdlib.h>'))
+config_host_data.set('CONFIG_ALIGNED_ALLOC', cc.has_function('aligned_alloc', prefix: '#include <stdlib.h>'))
 config_host_data.set('CONFIG_ALIGNED_MALLOC', cc.has_function('_aligned_malloc'))
 config_host_data.set('CONFIG_VALLOC', cc.has_function('valloc'))
 config_host_data.set('CONFIG_MEMALIGN', cc.has_function('memalign'))
