@@ -32,9 +32,22 @@ else()
 endif()
 
 # 确保使用HarmonyOS NDK的工具链
-set(CMAKE_C_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang")
-set(CMAKE_CXX_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang++")
-set(CMAKE_LINKER "${OHOS_NDK_HOME}/llvm/bin/ld.lld")
+# 优先使用环境变量传递的编译器路径，其次使用默认路径
+if(DEFINED ENV{CC})
+    set(CMAKE_C_COMPILER "$ENV{CC}")
+else()
+    set(CMAKE_C_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang")
+endif()
+
+if(DEFINED ENV{CXX})
+    set(CMAKE_CXX_COMPILER "$ENV{CXX}")
+else()
+    set(CMAKE_CXX_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang++")
+endif()
+
+if(NOT CMAKE_LINKER)
+    set(CMAKE_LINKER "${OHOS_NDK_HOME}/llvm/bin/ld.lld")
+endif()
 
 # 设置交叉编译目标
 set(CMAKE_SYSTEM_NAME Linux)
@@ -117,9 +130,18 @@ else()
     set(CMAKE_SYSTEM_NAME Linux)
     set(CMAKE_SYSTEM_PROCESSOR aarch64)
     
-    # 设置编译器路径
-    set(CMAKE_C_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang")
-    set(CMAKE_CXX_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang++")
+    # 设置编译器路径（使用环境变量或默认路径）
+    if(DEFINED ENV{CC})
+        set(CMAKE_C_COMPILER "$ENV{CC}")
+    else()
+        set(CMAKE_C_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang")
+    endif()
+
+    if(DEFINED ENV{CXX})
+        set(CMAKE_CXX_COMPILER "$ENV{CXX}")
+    else()
+        set(CMAKE_CXX_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang++")
+    endif()
     
     # 设置查找根路径
     set(CMAKE_FIND_ROOT_PATH "${OHOS_NDK_HOME}/sysroot")
