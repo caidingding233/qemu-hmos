@@ -10,8 +10,13 @@
     "strict": true,
     "strictPropertyInitialization": false,
     "allowArbitraryExtensions": true,
+    "typeRoots": ["./src/main/ets", "./oh_modules"],
     "paths": {
       "*": ["./oh_modules/*"]
     }
-  }
+  },
+  "include": [
+    "src/main/ets/**/*",
+    "src/main/ets/global.d.ts"
+  ]
 }

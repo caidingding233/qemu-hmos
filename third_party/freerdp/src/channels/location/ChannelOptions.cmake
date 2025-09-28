@@ -1,0 +1,20 @@
+set(OPTION_DEFAULT ON)
+set(OPTION_CLIENT_DEFAULT ON)
+set(OPTION_SERVER_DEFAULT ON)
+
+define_channel_options(
+  NAME
+  "location"
+  TYPE
+  "dynamic"
+  DESCRIPTION
+  "Location Virtual Channel Extension"
+  SPECIFICATIONS
+  "[MS-RDPEL]"
+  DEFAULT
+  ${OPTION_DEFAULT}
+  CLIENT_DEFAULT
+  ${OPTION_CLIENT_DEFAULT}
+  SERVER_DEFAULT
+  ${OPTION_SERVER_DEFAULT}
+)

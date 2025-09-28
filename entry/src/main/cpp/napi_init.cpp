@@ -1452,8 +1452,27 @@ static napi_value VncGetFrame(napi_env env, napi_callback_info info) {
 
 static napi_value TestFunction(napi_env env, napi_callback_info info) {
     HilogPrint("QEMU: TestFunction called!");
+    HilogPrint("QEMU: TestFunction - NAPI module is working correctly!");
     napi_value result;
     napi_get_boolean(env, true, &result);
+    return result;
+}
+
+// 添加一个简单的模块信息函数
+static napi_value GetModuleInfo(napi_env env, napi_callback_info info) {
+    HilogPrint("QEMU: GetModuleInfo called!");
+    napi_value result;
+    napi_create_object(env, &result);
+    
+    napi_value name, version, status;
+    napi_create_string_utf8(env, "qemu_hmos", NAPI_AUTO_LENGTH, &name);
+    napi_create_string_utf8(env, "1.0.0", NAPI_AUTO_LENGTH, &version);
+    napi_create_string_utf8(env, "loaded", NAPI_AUTO_LENGTH, &status);
+    
+    napi_set_named_property(env, result, "name", name);
+    napi_set_named_property(env, result, "version", version);
+    napi_set_named_property(env, result, "status", status);
+    
     return result;
 }
 
@@ -1461,6 +1480,8 @@ static napi_value TestFunction(napi_env env, napi_callback_info info) {
 EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports) {
     HilogPrint("QEMU: NAPI Init function called!");
+    HilogPrint("QEMU: Environment pointer: " + std::to_string(reinterpret_cast<uintptr_t>(env)));
+    HilogPrint("QEMU: Exports pointer: " + std::to_string(reinterpret_cast<uintptr_t>(exports)));
 #if defined(__OHOS__)
     napi_property_descriptor desc[] = {
         { "version", 0, GetVersion, 0, 0, 0, napi_default, 0 },
@@ -1483,6 +1504,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "vncDisconnect", 0, VncDisconnect, 0, 0, 0, napi_default, 0 },
         { "vncGetFrame", 0, VncGetFrame, 0, 0, 0, napi_default, 0 },
         { "testFunction", 0, TestFunction, 0, 0, 0, napi_default, 0 },
+        { "getModuleInfo", 0, GetModuleInfo, 0, 0, 0, napi_default, 0 },
     };
 #else
     napi_property_descriptor__ desc[] = {
@@ -1506,6 +1528,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "vncDisconnect", VncDisconnect, 0 },
         { "vncGetFrame", VncGetFrame, 0 },
         { "testFunction", TestFunction, 0 },
+        { "getModuleInfo", GetModuleInfo, 0 },
     };
 #endif
     size_t count = sizeof(desc) / sizeof(desc[0]);
@@ -1519,36 +1542,28 @@ static napi_value Init(napi_env env, napi_value exports) {
 EXTERN_C_END
 
 #if defined(__OHOS__)
+// HarmonyOS NAPI 模块注册 - 使用标准方式
 static napi_module g_qemu_module = {
     .nm_version = 1,
     .nm_flags = 0,
     .nm_filename = nullptr,
     .nm_register_func = Init,
-    .nm_modname = "libqemu_hmos.so",
+    // 使用简化的模块名，避免.so扩展名
+    .nm_modname = "qemu_hmos",
     .nm_priv = nullptr,
     .reserved = { 0 },
 };
 
-// 使用HarmonyOS特定的模块注册方式
-extern "C" __attribute__((constructor)) void NAPI_qemu_hmos_Register(void) {
-    HilogPrint("QEMU: NAPI constructor called!");
+// 使用标准的NAPI模块注册宏
+NAPI_MODULE(qemu_hmos, Init)
+
+// 备用构造函数注册（如果宏不工作）
+extern "C" __attribute__((constructor)) void NAPI_qemu_hmos_Register(void)
+{
+    // 通过 HILOG 明确记录模块被加载/注册，用于现场诊断
+    HilogPrint("QEMU: NAPI module constructor running, registering qemu_hmos");
     napi_module_register(&g_qemu_module);
 }
-
-// 添加HarmonyOS特定的模块注册
-extern "C" __attribute__((constructor)) void RegisterQemuModule(void) {
-    HilogPrint("QEMU: RegisterQemuModule constructor called!");
-    napi_module_register(&g_qemu_module);
-}
-
-// 添加HarmonyOS特定的模块注册 - 使用不同的名称
-extern "C" __attribute__((constructor)) void RegisterLibQemuHmos(void) {
-    HilogPrint("QEMU: RegisterLibQemuHmos constructor called!");
-    napi_module_register(&g_qemu_module);
-}
-
-// 使用HarmonyOS的模块注册宏
-NAPI_MODULE(libqemu_hmos, Init)
 #else
 static napi_module_simple qemuModule = {
     .nm_version = 1,

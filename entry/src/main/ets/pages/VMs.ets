@@ -1,8 +1,10 @@
-import qemu from 'libqemu_hmos.so';
+// 动态导入QEMU模块
+let qemu: any = null;
 import fs from '@ohos.file.fs'
 import router from '@ohos.router'
 import { VMCreateDialog } from '../components/VMCreateDialog';
-import { CustomDialogController } from '@kit.ArkUI';
+// 动态导入CustomDialogController
+let CustomDialogController: any = null;
 
 // 导出VMCreateConfig接口供其他组件使用
 export interface VMCreateConfig {
@@ -45,7 +47,22 @@ struct VMsPage {
   });
 
   aboutToAppear() {
+    this.initModules();
     this.loadVms();
+  }
+
+  private async initModules() {
+    try {
+      // 动态导入QEMU模块
+      const qemuModule = await eval('import("qemu_hmos")');
+      qemu = qemuModule.default;
+      
+      // 动态导入CustomDialogController
+      const dialogModule = await eval('import("@ohos.arkui.advanced")');
+      CustomDialogController = dialogModule.CustomDialogController;
+    } catch (error) {
+      console.error('模块动态导入失败:', error);
+    }
   }
 
   private async loadVms() {
@@ -262,7 +279,7 @@ struct VMsPage {
       if (this.error) {
         Text(this.error)
           .fontSize(14)
-          .color(Color.Red)
+          .fontColor(Color.Red)
           .padding(8)
           .backgroundColor(Color.Red + '20')
           .borderRadius(4)
@@ -289,11 +306,11 @@ struct VMsPage {
               Row() {
                 Text(`OS: ${vm.osType}`)
                   .fontSize(14)
-                  .color(Color.Grey)
+                  .fontColor(Color.Grey)
                 Blank()
                 Text(`${vm.cpuCount}核 ${vm.memoryMB}MB ${vm.diskSizeGB}GB`)
                   .fontSize(14)
-                  .color(Color.Grey)
+                  .fontColor(Color.Grey)
               }
               .width('100%')
               .margin({ bottom: 8 })

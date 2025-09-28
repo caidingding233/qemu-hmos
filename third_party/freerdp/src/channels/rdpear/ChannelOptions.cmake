@@ -1,0 +1,20 @@
+set(OPTION_DEFAULT OFF)
+set(OPTION_CLIENT_DEFAULT ON)
+set(OPTION_SERVER_DEFAULT OFF)
+
+define_channel_options(
+  NAME
+  "rdpear"
+  TYPE
+  "dynamic"
+  DESCRIPTION
+  "Authentication redirection Virtual Channel Extension"
+  SPECIFICATIONS
+  "[MS-RDPEAR]"
+  DEFAULT
+  ${OPTION_DEFAULT}
+  CLIENT_DEFAULT
+  ${OPTION_CLIENT_DEFAULT}
+  SERVER_DEFAULT
+  ${OPTION_SERVER_DEFAULT}
+)

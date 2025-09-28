@@ -32,12 +32,56 @@ if(NOT OHOS_NDK_HOME)
     endforeach()
 endif()
 
+
 if(OHOS_NDK_HOME AND EXISTS "${OHOS_NDK_HOME}")
     set(BUILD_FOR_OHOS TRUE)
     message(STATUS "Using OpenHarmony NDK at ${OHOS_NDK_HOME}")
 else()
     set(BUILD_FOR_OHOS FALSE)
     message(WARNING "OpenHarmony NDK not found. Building host-only shim; set OHOS_NDK_HOME for device binaries.")
+# 确保使用HarmonyOS NDK的工具链
+# 优先使用环境变量传递的编译器路径，其次使用默认路径
+if(DEFINED ENV{CC})
+    set(CMAKE_C_COMPILER "$ENV{CC}")
+else()
+    set(CMAKE_C_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang")
+endif()
+
+if(DEFINED ENV{CXX})
+    set(CMAKE_CXX_COMPILER "$ENV{CXX}")
+else()
+    set(CMAKE_CXX_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang++")
+endif()
+
+if(NOT CMAKE_LINKER)
+    set(CMAKE_LINKER "${OHOS_NDK_HOME}/llvm/bin/ld.lld")
+endif()
+
+# 设置交叉编译目标
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR aarch64)
+
+# 设置sysroot
+set(CMAKE_SYSROOT "${OHOS_NDK_HOME}/sysroot")
+
+# 确保不使用主机的工具
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+
+# 设置编译选项，确保不包含macOS特定的选项，并包含aarch64-linux-gnu的头文件路径
+# 使用交叉目标与 sysroot 的基础包含路径，避免 -nostdinc/-nostdlib++ 破坏标准库
+    set(CMAKE_C_FLAGS "--target=aarch64-linux-gnu --sysroot=${OHOS_NDK_HOME}/sysroot -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-gnu -I${CMAKE_CURRENT_SOURCE_DIR}")
+    set(CMAKE_CXX_FLAGS "--target=aarch64-linux-gnu --sysroot=${OHOS_NDK_HOME}/sysroot -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-gnu -I${CMAKE_CURRENT_SOURCE_DIR}")
+
+# 根据构建类型设置优化级别
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -g -DDEBUG")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g -DDEBUG")
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -DNDEBUG")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -DNDEBUG")
 endif()
 
 if(BUILD_FOR_OHOS)
@@ -83,9 +127,29 @@ endif()
 
 # QEMU库路径
 set(QEMU_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/build")
+
+# 检查实际的QEMU构建目录（可能因构建配置而异）
+if(NOT EXISTS "${QEMU_BUILD_DIR}")
+    # 尝试其他可能的构建目录
+    set(QEMU_BUILD_DIR_CANDIDATES
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/build_harmonyos_full"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/build_local_test"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/build_mac_local"
+    )
+
+    foreach(candidate ${QEMU_BUILD_DIR_CANDIDATES})
+        if(EXISTS "${candidate}")
+            set(QEMU_BUILD_DIR "${candidate}")
+            message(STATUS "Found QEMU build directory: ${QEMU_BUILD_DIR}")
+            break()
+        endif()
+    endforeach()
+endif()
+
+message(STATUS "Using QEMU build directory: ${QEMU_BUILD_DIR}")
 set(QEMU_INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/build"
+    "${QEMU_BUILD_DIR}"
 )
 
 # 检测操作系统
@@ -104,6 +168,29 @@ if(APPLE)
     )
 elseif(BUILD_FOR_OHOS)
     # HarmonyOS构建（沿用上面已解析出的 OHOS_NDK_HOME）
+    # 设置工具链
+    set(CMAKE_SYSTEM_NAME Linux)
+    set(CMAKE_SYSTEM_PROCESSOR aarch64)
+    
+    # 设置编译器路径（使用环境变量或默认路径）
+    if(DEFINED ENV{CC})
+        set(CMAKE_C_COMPILER "$ENV{CC}")
+    else()
+        set(CMAKE_C_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang")
+    endif()
+
+    if(DEFINED ENV{CXX})
+        set(CMAKE_CXX_COMPILER "$ENV{CXX}")
+    else()
+        set(CMAKE_CXX_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang++")
+    endif()
+    
+    # 设置查找根路径
+    set(CMAKE_FIND_ROOT_PATH "${OHOS_NDK_HOME}/sysroot")
+    set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+    set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+    set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+
     # 包含目录
     include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -163,8 +250,9 @@ else()
     add_library(qemu_hmos SHARED ${SOURCES})
 endif()
 
-# QEMU静态库
-set(QEMU_STATIC_LIBS
+# QEMU库文件 - 动态检测存在的库文件（可能是静态库或动态库）
+set(QEMU_LIBS_CANDIDATES
+    # 静态库（如果QEMU配置为静态库）
     "${QEMU_BUILD_DIR}/libqemu-aarch64-softmmu.a"
     "${QEMU_BUILD_DIR}/libqemuutil.a"
     "${QEMU_BUILD_DIR}/libui-dbus.a"
@@ -176,21 +264,34 @@ set(QEMU_STATIC_LIBS
     "${QEMU_BUILD_DIR}/libhw-uefi-vars.a"
     "${QEMU_BUILD_DIR}/subprojects/dtc/libfdt/libfdt.a"
     "${QEMU_BUILD_DIR}/subprojects/berkeley-softfloat-3/libsoftfloat.a"
+    "${QEMU_BUILD_DIR}/qemu-bundle/usr/local/lib/libfdt.a"
+    # 动态库（如果QEMU配置为动态库）
+    "${QEMU_BUILD_DIR}/libqemu-aarch64-softmmu.so"
+    "${QEMU_BUILD_DIR}/libqemuutil.so"
+    "${QEMU_BUILD_DIR}/libui-dbus.so"
+    "${QEMU_BUILD_DIR}/libmodule-common.so"
+    "${QEMU_BUILD_DIR}/libblock-curl.so"
+    "${QEMU_BUILD_DIR}/libblock-ssh.so"
+    "${QEMU_BUILD_DIR}/libhw-display-virtio-gpu.so"
+    "${QEMU_BUILD_DIR}/libhw-display-virtio-gpu-pci.so"
+    "${QEMU_BUILD_DIR}/libhw-uefi-vars.so"
 )
 
-# 检查QEMU库是否存在
-foreach(lib ${QEMU_STATIC_LIBS})
+set(QEMU_LIBS "")
+foreach(lib ${QEMU_LIBS_CANDIDATES})
     if(EXISTS ${lib})
+        list(APPEND QEMU_LIBS ${lib})
         message(STATUS "Found QEMU library: ${lib}")
     else()
-        message(WARNING "QEMU library not found: ${lib}")
-        list(REMOVE_ITEM QEMU_STATIC_LIBS ${lib})
+        message(STATUS "QEMU library not found (skipping): ${lib}")
     endif()
 endforeach()
 
-# 链接QEMU静态库
-if(QEMU_STATIC_LIBS)
-    target_link_libraries(qemu_hmos ${QEMU_STATIC_LIBS})
+# QEMU库检测已在上面完成
+
+# 链接QEMU库
+if(QEMU_LIBS)
+    target_link_libraries(qemu_hmos ${QEMU_LIBS})
     # QEMU依赖库
     target_link_libraries(qemu_hmos 
         -lpthread
