@@ -72,9 +72,29 @@ set(CMAKE_SHARED_LINKER_FLAGS "-fuse-ld=${OHOS_NDK_HOME}/llvm/bin/ld.lld -shared
 
 # QEMU库路径
 set(QEMU_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/build")
+
+# 检查实际的QEMU构建目录（可能因构建配置而异）
+if(NOT EXISTS "${QEMU_BUILD_DIR}")
+    # 尝试其他可能的构建目录
+    set(QEMU_BUILD_DIR_CANDIDATES
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/build_harmonyos_full"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/build_local_test"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/build_mac_local"
+    )
+
+    foreach(candidate ${QEMU_BUILD_DIR_CANDIDATES})
+        if(EXISTS "${candidate}")
+            set(QEMU_BUILD_DIR "${candidate}")
+            message(STATUS "Found QEMU build directory: ${QEMU_BUILD_DIR}")
+            break()
+        endif()
+    endforeach()
+endif()
+
+message(STATUS "Using QEMU build directory: ${QEMU_BUILD_DIR}")
 set(QEMU_INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/qemu/build"
+    "${QEMU_BUILD_DIR}"
 )
 
 # 检测操作系统
@@ -150,8 +170,8 @@ else()
     add_library(qemu_hmos SHARED ${SOURCES})
 endif()
 
-# QEMU静态库
-set(QEMU_STATIC_LIBS
+# QEMU静态库 - 动态检测存在的库文件
+set(QEMU_STATIC_LIBS_CANDIDATES
     "${QEMU_BUILD_DIR}/libqemu-aarch64-softmmu.a"
     "${QEMU_BUILD_DIR}/libqemuutil.a"
     "${QEMU_BUILD_DIR}/libui-dbus.a"
@@ -163,17 +183,20 @@ set(QEMU_STATIC_LIBS
     "${QEMU_BUILD_DIR}/libhw-uefi-vars.a"
     "${QEMU_BUILD_DIR}/subprojects/dtc/libfdt/libfdt.a"
     "${QEMU_BUILD_DIR}/subprojects/berkeley-softfloat-3/libsoftfloat.a"
+    "${QEMU_BUILD_DIR}/qemu-bundle/usr/local/lib/libfdt.a"
 )
 
-# 检查QEMU库是否存在
-foreach(lib ${QEMU_STATIC_LIBS})
+set(QEMU_STATIC_LIBS "")
+foreach(lib ${QEMU_STATIC_LIBS_CANDIDATES})
     if(EXISTS ${lib})
+        list(APPEND QEMU_STATIC_LIBS ${lib})
         message(STATUS "Found QEMU library: ${lib}")
     else()
-        message(WARNING "QEMU library not found: ${lib}")
-        list(REMOVE_ITEM QEMU_STATIC_LIBS ${lib})
+        message(STATUS "QEMU library not found (skipping): ${lib}")
     endif()
 endforeach()
+
+# QEMU库检测已在上面完成
 
 # 链接QEMU静态库
 if(QEMU_STATIC_LIBS)
