@@ -192,8 +192,9 @@ else()
     add_library(qemu_hmos SHARED ${SOURCES})
 endif()
 
-# QEMU静态库 - 动态检测存在的库文件
-set(QEMU_STATIC_LIBS_CANDIDATES
+# QEMU库文件 - 动态检测存在的库文件（可能是静态库或动态库）
+set(QEMU_LIBS_CANDIDATES
+    # 静态库（如果QEMU配置为静态库）
     "${QEMU_BUILD_DIR}/libqemu-aarch64-softmmu.a"
     "${QEMU_BUILD_DIR}/libqemuutil.a"
     "${QEMU_BUILD_DIR}/libui-dbus.a"
@@ -206,12 +207,22 @@ set(QEMU_STATIC_LIBS_CANDIDATES
     "${QEMU_BUILD_DIR}/subprojects/dtc/libfdt/libfdt.a"
     "${QEMU_BUILD_DIR}/subprojects/berkeley-softfloat-3/libsoftfloat.a"
     "${QEMU_BUILD_DIR}/qemu-bundle/usr/local/lib/libfdt.a"
+    # 动态库（如果QEMU配置为动态库）
+    "${QEMU_BUILD_DIR}/libqemu-aarch64-softmmu.so"
+    "${QEMU_BUILD_DIR}/libqemuutil.so"
+    "${QEMU_BUILD_DIR}/libui-dbus.so"
+    "${QEMU_BUILD_DIR}/libmodule-common.so"
+    "${QEMU_BUILD_DIR}/libblock-curl.so"
+    "${QEMU_BUILD_DIR}/libblock-ssh.so"
+    "${QEMU_BUILD_DIR}/libhw-display-virtio-gpu.so"
+    "${QEMU_BUILD_DIR}/libhw-display-virtio-gpu-pci.so"
+    "${QEMU_BUILD_DIR}/libhw-uefi-vars.so"
 )
 
-set(QEMU_STATIC_LIBS "")
-foreach(lib ${QEMU_STATIC_LIBS_CANDIDATES})
+set(QEMU_LIBS "")
+foreach(lib ${QEMU_LIBS_CANDIDATES})
     if(EXISTS ${lib})
-        list(APPEND QEMU_STATIC_LIBS ${lib})
+        list(APPEND QEMU_LIBS ${lib})
         message(STATUS "Found QEMU library: ${lib}")
     else()
         message(STATUS "QEMU library not found (skipping): ${lib}")
@@ -220,9 +231,9 @@ endforeach()
 
 # QEMU库检测已在上面完成
 
-# 链接QEMU静态库
-if(QEMU_STATIC_LIBS)
-    target_link_libraries(qemu_hmos ${QEMU_STATIC_LIBS})
+# 链接QEMU库
+if(QEMU_LIBS)
+    target_link_libraries(qemu_hmos ${QEMU_LIBS})
     # QEMU依赖库
     target_link_libraries(qemu_hmos 
         -lpthread

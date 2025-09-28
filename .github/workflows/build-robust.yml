@@ -328,11 +328,10 @@ jobs:
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
-          --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
+          -Dc_args="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
+          -Dc_link_args="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
           -Db_staticpic=true \
           -Db_pie=false \
-          -Ddefault_library=static \
           -Dtools=disabled \
           --enable-tcg \
           --disable-kvm \
