@@ -324,18 +324,18 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
-        # 使用系统glibc头文件，避免HarmonyOS sysroot头文件冲突
-        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -isystem /usr/include -idirafter ${SYSROOT}/usr/include"
-        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -isystem /usr/include -idirafter ${SYSROOT}/usr/include"
+        # 完全使用系统glibc，避免HarmonyOS sysroot头文件冲突
+        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu -nostdinc -isystem /usr/include"
+        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu -nostdinc -isystem /usr/include"
         ../configure \
           --target-list=aarch64-softmmu \
           --cc="$CC" \
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include -I${SYSROOT}/usr/include" \
-          --extra-cxxflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include -I${SYSROOT}/usr/include" \
-          --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -lm" \
+          --extra-cflags="--target=aarch64-linux-gnu -nostdinc -isystem /usr/include" \
+          --extra-cxxflags="--target=aarch64-linux-gnu -nostdinc -isystem /usr/include" \
+          --extra-ldflags="--target=aarch64-linux-gnu -L/usr/lib/aarch64-linux-gnu -lm" \
           -Db_staticpic=true \
           -Ddefault_library=static \
           -Dtools=disabled \
