@@ -30,12 +30,17 @@
 - **DevEco Studio 5+**，HarmonyOS NEXT SDK（API 12+）
 - **开发者证书 + 调试签名**（启用 JIT / 可执行内存）
 - 目标设备：HarmonyOS NEXT 平板或电脑（开启开发者选项）
-- 构建依赖（本机）：`cmake` / `meson` / `ninja` / C/C++ toolchain  
+- 构建依赖（本机）：`cmake` / `meson` / `ninja` / C/C++ toolchain
   （用于编译 `libqemu.so` 与可选的 FreeRDP）
----   
+
+- 没有安装 HarmonyOS NDK? CMake 会自动回退到**主机侧简化 NAPI shim**，在 GitHub Actions 等 CI 环境中也能完成编译检查。
+
+> 📦 仓库自带 `Native Build (Host)` workflow：在 Ubuntu runner 上执行 `cmake -S entry/src/main/cpp -B build/host && cmake --build build/host`，用于验证原生代码是否能通过基础编译。
+
+
 ## 🚗 路线图
 见[路线图](docs/ROADMAP.md) 或者是[草稿路线图](docs/ROADMAP-DRAFT.md)
----
+
 
 ## 🏗️ 架构简述
 

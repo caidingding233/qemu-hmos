@@ -17,6 +17,7 @@ typedef int napi_status;
 
 // NAPI回调函数类型
 typedef napi_value (*napi_callback)(napi_env env, napi_callback_info info);
+typedef napi_value (*napi_addon_register_func)(napi_env env, napi_value exports);
 
 // NAPI属性描述符结构
 struct napi_property_descriptor__ {
@@ -30,7 +31,7 @@ struct napi_module__ {
     int nm_version;
     unsigned int nm_flags;
     const char* nm_filename;
-    void (*nm_register_func)(napi_env env, napi_value exports);
+    napi_addon_register_func nm_register_func;
     const char* nm_modname;
     void* nm_priv;
     size_t reserved[4];
@@ -41,7 +42,7 @@ struct napi_module_simple {
     int nm_version;
     unsigned int nm_flags;
     const char* nm_filename;
-    void (*nm_register_func)(napi_env env, napi_value exports);
+    napi_addon_register_func nm_register_func;
     const char* nm_modname;
     void* nm_priv;
     size_t reserved[4];
@@ -70,11 +71,15 @@ extern "C" {
                                        size_t length, napi_value* result);
     
     napi_status napi_create_object(napi_env env, napi_value* result);
-    
+
     napi_status napi_create_int32(napi_env env, int32_t value, napi_value* result);
-    
+
     napi_status napi_get_boolean(napi_env env, bool value, napi_value* result);
-    
+
+    napi_status napi_get_null(napi_env env, napi_value* result);
+
+    napi_status napi_create_arraybuffer(napi_env env, size_t length, void** data, napi_value* result);
+
     napi_status napi_define_properties(napi_env env, napi_value object,
                                       size_t property_count,
                                       const napi_property_descriptor* properties);
@@ -84,11 +89,12 @@ extern "C" {
     napi_status napi_create_array(napi_env env, napi_value* result);
     
     napi_status napi_set_element(napi_env env, napi_value object, uint32_t index, napi_value value);
-    
+
     void napi_module_register(napi_module_simple* mod);
 }
 
 // 宏定义
 #define NAPI_AUTO_LENGTH SIZE_MAX
+#define napi_default 0
 
 #endif // NAPI_SIMPLE_H
