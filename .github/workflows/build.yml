@@ -258,9 +258,9 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
-        # 使用系统头文件和HarmonyOS sysroot混合模式
-        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include"
-        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include"
+        # 使用系统glibc头文件，避免HarmonyOS sysroot头文件冲突
+        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -isystem /usr/include -idirafter ${SYSROOT}/usr/include"
+        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -isystem /usr/include -idirafter ${SYSROOT}/usr/include"
         ../configure \
           --target-list=aarch64-softmmu \
           --cc="$CC" \
