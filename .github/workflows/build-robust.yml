@@ -349,7 +349,7 @@ jobs:
           --enable-guest-agent \
           --enable-vhost-user \
           --enable-vhost-net \
-          --enable-keyring \
+          --disable-keyring \
           --disable-gtk \
           --disable-sdl \
           --disable-vte \
