@@ -21,7 +21,8 @@ jobs:
                               libcurl4-openssl-dev libssh-dev libgnutls28-dev \
                               libsasl2-dev libpam0g-dev libbz2-dev libzstd-dev \
                               libpcre2-dev pkg-config meson tree \
-                              binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
+                              binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
+                              libc6-dev
 
     - name: Download and setup SDK
       run: |
