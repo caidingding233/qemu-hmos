@@ -23,7 +23,8 @@ jobs:
                               libglib2.0-dev libpixman-1-dev libssl-dev \
                               libcurl4-openssl-dev libssh-dev libgnutls28-dev \
                               libsasl2-dev libpam0g-dev libbz2-dev libzstd-dev \
-                              libpcre2-dev pkg-config meson tree
+                              libpcre2-dev pkg-config meson tree \
+                              binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
 
     - name: Download and setup SDK
       run: |
@@ -367,6 +368,11 @@ jobs:
         echo "✅ Configure completed!"
         
         echo "=== Building QEMU ==="
+        # 设置正确的链接器环境变量
+        export LD=aarch64-linux-gnu-ld
+        export AR=aarch64-linux-gnu-ar
+        export RANLIB=aarch64-linux-gnu-ranlib
+        export STRIP=aarch64-linux-gnu-strip
         make -j$(nproc)
         
         echo "✅ QEMU build completed!"
