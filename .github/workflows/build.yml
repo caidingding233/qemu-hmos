@@ -260,9 +260,14 @@ jobs:
         echo "=== Running Configure ==="
         # 设置pkg-config使用HarmonyOS sysroot，避免glib架构冲突
         export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
-        export PKG_CONFIG_PATH="${SYSROOT}/usr/lib/pkgconfig"
+        export PKG_CONFIG_PATH="${SYSROOT}/usr/lib/pkgconfig:/usr/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig"
         export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT}"
         export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT}"
+
+        # 调试pkg-config配置
+        echo "Debug PKG_CONFIG_LIBDIR: $PKG_CONFIG_LIBDIR"
+        echo "Debug PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+        ls -la "${SYSROOT}/usr/lib/pkgconfig/" | head -5
         ../configure \
           --target-list=aarch64-softmmu \
           --cc="$CC" \
