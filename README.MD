@@ -1,46 +1,97 @@
 # QEMU for HarmonyOS (HMOS)
+你能跑的，**超乎你的想象**！
 
-在 **HarmonyOS NEXT**（鸿蒙平板 & 鸿蒙电脑）上以 **App** 形态运行 QEMU，提供本机可离线使用的 Windows / Linux 虚拟机能力。  
-项目面向**个人自用**场景：不 root、不破解、不依赖 HNP（平板不支持）；以 **QEMU 作为 .so 库内嵌**，默认 **TCG JIT**，运行时探测 KVM 并自动降级。
+###### *打造鸿蒙版的 UTM 为本项目建设目标*
 
-> ⚠️ 免责声明：请仅在拥有合法授权的镜像/系统上使用。本项目仅作研究与个人测试，不建议对外分发。
-> 本项目不提供任何形式的技术支持，也不负责任何形式的损失或伤害。
-> 本项目的作者不承担任何因使用本项目而导致的任何损失或伤害。
+在 **HarmonyOS NEXT**（鸿蒙平板 / 鸿蒙电脑）上以 **App 形态运行 QEMU**，让设备拥有本地虚拟机能力，运行 Windows / Linux 来宾系统。
+项目面向 **个人自用 / 实验 / 开发者**：无需 root、不需破解、不依赖 HNP；QEMU 嵌入为 .so 库，默认使用 TCG JIT，并尝试探测 KVM 加速。
+
+> ⚠️ 小字说明：本项目尚处于实验阶段，部分功能未完善。请仅在合法镜像 & 自测环境下使用。大字与小字之间的鸿蒙差距，正是我们拼命填上的距离。
+>
+> 免责声明：请仅在拥有合法授权的镜像/系统上使用。本项目仅作研究与个人测试，不建议对外分发。本项目不提供任何形式的技术支持，也不负责任何形式的损失或伤害。本项目的作者不承担任何因使用本项目而导致的任何损失或伤害。
+>
 > QEMU专指Quick Emulator模拟器 感谢QEMU的开发者帮助打造上游生态!
 ---
 
-## ✨ 特性
+## ✨ 核心特性（已实现 / 规划中）
 
--  在 MatePad / MateBook（HarmonyOS NEXT）上运行 **Windows 11 ARM**、**Linux ARM64**（来宾）
--  **离线可用**：QEMU 使用 `hostfwd` → 宿主 `127.0.0.1` 访问来宾（如 RDP 3390→3389）
--  安装期 VNC 观察；日常通过 **内嵌 RDP 视图** 使用
--  **Apps 启动**：支持 *StartProgram*（点击鸿蒙侧图标 → 直接拉起指定 Windows 程序窗口）
--  **共享文件夹**：RDP 驱动器重定向（将 App 沙箱目录映射为来宾盘符，如 `Z:`）
--  媒体控制透传（DVC + GSMTC → 鸿蒙 AVSession，WIP）
--  快照/休眠/恢复（WIP）
--  RemoteApp/RAIL 真·应用发布（WIP）
--  virtiofs/9p/Samba 长挂载（WIP）
+- 在 MatePad / 鸿蒙电脑上运行 Windows 11 ARM、Linux ARM64（来宾系统）
+- 离线可访问：通过 hostfwd 实现宿主到来宾端口映射（默认 RDP / VNC 转发）
+- 安装期使用 VNC 界面，运行期通过 RDP 嵌入视图交互
+- 支持 *StartProgram*：点击鸿蒙图标即拉起特定 EXE 应用
+- 文件共享：RDP 驱动器重定向，将 App 沙箱目录映射为来宾盘符
+- 媒体控制透传、快照 / 恢复、RemoteApp / RAIL、virtiofs / 9p / Samba 等功能在规划中
+- 探测 / 降级机制：若 `/dev/kvm` 不可用，自动降级为 TCG 模式
 
-> KVM：大多数设备/容器**不会暴露** `/dev/kvm` 给第三方 App。项目在运行时探测：可用则 `-accel kvm`，否则自动使用 `-accel tcg,thread=multi`。
+> ⚠️ 注意事项与风险
+> • 若设备 / 宿主系统不暴露 `/dev/kvm`，加速不可用 → 性能退回模拟模式
+> • JIT 模式可能会受到签名 / 权限限制
+> • 图形、USB、音频、GPU 虚拟支持尚未稳定
+> • 建议先在老版本 / 已知兼容设备上尝试，不建议直接用于生产环境
 
 ---
 
-## 📦 环境与前置
+## 📦 环境与前置条件
 
-- **DevEco Studio 5+**，HarmonyOS NEXT SDK（API 12+）
-- **开发者证书 + 调试签名**（启用 JIT / 可执行内存）
+- DevEco Studio 5+，HarmonyOS NEXT SDK（API 12+）
+- 开发者证书 + 调试签名，用于启用 JIT / 可执行内存
 - 目标设备：HarmonyOS NEXT 平板或电脑（开启开发者选项）
-- 构建依赖（本机）：`cmake` / `meson` / `ninja` / C/C++ toolchain
-  （用于编译 `libqemu.so` 与可选的 FreeRDP）
+- 构建依赖（本机）：cmake / meson / ninja / C/C++ toolchain
+- 提供 Host 构建 action 检查（Ubuntu Runner 编译脚本）
 
 - 没有安装 HarmonyOS NDK? CMake 会自动回退到**主机侧简化 NAPI shim**，在 GitHub Actions 等 CI 环境中也能完成编译检查。
 
 > 📦 仓库自带 `Native Build (Host)` workflow：在 Ubuntu runner 上执行 `cmake -S entry/src/main/cpp -B build/host && cmake --build build/host`，用于验证原生代码是否能通过基础编译。
 
 
-## 🚗 路线图
-见[路线图](docs/ROADMAP.md) 或者是[草稿路线图](docs/ROADMAP-DRAFT.md)
+## 🚀 快速上手指南
 
+```bash
+git clone https://github.com/caidingding233/qemu-hmos.git
+cd qemu-hmos
+# 配置签名 / 证书
+# 编译 libqemu_full.so
+./configure --target-list=aarch64-softmmu --enable-tcg …
+make -j
+# 放置 so 文件到 app/libs/arm64-v8a/
+# 打包 hap / 部署到设备
+
+在 App 中：
+	1.	新建 VM，选定来宾系统（Windows / Linux）
+	2.	下载 / 准备 ISO / 镜像
+	3.	启动安装（使用 VNC）
+	4.	安装完成后使用 RDP 进入、体验系统
+
+⸻
+
+⚠️ 注意事项与风险
+	•	若设备 / 宿主系统不暴露 /dev/kvm，加速不可用 → 性能退回模拟模式
+	•	JIT 模式可能会受到签名 / 权限限制
+	•	图形、USB、音频、GPU 虚拟支持尚未稳定
+	•	建议先在老版本 / 已知兼容设备上尝试，不建议直接用于生产环境
+
+⸻
+
+📅 路线图 & 规划
+
+版本 / 阶段	功能重点
+MVP	QEMU 嵌入 + VNC / RDP 启动 + StartProgram + 文件映射
+V1	媒体透传 + 快照 / 恢复 + UI 优化
+V2+	RemoteApp / RAIL + GPU 加速 + USB / virtiofs 支持 + 多系统模板
+
+
+## 🧩 贡献指南
+
+欢迎提交 Issue / PR，尤其是：
+	•	UI / 前端交互优化
+	•	虚拟机稳定性增强 / bug 修复
+	•	新系统镜像支持 / Guest OS 模板
+	•	媒体 / 图形 / 外设适配 / 驱动补全
+	•	文档 / 教程 / 示例镜像
+
+让我们一起把鸿蒙虚拟机做成社区的自豪！
+
+---
 
 ## 🏗️ 架构简述
 
@@ -53,7 +104,7 @@ app/
   assets/tools/                    ← 首启脚本、驱动等（可选）
 ```
 
-- **QEMU 作为库**：导出 `libqemu_full(argc, argv)`；App 内以线程方式启动主循环  
+- **QEMU 作为库**：导出 `libqemu_full(argc, argv)`；App 内以线程方式启动主循环
 - **显示**：安装期 `-display vnc=:1`；日常嵌入 RDP 视图连接 `127.0.0.1:3390`
 - **网络**：user-net + `hostfwd`（离线也可用）
 - **KVM/JIT**：运行时 `open("/dev/kvm") + KVM_GET_API_VERSION` 探测；前置调用 `prctl("jit",1)`（开发签名下）
@@ -148,12 +199,8 @@ app/
 
 ---
 
-## 🤝 贡献
-
-欢迎提交 Issue / PR。建议先描述设备型号、HarmonyOS 版本、是否可用 JIT/KVM、问题复现步骤与日志。
-
 ---
 
-## 📄 许可证
+## 📜 许可证
 
-见仓库内[LICENSE](LICENSE)。
+详见仓库内 LICENSE 文件
