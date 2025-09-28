@@ -286,6 +286,7 @@ jobs:
           --enable-vhost-user \
           --enable-vhost-net \
           --disable-keyring \
+          --enable-tpm \
           --disable-gtk \
           --disable-sdl \
           --disable-vte \
