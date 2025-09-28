@@ -290,7 +290,6 @@ jobs:
           --enable-vhost-net \
           --enable-keyring \
           --disable-gtk \
-          --disable-glib \
           --disable-sdl \
           --disable-vte \
           --disable-curses \

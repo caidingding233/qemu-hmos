@@ -1,4 +1,4 @@
-name: Build QEMU for Huawei's toolchain (Robust)
+name: Build QEMU with Huawei's toolchain (Robust)
 
 on:
   workflow_dispatch:
@@ -355,7 +355,6 @@ jobs:
           --enable-vhost-net \
           --enable-keyring \
           --disable-gtk \
-          --disable-glib \
           --disable-sdl \
           --disable-vte \
           --disable-curses \
