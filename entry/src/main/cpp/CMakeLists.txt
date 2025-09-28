@@ -13,59 +13,70 @@ endif()
 message(STATUS "Building ${PROJECT_NAME} v${PROJECT_VERSION} in ${CMAKE_BUILD_TYPE} mode")
 
 # 鸿蒙开发环境特定配置
-# 优先使用环境变量，其次使用用户提供的本机路径，最后再尝试默认安装路径
-if(DEFINED ENV{OHOS_NDK_HOME})
-    set(OHOS_NDK_HOME $ENV{OHOS_NDK_HOME})
-else()
-    # 用户本机已安装的 NDK（按需修改）
-    set(OHOS_NDK_HOME "/Users/caidingding233/Library/OpenHarmony/Sdk/18/native")
-    if(NOT EXISTS "${OHOS_NDK_HOME}")
-        # 兼容 DevEco 默认安装位置
-        if(EXISTS "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native")
-            set(OHOS_NDK_HOME "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native")
-        elseif(EXISTS "/Applications/DevEco-Studio.app/Contents/ohos/ndk")
-            set(OHOS_NDK_HOME "/Applications/DevEco-Studio.app/Contents/ohos/ndk")
-        else()
-            message(FATAL_ERROR "OHOS_NDK_HOME not set and could not be auto-detected; tried /Users/caidingding233/Library/OpenHarmony/Sdk/18/native")
+# 允许通过缓存变量或环境变量传入 OpenHarmony NDK 根目录
+set(OHOS_NDK_HOME "" CACHE PATH "Path to the OpenHarmony NDK (set for device builds)")
+
+set(_candidate_ndk_paths
+    "$ENV{OHOS_NDK_HOME}"
+    "/Users/caidingding233/Library/OpenHarmony/Sdk/18/native"
+    "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native"
+    "/Applications/DevEco-Studio.app/Contents/ohos/ndk"
+)
+
+if(NOT OHOS_NDK_HOME)
+    foreach(_candidate IN LISTS _candidate_ndk_paths)
+        if(_candidate AND EXISTS "${_candidate}")
+            set(OHOS_NDK_HOME "${_candidate}" CACHE PATH "Path to the OpenHarmony NDK (auto-detected)" FORCE)
+            break()
         endif()
+    endforeach()
+endif()
+
+if(OHOS_NDK_HOME AND EXISTS "${OHOS_NDK_HOME}")
+    set(BUILD_FOR_OHOS TRUE)
+    message(STATUS "Using OpenHarmony NDK at ${OHOS_NDK_HOME}")
+else()
+    set(BUILD_FOR_OHOS FALSE)
+    message(WARNING "OpenHarmony NDK not found. Building host-only shim; set OHOS_NDK_HOME for device binaries.")
+endif()
+
+if(BUILD_FOR_OHOS)
+    # 确保使用HarmonyOS NDK的工具链
+    set(CMAKE_C_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang")
+    set(CMAKE_CXX_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang++")
+    set(CMAKE_LINKER "${OHOS_NDK_HOME}/llvm/bin/ld.lld")
+
+    # 设置交叉编译目标
+    set(CMAKE_SYSTEM_NAME Linux)
+    set(CMAKE_SYSTEM_PROCESSOR aarch64)
+
+    # 设置sysroot
+    set(CMAKE_SYSROOT "${OHOS_NDK_HOME}/sysroot")
+
+    # 确保不使用主机的工具
+    set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+    set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+    set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+    set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+
+    # 设置编译选项，确保不包含macOS特定的选项，并包含aarch64-linux-ohos的头文件路径
+    # 使用交叉目标与 sysroot 的基础包含路径，避免 -nostdinc/-nostdlib++ 破坏标准库
+    set(CMAKE_C_FLAGS "-target aarch64-linux-ohos -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${CMAKE_CURRENT_SOURCE_DIR}")
+    set(CMAKE_CXX_FLAGS "-target aarch64-linux-ohos -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${CMAKE_CURRENT_SOURCE_DIR}")
+
+    # 根据构建类型设置优化级别
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -g -DDEBUG")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g -DDEBUG")
+    elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -DNDEBUG")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -DNDEBUG")
     endif()
+
+    # 设置链接器标志，确保使用正确的链接器，并移除macOS特定的选项
+    set(CMAKE_EXE_LINKER_FLAGS "-fuse-ld=${OHOS_NDK_HOME}/llvm/bin/ld.lld")
+    set(CMAKE_SHARED_LINKER_FLAGS "-fuse-ld=${OHOS_NDK_HOME}/llvm/bin/ld.lld -shared")
 endif()
-
-# 确保使用HarmonyOS NDK的工具链
-set(CMAKE_C_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang")
-set(CMAKE_CXX_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang++")
-set(CMAKE_LINKER "${OHOS_NDK_HOME}/llvm/bin/ld.lld")
-
-# 设置交叉编译目标
-set(CMAKE_SYSTEM_NAME Linux)
-set(CMAKE_SYSTEM_PROCESSOR aarch64)
-
-# 设置sysroot
-set(CMAKE_SYSROOT "${OHOS_NDK_HOME}/sysroot")
-
-# 确保不使用主机的工具
-set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
-
-# 设置编译选项，确保不包含macOS特定的选项，并包含aarch64-linux-ohos的头文件路径
-# 使用交叉目标与 sysroot 的基础包含路径，避免 -nostdinc/-nostdlib++ 破坏标准库
-set(CMAKE_C_FLAGS "-target aarch64-linux-ohos -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${CMAKE_CURRENT_SOURCE_DIR}")
-set(CMAKE_CXX_FLAGS "-target aarch64-linux-ohos -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${CMAKE_CURRENT_SOURCE_DIR}")
-
-# 根据构建类型设置优化级别
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -g -DDEBUG")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g -DDEBUG")
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -DNDEBUG")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -DNDEBUG")
-endif()
-
-# 设置链接器标志，确保使用正确的链接器，并移除macOS特定的选项
-set(CMAKE_EXE_LINKER_FLAGS "-fuse-ld=${OHOS_NDK_HOME}/llvm/bin/ld.lld")
-set(CMAKE_SHARED_LINKER_FLAGS "-fuse-ld=${OHOS_NDK_HOME}/llvm/bin/ld.lld -shared")
 
 # 确保输出文件扩展名为.so而不是.dylib
 # 让工具链按默认规则生成平台后缀（不要强制输出到源码树）
@@ -91,35 +102,32 @@ if(APPLE)
     link_directories(
         "${QEMU_BUILD_DIR}"
     )
-else()
+elseif(BUILD_FOR_OHOS)
     # HarmonyOS构建（沿用上面已解析出的 OHOS_NDK_HOME）
-    # 设置工具链
-    set(CMAKE_SYSTEM_NAME Linux)
-    set(CMAKE_SYSTEM_PROCESSOR aarch64)
-    
-    # 设置编译器路径
-    set(CMAKE_C_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang")
-    set(CMAKE_CXX_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang++")
-    
-    # 设置查找根路径
-    set(CMAKE_FIND_ROOT_PATH "${OHOS_NDK_HOME}/sysroot")
-    set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-    set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-    set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-    
     # 包含目录
-include_directories(
+    include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}
         "${OHOS_NDK_HOME}/sysroot/usr/include"
         "${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos"
         ${QEMU_INCLUDE_DIRS}
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libvncclient/include
-)
-    
+    )
+
     # 库目录
     link_directories(
         "${OHOS_NDK_HOME}/sysroot/usr/lib/aarch64-linux-ohos"
         "${OHOS_NDK_HOME}/sysroot/usr/lib"
+        "${QEMU_BUILD_DIR}"
+    )
+else()
+    # 主机侧编译仅验证代码完整性，不依赖 HarmonyOS NDK
+    include_directories(
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${QEMU_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libvncclient/include
+    )
+
+    link_directories(
         "${QEMU_BUILD_DIR}"
     )
 endif()
@@ -135,8 +143,13 @@ set(SOURCES
 option(USE_FAKE_NAPI "Build with simplified NAPI shim (host only)" OFF)
 
 # 仅允许在主机侧启用简化NAPI；设备端强制关闭以避免ABI冲突
-if(USE_FAKE_NAPI AND NOT APPLE)
-    message(FATAL_ERROR "USE_FAKE_NAPI is only allowed for host builds (APPLE). Disable it for device builds.")
+if(USE_FAKE_NAPI AND BUILD_FOR_OHOS)
+    message(FATAL_ERROR "USE_FAKE_NAPI is only allowed for host builds. Disable it for device builds.")
+endif()
+
+if(NOT BUILD_FOR_OHOS AND NOT USE_FAKE_NAPI)
+    message(STATUS "Enabling USE_FAKE_NAPI for host-side build")
+    set(USE_FAKE_NAPI ON CACHE BOOL "Build with simplified NAPI shim (host only)" FORCE)
 endif()
 
 if(USE_FAKE_NAPI)
@@ -202,45 +215,47 @@ if(QEMU_STATIC_LIBS)
     )
 endif()
 
-# 查找并链接必要的库
-find_library(LOG_LIB hilog_ndk
-    PATHS
-    "${OHOS_NDK_HOME}/sysroot/usr/lib"
-    "${OHOS_NDK_HOME}/sysroot/usr/lib/aarch64-linux-ohos"
-    NO_DEFAULT_PATH
-)
+if(BUILD_FOR_OHOS)
+    # 查找并链接必要的库
+    find_library(LOG_LIB hilog_ndk
+        PATHS
+        "${OHOS_NDK_HOME}/sysroot/usr/lib"
+        "${OHOS_NDK_HOME}/sysroot/usr/lib/aarch64-linux-ohos"
+        NO_DEFAULT_PATH
+    )
 
-# 在鸿蒙环境中，android库可能不存在，我们跳过它
-set(ANDROID_LIB "")
+    # 在鸿蒙环境中，android库可能不存在，我们跳过它
+    set(ANDROID_LIB "")
 
-# 如果找不到日志库，使用空值避免链接错误
-if(NOT LOG_LIB)
-    message(WARNING "LOG library not found, skipping...")
-    set(LOG_LIB "")
-endif()
+    # 如果找不到日志库，使用空值避免链接错误
+    if(NOT LOG_LIB)
+        message(WARNING "LOG library not found, skipping...")
+        set(LOG_LIB "")
+    endif()
 
-message(STATUS "LOG_LIB: ${LOG_LIB}")
-message(STATUS "ANDROID_LIB: ${ANDROID_LIB}")
+    message(STATUS "LOG_LIB: ${LOG_LIB}")
+    message(STATUS "ANDROID_LIB: ${ANDROID_LIB}")
 
-# 查找鸿蒙NAPI库
-set(NAPI_LIB_PATH "${OHOS_NDK_HOME}/sysroot/usr/lib/aarch64-linux-ohos/libace_napi.z.so")
+    # 查找鸿蒙NAPI库
+    set(NAPI_LIB_PATH "${OHOS_NDK_HOME}/sysroot/usr/lib/aarch64-linux-ohos/libace_napi.z.so")
 
-if(EXISTS ${NAPI_LIB_PATH})
-    set(NAPI_LIB ${NAPI_LIB_PATH})
-    message(STATUS "Found NAPI library: ${NAPI_LIB}")
-else()
-    message(WARNING "NAPI library not found at: ${NAPI_LIB_PATH}")
-    set(NAPI_LIB "")
-endif()
+    if(EXISTS ${NAPI_LIB_PATH})
+        set(NAPI_LIB ${NAPI_LIB_PATH})
+        message(STATUS "Found NAPI library: ${NAPI_LIB}")
+    else()
+        message(WARNING "NAPI library not found at: ${NAPI_LIB_PATH}")
+        set(NAPI_LIB "")
+    endif()
 
-if(NAPI_LIB)
-    target_link_libraries(qemu_hmos ${NAPI_LIB})
-endif()
-if(LOG_LIB)
-    target_link_libraries(qemu_hmos ${LOG_LIB})
-endif()
-if(ANDROID_LIB)
-    target_link_libraries(qemu_hmos ${ANDROID_LIB})
+    if(NAPI_LIB)
+        target_link_libraries(qemu_hmos ${NAPI_LIB})
+    endif()
+    if(LOG_LIB)
+        target_link_libraries(qemu_hmos ${LOG_LIB})
+    endif()
+    if(ANDROID_LIB)
+        target_link_libraries(qemu_hmos ${ANDROID_LIB})
+    endif()
 endif()
 
 # 不静态链接 QEMU 核心库，改为运行时 dlopen("libqemu_full.so")
@@ -280,14 +295,16 @@ else()
     set(HAVE_FREERDP OFF)
 endif()
 
-if(NAPI_LIB)
-    target_link_libraries(qemu_hmos ${NAPI_LIB})
-endif()
-if(LOG_LIB)
-    target_link_libraries(qemu_hmos ${LOG_LIB})
-endif()
-if(ANDROID_LIB)
-    target_link_libraries(qemu_hmos ${ANDROID_LIB})
+if(BUILD_FOR_OHOS)
+    if(NAPI_LIB)
+        target_link_libraries(qemu_hmos ${NAPI_LIB})
+    endif()
+    if(LOG_LIB)
+        target_link_libraries(qemu_hmos ${LOG_LIB})
+    endif()
+    if(ANDROID_LIB)
+        target_link_libraries(qemu_hmos ${ANDROID_LIB})
+    endif()
 endif()
 
 # 链接QEMU相关库
@@ -319,43 +336,7 @@ if(FREERDP_LIB_PATH)
 endif()
 
 # 设置编译选项
-if(APPLE)
-    target_compile_options(qemu_hmos PRIVATE
-        -fPIC
-        -Wall
-        -Wextra
-        -O2
-        -std=c++17
-        -fdata-sections
-        -ffunction-sections
-        -funwind-tables
-        -fstack-protector-strong
-        -no-canonical-prefixes
-        -fno-addrsig
-        -Wa,--noexecstack
-        -Wformat
-        -Werror=format-security
-        -fuse-ld=lld
-        -Wl,--build-id=sha1
-        -Wl,--warn-shared-textrel
-        -Wl,--fatal-warnings
-        -lunwind
-        -Wl,--no-undefined
-        -Qunused-arguments
-        -Wl,-z,noexecstack
-        # QEMU特定编译选项
-        -DCONFIG_VNC=1
-        -DCONFIG_SLIRP=1
-        -DCONFIG_TCG=1
-        -DCONFIG_MODULES=1
-        -DCONFIG_UI_DBUS=1
-        -DCONFIG_VIRTIO_GPU=1
-        -DCONFIG_VIRTIO_GPU_PCI=1
-        -DCONFIG_BLOCK_CURL=1
-        -DCONFIG_BLOCK_SSH=1
-        -DCONFIG_UEFI_VARS=1
-    )
-else()
+if(BUILD_FOR_OHOS)
     target_compile_options(qemu_hmos PRIVATE
         -fPIC
         -Wall
@@ -393,6 +374,13 @@ else()
         -DCONFIG_BLOCK_SSH=1
         -DCONFIG_UEFI_VARS=1
     )
+else()
+    target_compile_options(qemu_hmos PRIVATE
+        -fPIC
+        -Wall
+        -Wextra
+        -O2
+    )
 endif()
 
 # 设置输出名称和路径 - 使用Hvigor期望的目录结构
@@ -403,7 +391,7 @@ set_target_properties(qemu_hmos PROPERTIES
 
 # ---- Bundle prebuilt QEMU core into native outputs (so Hvigor packs it) ----
 # Copy prebuilt core from cpp folder to Hvigor expected directory
-set(QEMU_FULL_SRC "${CMAKE_CURRENT_SOURCE_DIR}/libqemu_full.so")
+set(QEMU_FULL_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a/libqemu_full.so")
 set(QEMU_FULL_DST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../build/default/intermediates/libs/default/arm64-v8a")
 set(QEMU_FULL_DST "${QEMU_FULL_DST_DIR}/libqemu_full.so")
 
@@ -422,16 +410,20 @@ if(EXISTS ${QEMU_FULL_SRC})
     add_custom_target(copy_qemu_full ALL DEPENDS ${QEMU_FULL_DST} ${QEMU_FULL_OH_DST})
     add_dependencies(qemu_hmos copy_qemu_full)
 
-    # Also link the prebuilt core to force a DT_NEEDED entry so packager keeps it
-    add_library(qemu_full_prebuilt SHARED IMPORTED GLOBAL)
-    set_target_properties(qemu_full_prebuilt PROPERTIES IMPORTED_LOCATION ${QEMU_FULL_SRC})
-    # Disable as-needed so the linker emits NEEDED even if no symbols referenced
-    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        target_link_options(qemu_hmos PRIVATE "-Wl,--no-as-needed")
-    endif()
-    target_link_libraries(qemu_hmos qemu_full_prebuilt)
-    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        target_link_options(qemu_hmos PRIVATE "-Wl,--as-needed")
+    if(BUILD_FOR_OHOS)
+        # Also link the prebuilt core to force a DT_NEEDED entry so packager keeps it
+        add_library(qemu_full_prebuilt SHARED IMPORTED GLOBAL)
+        set_target_properties(qemu_full_prebuilt PROPERTIES IMPORTED_LOCATION ${QEMU_FULL_SRC})
+        # Disable as-needed so the linker emits NEEDED even if no symbols referenced
+        if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+            target_link_options(qemu_hmos PRIVATE "-Wl,--no-as-needed")
+        endif()
+        target_link_libraries(qemu_hmos qemu_full_prebuilt)
+        if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+            target_link_options(qemu_hmos PRIVATE "-Wl,--as-needed")
+        endif()
+    else()
+        message(STATUS "Skipping qemu_full_prebuilt link on host build")
     endif()
 else()
     message(WARNING "Prebuilt core not found at ${QEMU_FULL_SRC}; libqemu_full.so will not be packaged. You can still place it under src/main/libs/arm64-v8a/ manually or push to files/ at runtime.")

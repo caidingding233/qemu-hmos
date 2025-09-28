@@ -37,9 +37,11 @@
 - 打包/构建（hvigor + CMake）
   - 确保原生输出落盘到 `entry/src/main/libs/arm64-v8a/`，便于 HAP 打包：
     - `CMakeLists.txt` 新增：
-      - `copy_qemu_full` 自定义目标：将 `entry/src/main/cpp/libqemu_full.so` 复制到 `entry/src/main/libs/arm64-v8a/`。
+      - `copy_qemu_full` 自定义目标：将 `entry/src/main/libs/arm64-v8a/libqemu_full.so` 同步到构建产物与 `oh_modules/`，保证运行时可用。
       - `qemu_full_prebuilt` IMPORTED SHARED 目标并链接（配合 `-Wl,--no-as-needed`）强制生成 DT_NEEDED，
         防止打包器裁剪。
+  - 若未提供 `OHOS_NDK_HOME`，CMake 会降级为主机侧构建：自动启用简化 NAPI shim、跳过 HarmonyOS 特有链接依赖，并避免强制链接 ARM 架构的 `libqemu_full.so`。
+  - 新增 GitHub Actions 工作流 `Native Build (Host)`，在 Ubuntu runner 上执行 `cmake -S entry/src/main/cpp -B build/host && cmake --build build/host`，确保 PR 至少通过一次主机侧编译检查。
   - `module.json5`：`libIsolation=false`、`compressNativeLibs=false`，减少打包裁剪/压缩带来的问题。
 
 ## 最近修复（2025-09-07）

@@ -30,8 +30,11 @@
 - **DevEco Studio 5+**，HarmonyOS NEXT SDK（API 12+）
 - **开发者证书 + 调试签名**（启用 JIT / 可执行内存）
 - 目标设备：HarmonyOS NEXT 平板或电脑（开启开发者选项）
-- 构建依赖（本机）：`cmake` / `meson` / `ninja` / C/C++ toolchain  
+- 构建依赖（本机）：`cmake` / `meson` / `ninja` / C/C++ toolchain
   （用于编译 `libqemu.so` 与可选的 FreeRDP）
+- 没有安装 HarmonyOS NDK? CMake 会自动回退到**主机侧简化 NAPI shim**，在 GitHub Actions 等 CI 环境中也能完成编译检查。
+
+> 📦 仓库自带 `Native Build (Host)` workflow：在 Ubuntu runner 上执行 `cmake -S entry/src/main/cpp -B build/host && cmake --build build/host`，用于验证原生代码是否能通过基础编译。
 
 ---
 
@@ -73,7 +76,7 @@ app/
      ```
    - 将产物放入：`app/entry/libs/arm64-v8a/libqemu.so`
 4. **准备固件与资源**
-   - 将 `QEMU_EFI.fd` 放入 `app/entry/src/main/resources/rawfile/`（或 assets）
+   - 推荐将 `edk2-aarch64-code.fd`（EDK2 固件）放入 `app/entry/src/main/resources/rawfile/`（或 assets）；若暂时缺失，App 会自动跳过 `-bios` 参数并让 QEMU 使用内置缺省固件，方便快速验证能否起机
 5. **运行到设备**
    - 连接鸿蒙设备（平板/电脑），运行工程
 
@@ -92,7 +95,7 @@ app/
 -machine virt,gic-version=3,virtualization=on
 -cpu max -smp 4 -m 6144
 -accel tcg,thread=multi,tb-size=128
--bios QEMU_EFI.fd
+-bios edk2-aarch64-code.fd（若未提供固件，运行时将省略该参数）
 -drive if=none,id=d0,file=win11arm.qcow2,format=qcow2,cache=writeback,aio=threads,discard=unmap
 -device nvme,drive=d0,serial=nvme0
 -netdev user,id=n0,hostfwd=tcp:127.0.0.1:3390-:3389

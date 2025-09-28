@@ -1,0 +1,22 @@
+name: Native Build (Host)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - work
+  pull_request:
+
+jobs:
+  build-host-shim:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure host shim build
+        run: cmake -S entry/src/main/cpp -B build/host -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build host shim
+        run: cmake --build build/host --parallel
