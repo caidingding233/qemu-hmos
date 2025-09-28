@@ -323,7 +323,9 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
-        # 让pkg-config正常工作，glib已经安装
+        # 设置pkg-config使用HarmonyOS sysroot，避免glib架构冲突
+        export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
+        export PKG_CONFIG_PATH="${SYSROOT}/usr/lib/pkgconfig"
         export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT}"
         export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT}"
         ../configure \
@@ -334,7 +336,7 @@ jobs:
           --cross-prefix="" \
           --extra-cflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include -I${SYSROOT}/usr/include" \
           --extra-cxxflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include -I${SYSROOT}/usr/include" \
-          --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -lm -lutil" \
+          --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -lm" \
           -Db_staticpic=true \
           -Ddefault_library=static \
           -Dtools=disabled \
