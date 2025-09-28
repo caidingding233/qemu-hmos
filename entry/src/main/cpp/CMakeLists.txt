@@ -62,10 +62,10 @@ set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
-# 设置编译选项，确保不包含macOS特定的选项，并包含aarch64-linux-ohos的头文件路径
+# 设置编译选项，确保不包含macOS特定的选项，并包含aarch64-linux-gnu的头文件路径
 # 使用交叉目标与 sysroot 的基础包含路径，避免 -nostdinc/-nostdlib++ 破坏标准库
-set(CMAKE_C_FLAGS "-target aarch64-linux-ohos -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${CMAKE_CURRENT_SOURCE_DIR}")
-set(CMAKE_CXX_FLAGS "-target aarch64-linux-ohos -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${CMAKE_CURRENT_SOURCE_DIR}")
+    set(CMAKE_C_FLAGS "--target=aarch64-linux-gnu --sysroot=${OHOS_NDK_HOME}/sysroot -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-gnu -I${CMAKE_CURRENT_SOURCE_DIR}")
+    set(CMAKE_CXX_FLAGS "--target=aarch64-linux-gnu --sysroot=${OHOS_NDK_HOME}/sysroot -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-gnu -I${CMAKE_CURRENT_SOURCE_DIR}")
 
 # 根据构建类型设置优化级别
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
