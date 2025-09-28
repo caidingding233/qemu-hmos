@@ -323,10 +323,7 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
-        # 设置pkg-config使用HarmonyOS SDK的库配置
-        export PKG_CONFIG_LIBDIR=""
-        export PKG_CONFIG_PATH=""
-        # 禁用glib依赖，使用内部实现
+        # 让pkg-config正常工作，glib已经安装
         export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT}"
         export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT}"
         ../configure \
@@ -335,11 +332,10 @@ jobs:
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include" \
-          --extra-cxxflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include" \
-          --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT}" \
+          --extra-cflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include -I${SYSROOT}/usr/include" \
+          --extra-cxxflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include -I${SYSROOT}/usr/include" \
+          --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -lm -lutil" \
           -Db_staticpic=true \
-          -Db_pie=false \
           -Ddefault_library=static \
           -Dtools=disabled \
           --enable-tcg \
