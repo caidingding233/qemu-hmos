@@ -36,59 +36,23 @@ endif()
 if(OHOS_NDK_HOME AND EXISTS "${OHOS_NDK_HOME}")
     set(BUILD_FOR_OHOS TRUE)
     message(STATUS "Using OpenHarmony NDK at ${OHOS_NDK_HOME}")
-else()
-    set(BUILD_FOR_OHOS FALSE)
-    message(WARNING "OpenHarmony NDK not found. Building host-only shim; set OHOS_NDK_HOME for device binaries.")
-# 确保使用HarmonyOS NDK的工具链
-# 优先使用环境变量传递的编译器路径，其次使用默认路径
-if(DEFINED ENV{CC})
-    set(CMAKE_C_COMPILER "$ENV{CC}")
-else()
-    set(CMAKE_C_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang")
-endif()
 
-if(DEFINED ENV{CXX})
-    set(CMAKE_CXX_COMPILER "$ENV{CXX}")
-else()
-    set(CMAKE_CXX_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang++")
-endif()
-
-if(NOT CMAKE_LINKER)
-    set(CMAKE_LINKER "${OHOS_NDK_HOME}/llvm/bin/ld.lld")
-endif()
-
-# 设置交叉编译目标
-set(CMAKE_SYSTEM_NAME Linux)
-set(CMAKE_SYSTEM_PROCESSOR aarch64)
-
-# 设置sysroot
-set(CMAKE_SYSROOT "${OHOS_NDK_HOME}/sysroot")
-
-# 确保不使用主机的工具
-set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
-
-# 设置编译选项，确保不包含macOS特定的选项，并包含aarch64-linux-gnu的头文件路径
-# 使用交叉目标与 sysroot 的基础包含路径，避免 -nostdinc/-nostdlib++ 破坏标准库
-    set(CMAKE_C_FLAGS "--target=aarch64-linux-gnu --sysroot=${OHOS_NDK_HOME}/sysroot -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-gnu -I${CMAKE_CURRENT_SOURCE_DIR}")
-    set(CMAKE_CXX_FLAGS "--target=aarch64-linux-gnu --sysroot=${OHOS_NDK_HOME}/sysroot -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-gnu -I${CMAKE_CURRENT_SOURCE_DIR}")
-
-# 根据构建类型设置优化级别
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -g -DDEBUG")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g -DDEBUG")
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -DNDEBUG")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -DNDEBUG")
-endif()
-
-if(BUILD_FOR_OHOS)
     # 确保使用HarmonyOS NDK的工具链
-    set(CMAKE_C_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang")
-    set(CMAKE_CXX_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang++")
-    set(CMAKE_LINKER "${OHOS_NDK_HOME}/llvm/bin/ld.lld")
+    if(DEFINED ENV{CC})
+        set(CMAKE_C_COMPILER "$ENV{CC}")
+    else()
+        set(CMAKE_C_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang")
+    endif()
+
+    if(DEFINED ENV{CXX})
+        set(CMAKE_CXX_COMPILER "$ENV{CXX}")
+    else()
+        set(CMAKE_CXX_COMPILER "${OHOS_NDK_HOME}/llvm/bin/clang++")
+    endif()
+
+    if(NOT CMAKE_LINKER)
+        set(CMAKE_LINKER "${OHOS_NDK_HOME}/llvm/bin/ld.lld")
+    endif()
 
     # 设置交叉编译目标
     set(CMAKE_SYSTEM_NAME Linux)
@@ -103,10 +67,10 @@ if(BUILD_FOR_OHOS)
     set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
     set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
-    # 设置编译选项，确保不包含macOS特定的选项，并包含aarch64-linux-ohos的头文件路径
+    # 设置编译选项，确保不包含macOS特定的选项，并包含aarch64-linux-gnu的头文件路径
     # 使用交叉目标与 sysroot 的基础包含路径，避免 -nostdinc/-nostdlib++ 破坏标准库
-    set(CMAKE_C_FLAGS "-target aarch64-linux-ohos -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${CMAKE_CURRENT_SOURCE_DIR}")
-    set(CMAKE_CXX_FLAGS "-target aarch64-linux-ohos -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${CMAKE_CURRENT_SOURCE_DIR}")
+    set(CMAKE_C_FLAGS "--target=aarch64-linux-gnu --sysroot=${OHOS_NDK_HOME}/sysroot -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-gnu -I${CMAKE_CURRENT_SOURCE_DIR}")
+    set(CMAKE_CXX_FLAGS "--target=aarch64-linux-gnu --sysroot=${OHOS_NDK_HOME}/sysroot -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-gnu -I${CMAKE_CURRENT_SOURCE_DIR}")
 
     # 根据构建类型设置优化级别
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -116,11 +80,11 @@ if(BUILD_FOR_OHOS)
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -DNDEBUG")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -DNDEBUG")
     endif()
-
-    # 设置链接器标志，确保使用正确的链接器，并移除macOS特定的选项
-    set(CMAKE_EXE_LINKER_FLAGS "-fuse-ld=${OHOS_NDK_HOME}/llvm/bin/ld.lld")
-    set(CMAKE_SHARED_LINKER_FLAGS "-fuse-ld=${OHOS_NDK_HOME}/llvm/bin/ld.lld -shared")
+else()
+    set(BUILD_FOR_OHOS FALSE)
+    message(WARNING "OpenHarmony NDK not found. Building host-only shim; set OHOS_NDK_HOME for device binaries.")
 endif()
+
 
 # 确保输出文件扩展名为.so而不是.dylib
 # 让工具链按默认规则生成平台后缀（不要强制输出到源码树）
