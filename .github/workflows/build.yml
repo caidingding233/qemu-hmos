@@ -339,5 +339,5 @@ jobs:
           third_party/qemu/build/qemu-system-aarch64
           third_party/qemu/build/*.so
           third_party/qemu/build/*.a
-          entry/src/main/cpp/build/*.so
+          entry/src/main/libs/arm64-v8a/*.so
         retention-days: 7
