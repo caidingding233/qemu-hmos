@@ -19,7 +19,12 @@
 #include "qemu/bitmap.h"
 
 #ifdef CONFIG_PTHREAD_SET_NAME_NP
+#ifdef __FreeBSD__
 #include <pthread_np.h>
+#else
+/* For non-FreeBSD systems, define dummy functions */
+#define pthread_set_name_np(thread, name) do { } while(0)
+#endif
 #endif
 
 static bool name_threads;
@@ -362,13 +367,13 @@ static void *qemu_thread_start(void *args)
      * we're not going to fail if we can't set it.
      */
     if (name_threads && qemu_thread_args->name) {
-# if defined(CONFIG_PTHREAD_SETNAME_NP_W_TID)
+#if defined(CONFIG_PTHREAD_SETNAME_NP_W_TID)
         pthread_setname_np(pthread_self(), qemu_thread_args->name);
-# elif defined(CONFIG_PTHREAD_SETNAME_NP_WO_TID)
+#elif defined(CONFIG_PTHREAD_SETNAME_NP_WO_TID)
         pthread_setname_np(qemu_thread_args->name);
-# elif defined(CONFIG_PTHREAD_SET_NAME_NP)
+#elif defined(CONFIG_PTHREAD_SET_NAME_NP)
         pthread_set_name_np(pthread_self(), qemu_thread_args->name);
-# endif
+#endif
     }
     QEMU_TSAN_ANNOTATE_THREAD_NAME(qemu_thread_args->name);
     g_free(qemu_thread_args->name);
@@ -460,7 +465,11 @@ int qemu_thread_set_affinity(QemuThread *thread, unsigned long *host_cpus,
         value = find_next_bit(host_cpus, nbits, value + 1);
     }
 
+#if defined(CONFIG_PTHREAD_AFFINITY_NP)
     err = pthread_setaffinity_np(thread->thread, setsize, cpuset);
+#else
+    err = -ENOSYS;
+#endif
     CPU_FREE(cpuset);
     return err;
 #else
@@ -483,6 +492,7 @@ int qemu_thread_get_affinity(QemuThread *thread, unsigned long **host_cpus,
         cpuset = CPU_ALLOC(tmpbits);
         g_assert(cpuset);
 
+#if defined(CONFIG_PTHREAD_AFFINITY_NP)
         err = pthread_getaffinity_np(thread->thread, setsize, cpuset);
         if (err) {
             CPU_FREE(cpuset);
@@ -490,9 +500,13 @@ int qemu_thread_get_affinity(QemuThread *thread, unsigned long **host_cpus,
                 return err;
             }
             tmpbits *= 2;
-        } else {
-            break;
+            continue;
         }
+#else
+        CPU_FREE(cpuset);
+        return -ENOSYS;
+#endif
+        break;
     }
 
     /* Convert the result into a proper bitmap. */

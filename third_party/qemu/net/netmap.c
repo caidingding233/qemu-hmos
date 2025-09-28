@@ -26,9 +26,19 @@
 #include "qemu/osdep.h"
 #include <sys/ioctl.h>
 #include <net/if.h>
+
+#ifdef CONFIG_NETMAP
 #define NETMAP_WITH_LIBS
 #include <net/netmap.h>
 #include <net/netmap_user.h>
+#else
+/* Dummy definitions for non-netmap systems */
+#define NETMAP_API 11
+struct nm_desc;
+struct netmap_ring;
+#define NETMAP_TXRING(nifp, ring) NULL
+#define NETMAP_RXRING(nifp, ring) NULL
+#endif
 
 #include "net/net.h"
 #include "net/tap.h"

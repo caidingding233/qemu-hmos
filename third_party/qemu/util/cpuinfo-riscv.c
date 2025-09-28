@@ -11,6 +11,12 @@
 #include <asm/hwprobe.h>
 #include <sys/syscall.h>
 #include <asm/unistd.h>
+#else
+/* Dummy definitions for systems without asm/hwprobe.h */
+#define RISCV_HWPROBE_EXT_ZBA 0
+#define RISCV_HWPROBE_EXT_ZBB 0
+#define RISCV_HWPROBE_EXT_ZBC 0
+#define RISCV_HWPROBE_EXT_ZBS 0
 #endif
 
 unsigned cpuinfo;

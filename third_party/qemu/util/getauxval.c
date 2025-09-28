@@ -105,11 +105,16 @@ unsigned long qemu_getauxval(unsigned long type)
 unsigned long qemu_getauxval(unsigned long type)
 {
     unsigned long aux = 0;
+#ifdef CONFIG_ELF_AUX_INFO
     int ret = elf_aux_info(type, &aux, sizeof(aux));
     if (ret != 0) {
         errno = ret;
     }
     return aux;
+#else
+    errno = ENOSYS;
+    return 0;
+#endif
 }
 
 #else
