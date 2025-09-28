@@ -259,18 +259,20 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
-        # 使用HarmonyOS架构特定头文件路径
-        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -I${SYSROOT}/usr/include/aarch64-linux-ohos -I${SYSROOT}/usr/include"
-        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -I${SYSROOT}/usr/include/aarch64-linux-ohos -I${SYSROOT}/usr/include"
+        # 混合策略：编译用系统glibc，运行时动态链接musl
+        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include"
+        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include"
+        # 强制链接到HarmonyOS的musl库
+        export LDFLAGS="$LDFLAGS -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64"
         ../configure \
           --target-list=aarch64-softmmu \
           --cc="$CC" \
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I${SYSROOT}/usr/include/aarch64-linux-ohos -I${SYSROOT}/usr/include" \
-          --extra-cxxflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I${SYSROOT}/usr/include/aarch64-linux-ohos -I${SYSROOT}/usr/include" \
-          --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -lm" \
+          --extra-cflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include" \
+          --extra-cxxflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include" \
+          --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64 -lm" \
           -Db_staticpic=true \
           -Ddefault_library=static \
           -Dtools=disabled \
