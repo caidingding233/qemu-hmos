@@ -63,6 +63,7 @@ cat >"${PKG_CONFIG_SCRIPT}" <<EOF
 #!/bin/sh
 EXTRA_PKGCFG="${DEPS_PKGCONFIG}"
 SYSROOT_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
+export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
 if [ -d "\$EXTRA_PKGCFG" ]; then
   export PKG_CONFIG_LIBDIR="\$EXTRA_PKGCFG:\${SYSROOT_LIBDIR}"
 else
@@ -90,6 +91,7 @@ if [ -d "${DEPS_PKGCONFIG}" ]; then
 else
   export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
 fi
+export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
 
 echo "Using CC=${CC}"
 echo "Using HOST_CC=${HOST_CC}"
