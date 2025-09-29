@@ -8,42 +8,88 @@ cd "$SCRIPT_DIR"
 echo "=== QEMU 鸿蒙完整功能编译脚本（上游源码） ==="
 echo "目标：编译 aarch64-softmmu，开启 VNC/TCG/slirp 等核心能力"
 
-export OHOS_NDK_HOME="/Users/caidingding233/Library/OpenHarmony/Sdk/18/native"
-export SYSROOT="${OHOS_NDK_HOME}/sysroot"
-export CC="${OHOS_NDK_HOME}/llvm/bin/aarch64-unknown-linux-ohos-clang"
-export CXX="${OHOS_NDK_HOME}/llvm/bin/aarch64-unknown-linux-ohos-clang++"
-export AR="${OHOS_NDK_HOME}/llvm/bin/llvm-ar"
-export STRIP="${OHOS_NDK_HOME}/llvm/bin/llvm-strip"
-export RANLIB="${OHOS_NDK_HOME}/llvm/bin/llvm-ranlib"
-export LD="${OHOS_NDK_HOME}/llvm/bin/ld.lld"
-HOST_CC="/usr/bin/cc"
+CROSS_TRIPLE="${OHOS_CROSS_TRIPLE:-aarch64-unknown-linux-ohos}"
+
+if [ -z "${OHOS_NDK_HOME:-}" ]; then
+  for candidate in \
+    "${SCRIPT_DIR}/../../ohos-sdk/linux/native" \
+    "${HOME}/Library/OpenHarmony/Sdk/18/native" \
+    "${HOME}/OpenHarmony/Sdk/18/native" \
+    "${HOME}/openharmony/sdk/18/native"; do
+    if [ -d "${candidate}" ]; then
+      OHOS_NDK_HOME="${candidate}"
+      break
+    fi
+  done
+fi
+
+if [ -z "${OHOS_NDK_HOME:-}" ]; then
+  echo "error: set OHOS_NDK_HOME to your OpenHarmony NDK (native) directory" >&2
+  exit 1
+fi
+
+export OHOS_NDK_HOME
+SYSROOT="${OHOS_SYSROOT:-${OHOS_NDK_HOME}/sysroot}"
+if [ ! -d "${SYSROOT}" ]; then
+  echo "error: sysroot not found at ${SYSROOT}" >&2
+  exit 1
+fi
+export SYSROOT
+
+LLVM_BIN="${OHOS_NDK_HOME}/llvm/bin"
+export CC="${OHOS_CC:-${LLVM_BIN}/${CROSS_TRIPLE}-clang}"
+export CXX="${OHOS_CXX:-${LLVM_BIN}/${CROSS_TRIPLE}-clang++}"
+export AR="${OHOS_AR:-${LLVM_BIN}/llvm-ar}"
+export STRIP="${OHOS_STRIP:-${LLVM_BIN}/llvm-strip}"
+export RANLIB="${OHOS_RANLIB:-${LLVM_BIN}/llvm-ranlib}"
+export LD="${OHOS_LD:-${LLVM_BIN}/ld.lld}"
+HOST_CC="${HOST_CC:-/usr/bin/cc}"
+
+for tool in "${CC}" "${CXX}" "${AR}" "${RANLIB}" "${STRIP}" "${LD}"; do
+  if [ ! -x "${tool}" ]; then
+    echo "error: required tool not executable: ${tool}" >&2
+    exit 1
+  fi
+done
 
 # pkg-config for cross
 # Prefer aarch64-unknown-linux-ohos-pkg-config if available; else provide wrapper under deps/bin
+DEPS_PREFIX="${OHOS_DEPS_PREFIX:-${SCRIPT_DIR}/../deps/install-ohos}"
+DEPS_PKGCONFIG="${DEPS_PREFIX}/lib/pkgconfig"
 WRAP_PKGCFG_DIR="${SCRIPT_DIR}/../deps/bin"
 mkdir -p "$WRAP_PKGCFG_DIR"
-cat >"$WRAP_PKGCFG_DIR/aarch64-unknown-linux-ohos-pkg-config" <<'EOF'
+PKG_CONFIG_SCRIPT="$WRAP_PKGCFG_DIR/${CROSS_TRIPLE}-pkg-config"
+cat >"${PKG_CONFIG_SCRIPT}" <<EOF
 #!/bin/sh
-export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
-export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
-if [ "$#" -eq 0 ]; then
+EXTRA_PKGCFG="${DEPS_PKGCONFIG}"
+SYSROOT_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
+if [ -d "\$EXTRA_PKGCFG" ]; then
+  export PKG_CONFIG_LIBDIR="\$EXTRA_PKGCFG:\${SYSROOT_LIBDIR}"
+else
+  export PKG_CONFIG_LIBDIR="\${SYSROOT_LIBDIR}"
+fi
+if [ "\$#" -eq 0 ]; then
   exec pkg-config --version
 else
-  exec pkg-config "$@"
+  exec pkg-config "\$@"
 fi
 EOF
-chmod +x "$WRAP_PKGCFG_DIR/aarch64-unknown-linux-ohos-pkg-config"
+chmod +x "${PKG_CONFIG_SCRIPT}"
 export PATH="$WRAP_PKGCFG_DIR:$PATH"
-export PKG_CONFIG="aarch64-unknown-linux-ohos-pkg-config"
+export PKG_CONFIG="$(basename "${PKG_CONFIG_SCRIPT}")"
 
 # Provide nm wrapper expected by QEMU's cross-prefix
-cat >"$WRAP_PKGCFG_DIR/aarch64-unknown-linux-ohos-nm" <<'EOF'
+NM_WRAPPER="$WRAP_PKGCFG_DIR/${CROSS_TRIPLE}-nm"
+cat >"${NM_WRAPPER}" <<EOF
 #!/bin/sh
-exec /Users/caidingding233/Library/OpenHarmony/Sdk/18/native/llvm/bin/llvm-nm "$@"
+exec "${LLVM_BIN}/llvm-nm" "\$@"
 EOF
-chmod +x "$WRAP_PKGCFG_DIR/aarch64-unknown-linux-ohos-nm"
-export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
-export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
+chmod +x "${NM_WRAPPER}"
+if [ -d "${DEPS_PKGCONFIG}" ]; then
+  export PKG_CONFIG_LIBDIR="${DEPS_PKGCONFIG}:${SYSROOT}/usr/lib/pkgconfig"
+else
+  export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
+fi
 
 echo "Using CC=${CC}"
 echo "Using HOST_CC=${HOST_CC}"
@@ -63,11 +109,11 @@ HOST_CC="$HOST_CC" \
 AR="$AR" STRIP="$STRIP" RANLIB="$RANLIB" CXX="$CXX" \
 ../configure \
   --target-list=aarch64-softmmu \
-  --cross-prefix=aarch64-unknown-linux-ohos- \
+  --cross-prefix=${CROSS_TRIPLE}- \
   --cc="$CC" \
   --host-cc="$HOST_CC" \
-  --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
-  --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
+  --extra-cflags="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT}" \
+  --extra-ldflags="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT}" \
   -Db_staticpic=true -Db_pie=false -Ddefault_library=static \
   -Dtools=disabled \
   --enable-tcg \
