@@ -145,6 +145,23 @@ build_glib() {
   local src="${DEPS_ROOT}/glib/src"
   local build_dir="${DEPS_ROOT}/glib/build-ohos"
   log "configuring GLib"
+  # Ensure vendored Meson subprojects are present; when the GLib git submodule
+  # is checked out with --depth=1, nested submodules such as gvdb may be left
+  # uninitialised which forces Meson to attempt a network download (blocked by
+  # --wrap-mode=nodownload). Initialise the required ones if they are missing.
+  if [[ -d "${src}/.git" ]]; then
+    declare -a missing_subprojects=()
+    for sp in gvdb libffi proxy-libintl; do
+      if [[ ! -f "${src}/subprojects/${sp}/meson.build" ]]; then
+        missing_subprojects+=("subprojects/${sp}")
+      fi
+    done
+    if ((${#missing_subprojects[@]})); then
+      log "initialising GLib nested subprojects: ${missing_subprojects[*]}"
+      git -C "${src}" submodule update --init --recursive "${missing_subprojects[@]}"
+    fi
+  fi
+
   # Ensure test template files exist; GLib's meson.build references them unconditionally
   if [[ ! -f "${src}/tests/template.test.in" ]] || [[ ! -f "${src}/tests/template-tap.test.in" ]]; then
     log "GLib test templates missing; creating minimal stubs"
