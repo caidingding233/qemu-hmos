@@ -128,13 +128,15 @@ jobs:
         export RANLIB="$OHOS_NDK_HOME/llvm/bin/llvm-ranlib"
         export STRIP="$OHOS_NDK_HOME/llvm/bin/llvm-strip"
         command -v cmake >/dev/null || sudo apt-get install -y cmake
+        # Record CMake path for later steps
+        export CMAKE="$(command -v cmake || true)"
         
         echo "=== Final environment ==="
         echo "OHOS_NDK_HOME: $OHOS_NDK_HOME"
         echo "SYSROOT: $SYSROOT"
         echo "CC: $CC"
         echo "CXX: $CXX"
-        echo "CMAKE: $CMAKE"
+        echo "CMAKE: ${CMAKE:-$(command -v cmake || true)}"
         
         echo ""
         echo "=== Testing compiler ==="
@@ -149,13 +151,12 @@ jobs:
         
         echo ""
         echo "=== Testing CMake ==="
-        if [ -f "$CMAKE" ]; then
+        if command -v cmake >/dev/null 2>&1; then
+          CMAKE="$(command -v cmake)"
           echo "✅ CMake exists: $CMAKE"
-          "$CMAKE" --version | head -3 || echo "CMake version check failed"
+          cmake --version | head -3 || echo "CMake version check failed"
         else
-          echo "❌ CMake not found: $CMAKE"
-          echo "Available files in build-tools/cmake/bin:"
-          ls -la "$(dirname "$CMAKE")" || echo "Cannot list cmake/bin"
+          echo "❌ CMake not found in PATH"
           exit 1
         fi
         
@@ -167,6 +168,7 @@ jobs:
         echo "AR=$AR" >> $GITHUB_ENV
         echo "RANLIB=$RANLIB" >> $GITHUB_ENV
         echo "STRIP=$STRIP" >> $GITHUB_ENV
+        echo "CMAKE=$CMAKE" >> $GITHUB_ENV
 
     - name: Build OHOS deps (GLib, Pixman, PCRE2)
       run: |
