@@ -65,6 +65,8 @@ cat >"${PKG_CONFIG_SCRIPT}" <<EOF
 EXTRA_PKGCFG="${DEPS_PKGCONFIG}"
 SYSROOT_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
 export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
+# 强制禁用系统搜索路径，避免回退到宿主 .pc
+export PKG_CONFIG_PATH=""
 if [ -d "\$EXTRA_PKGCFG" ]; then
   export PKG_CONFIG_LIBDIR="\$EXTRA_PKGCFG:\${SYSROOT_LIBDIR}"
 else
@@ -153,6 +155,7 @@ MESON_BIN=$(command -v meson || true)
   --cross-prefix=${CROSS_TRIPLE}- \
   --cc="$CC" \
   --host-cc="$HOST_CC" \
+  --cross-cc-cflags-aarch64="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT}" \
   --extra-cflags="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT}" \
   --extra-ldflags="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT}" \
   ${MESON_BIN:+--meson="$MESON_BIN"} \
