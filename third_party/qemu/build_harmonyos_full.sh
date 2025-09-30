@@ -6,9 +6,10 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 cd "$SCRIPT_DIR"
 
 echo "=== QEMU 鸿蒙完整功能编译脚本（上游源码） ==="
-echo "目标：编译 aarch64-softmmu，开启 VNC/TCG/slirp 等核心能力"
+echo "目标：编译 aarch64-softmmu，开启 VNC/TCG/SLIRP 等核心能力；禁用在 OHOS 上不适用或引入 glibc 依赖的特性"
 
-CROSS_TRIPLE="${OHOS_CROSS_TRIPLE:-aarch64-unknown-linux-ohos}"
+# 强制使用 OHOS 三元组，避免环境变量污染
+CROSS_TRIPLE="aarch64-unknown-linux-ohos"
 
 if [ -z "${OHOS_NDK_HOME:-}" ]; then
   for candidate in \
@@ -77,7 +78,8 @@ fi
 EOF
 chmod +x "${PKG_CONFIG_SCRIPT}"
 export PATH="$WRAP_PKGCFG_DIR:$PATH"
-export PKG_CONFIG="$(basename "${PKG_CONFIG_SCRIPT}")"
+# 使用绝对路径，确保 configure/meson 不会意外调用宿主 pkg-config
+export PKG_CONFIG="${PKG_CONFIG_SCRIPT}"
 
 # Provide nm wrapper expected by QEMU's cross-prefix
 NM_WRAPPER="$WRAP_PKGCFG_DIR/${CROSS_TRIPLE}-nm"
@@ -92,23 +94,53 @@ else
   export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
 fi
 export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
+# 禁止 pkg-config 扫描系统默认路径，防止 /usr/include 混入
+export PKG_CONFIG_SYSTEM_INCLUDE_PATH=""
+export PKG_CONFIG_SYSTEM_LIBRARY_PATH=""
+
+# 清理可能注入宿主头/库的环境变量
+unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH SDKROOT
 
 echo "Using CC=${CC}"
 echo "Using HOST_CC=${HOST_CC}"
 echo "Using PKG_CONFIG=${PKG_CONFIG:-pkg-config}"
 
-# 可选依赖预检查（关闭严格失败，交由 Meson 报错更精确）
-${PKG_CONFIG:-pkg-config} --exists glib-2.0 || echo "WARN: glib-2.0 not found via pkg-config"
-${PKG_CONFIG:-pkg-config} --exists pixman-1 || echo "WARN: pixman-1 not found via pkg-config"
+# 依赖前置校验：必须命中我们交叉构建的 .pc 文件，避免回退宿主
+if ! "$PKG_CONFIG" --exists glib-2.0; then
+  echo "error: missing glib-2.0.pc under ${DEPS_PKGCONFIG}; run tools/build_ohos_deps.sh" >&2
+  exit 1
+fi
+if ! "$PKG_CONFIG" --exists pixman-1; then
+  echo "error: missing pixman-1.pc under ${DEPS_PKGCONFIG}; run tools/build_ohos_deps.sh" >&2
+  exit 1
+fi
 
 BUILD_DIR="build_harmonyos_full"
 rm -rf "$BUILD_DIR" && mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
 echo "=== 配置 QEMU ./configure ==="
+
+#
+# 功能裁剪说明（面向 OHOS 设备）：
+#
+# 已启用（需要）：
+#   - VNC: 远程显示（基础，不启用 PNG/JPEG/TLS 扩展，减少依赖）
+#   - SLIRP: 用户态网络（来宾网络上网能力）
+#   - TCG: 纯软件翻译（无 KVM/Xen）
+#   - FDT(internal): 使用内置 dtc，避免外部依赖
+#
+# 已禁用（不需要 / OHOS 不支持 / 依赖繁重）：
+#   - KVM/Xen/Virt accel/vhost: 设备上无对应内核/权限
+#   - 本地 GUI: SDL/GTK/VTE/curses/SPICE/brlapi/usbredir
+#   - 安全/压缩扩展: gnutls/nettle/gcrypt/ssl/curl/ssh/lzo/snappy/bzip2/zstd/lzfse
+#   - 其他：keyring、guest-agent（需要时可单独交叉构建）、tools（qemu-img 等，默认关闭）
+#
+
 AR="$AR" STRIP="$STRIP" CXX="$CXX" \
 HOST_CC="$HOST_CC" \
 AR="$AR" STRIP="$STRIP" RANLIB="$RANLIB" CXX="$CXX" \
+MESON_BIN=$(command -v meson || true)
 ../configure \
   --target-list=aarch64-softmmu \
   --cross-prefix=${CROSS_TRIPLE}- \
@@ -116,16 +148,48 @@ AR="$AR" STRIP="$STRIP" RANLIB="$RANLIB" CXX="$CXX" \
   --host-cc="$HOST_CC" \
   --extra-cflags="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT}" \
   --extra-ldflags="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT}" \
+  ${MESON_BIN:+--meson="$MESON_BIN"} \
+  --pkg-config="$PKG_CONFIG" \
   --enable-slirp \
   --enable-vnc \
-  -Db_staticpic=true -Db_pie=false -Ddefault_library=static \
-  -Dtools=disabled \
   --enable-tcg \
   --enable-fdt=internal \
-  --disable-kvm --disable-xen \
+  \
+  --disable-kvm \
+  --disable-xen \
   --disable-werror \
-  -Dvhost_user=disabled -Dvhost_user_blk_server=disabled -Dlibvduse=disabled -Dvduse_blk_export=disabled -Dvhost_net=disabled -Dvhost_kernel=disabled \
-  -Dkeyring=disabled -Dguest_agent=disabled
+  \
+  --disable-sdl \
+  --disable-gtk \
+  --disable-vte \
+  --disable-curses \
+  --disable-spice \
+  --disable-brlapi \
+  --disable-usb-redir \
+  \
+  --disable-gnutls \
+  --disable-nettle \
+  --disable-gcrypt \
+  --disable-libssh \
+  --disable-curl \
+  --disable-lzo \
+  --disable-snappy \
+  --disable-bzip2 \
+  --disable-lzfse \
+  --disable-zstd \
+  \
+  -Db_staticpic=true \
+  -Db_pie=false \
+  -Ddefault_library=static \
+  -Dtools=disabled \
+  -Dvhost_user=disabled \
+  -Dvhost_user_blk_server=disabled \
+  -Dlibvduse=disabled \
+  -Dvduse_blk_export=disabled \
+  -Dvhost_net=disabled \
+  -Dvhost_kernel=disabled \
+  -Dkeyring=disabled \
+  -Dguest_agent=disabled
 
 echo "=== 开始编译 QEMU (make) ==="
 make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
