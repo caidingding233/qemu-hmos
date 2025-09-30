@@ -15,6 +15,8 @@ message(STATUS "Building ${PROJECT_NAME} v${PROJECT_VERSION} in ${CMAKE_BUILD_TY
 # 鸿蒙开发环境特定配置
 # 允许通过缓存变量或环境变量传入 OpenHarmony NDK 根目录
 set(OHOS_NDK_HOME "" CACHE PATH "Path to the OpenHarmony NDK (set for device builds)")
+# 可选：第三方依赖安装前缀（由 tools/build_ohos_deps.sh 生成）
+set(OHOS_DEPS_PREFIX "" CACHE PATH "Prefix where OHOS deps (glib/pixman/pcre2) are installed")
 
 set(_candidate_ndk_paths
     "$ENV{OHOS_NDK_HOME}"
@@ -36,6 +38,12 @@ endif()
 if(OHOS_NDK_HOME AND EXISTS "${OHOS_NDK_HOME}")
     set(BUILD_FOR_OHOS TRUE)
     message(STATUS "Using OpenHarmony NDK at ${OHOS_NDK_HOME}")
+
+    if(NOT OHOS_DEPS_PREFIX)
+        # 默认指向仓库内的第三方依赖安装路径
+        set(OHOS_DEPS_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/deps/install-ohos" CACHE PATH "OHOS deps prefix (auto-detected)" FORCE)
+    endif()
+    message(STATUS "Using OHOS deps prefix at ${OHOS_DEPS_PREFIX}")
 
     # 确保使用HarmonyOS NDK的工具链
     if(DEFINED ENV{CC})
@@ -67,10 +75,10 @@ if(OHOS_NDK_HOME AND EXISTS "${OHOS_NDK_HOME}")
     set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
     set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
-    # 设置编译选项，确保不包含macOS特定的选项，并包含aarch64-linux-gnu的头文件路径
+    # 设置编译选项，确保不包含macOS特定的选项，并包含 OHOS (musl) 头文件路径
     # 使用交叉目标与 sysroot 的基础包含路径，避免 -nostdinc/-nostdlib++ 破坏标准库
-    set(CMAKE_C_FLAGS "--target=aarch64-linux-gnu --sysroot=${OHOS_NDK_HOME}/sysroot -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-gnu -I${CMAKE_CURRENT_SOURCE_DIR}")
-    set(CMAKE_CXX_FLAGS "--target=aarch64-linux-gnu --sysroot=${OHOS_NDK_HOME}/sysroot -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-gnu -I${CMAKE_CURRENT_SOURCE_DIR}")
+    set(CMAKE_C_FLAGS "--target=aarch64-unknown-linux-ohos --sysroot=${OHOS_NDK_HOME}/sysroot -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${OHOS_DEPS_PREFIX}/include -I${CMAKE_CURRENT_SOURCE_DIR}")
+    set(CMAKE_CXX_FLAGS "--target=aarch64-unknown-linux-ohos --sysroot=${OHOS_NDK_HOME}/sysroot -I${OHOS_NDK_HOME}/sysroot/usr/include -I${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos -I${OHOS_DEPS_PREFIX}/include -I${CMAKE_CURRENT_SOURCE_DIR}")
 
     # 根据构建类型设置优化级别
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -160,6 +168,7 @@ elseif(BUILD_FOR_OHOS)
         ${CMAKE_CURRENT_SOURCE_DIR}
         "${OHOS_NDK_HOME}/sysroot/usr/include"
         "${OHOS_NDK_HOME}/sysroot/usr/include/aarch64-linux-ohos"
+        "${OHOS_DEPS_PREFIX}/include"
         ${QEMU_INCLUDE_DIRS}
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libvncclient/include
     )
@@ -168,6 +177,7 @@ elseif(BUILD_FOR_OHOS)
     link_directories(
         "${OHOS_NDK_HOME}/sysroot/usr/lib/aarch64-linux-ohos"
         "${OHOS_NDK_HOME}/sysroot/usr/lib"
+        "${OHOS_DEPS_PREFIX}/lib"
         "${QEMU_BUILD_DIR}"
     )
 else()
@@ -256,28 +266,43 @@ endforeach()
 # 链接QEMU库
 if(QEMU_LIBS)
     target_link_libraries(qemu_hmos ${QEMU_LIBS})
-    # QEMU依赖库
-    target_link_libraries(qemu_hmos 
-        -lpthread
-        -ldl
-        -lm
-        -lz
-        -lssl
-        -lcrypto
-        -lcurl
-        -lssh
-        -lgmp
-        -lglib-2.0
-        -lgio-2.0
-        -lgobject-2.0
-        -lpixman-1
-        -lgnutls
-        -ltasn1
-        -lsasl2
-        -lpam
-        -lbz2
-        -lzstd
-    )
+    if(BUILD_FOR_OHOS)
+        # 仅链接已交叉构建的必要库，避免误链接宿主机 glibc 变体
+        target_link_libraries(qemu_hmos 
+            -lpthread
+            -ldl
+            -lm
+            -lz
+            -lglib-2.0
+            -lgio-2.0
+            -lgobject-2.0
+            -lpixman-1
+            -lpcre2-8
+        )
+    else()
+        # 主机端可用更丰富的特性
+        target_link_libraries(qemu_hmos 
+            -lpthread
+            -ldl
+            -lm
+            -lz
+            -lssl
+            -lcrypto
+            -lcurl
+            -lssh
+            -lgmp
+            -lglib-2.0
+            -lgio-2.0
+            -lgobject-2.0
+            -lpixman-1
+            -lgnutls
+            -ltasn1
+            -lsasl2
+            -lpam
+            -lbz2
+            -lzstd
+        )
+    endif()
 endif()
 
 if(BUILD_FOR_OHOS)
@@ -409,7 +434,7 @@ if(BUILD_FOR_OHOS)
         -O2
         -D__MUSL__
         -D__OHOS__
-        --target=aarch64-linux-ohos
+        --target=aarch64-unknown-linux-ohos
         -fdata-sections
         -ffunction-sections
         -funwind-tables

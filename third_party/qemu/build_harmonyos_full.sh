@@ -116,6 +116,8 @@ AR="$AR" STRIP="$STRIP" RANLIB="$RANLIB" CXX="$CXX" \
   --host-cc="$HOST_CC" \
   --extra-cflags="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT}" \
   --extra-ldflags="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT}" \
+  --enable-slirp \
+  --enable-vnc \
   -Db_staticpic=true -Db_pie=false -Ddefault_library=static \
   -Dtools=disabled \
   --enable-tcg \

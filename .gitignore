@@ -25,8 +25,7 @@ test*
 !.github/workflows/test-*
 
 # 排除工具和脚本的临时文件
-/tools/*
-!tools/build_ohos_deps.sh
+/tools
 third_party/novnc/
 third_party/novnc_bundle/
 so_libs/
@@ -90,4 +89,3 @@ third_party/**/*.dll
 !third_party/**/*.wrap
 .cursor/rules
 WARP.md
-AGENTS.md

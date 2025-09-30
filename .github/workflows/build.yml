@@ -1,4 +1,4 @@
-name: Build QEMU for HarmonyOS, using Huawei's toolchain
+name: Build QEMU for HarmonyOS (OHOS musl toolchain)
 
 on:
   workflow_dispatch:
@@ -13,18 +13,15 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install dependencies
+    - name: Install host build tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential cmake curl wget unzip python3 \
-                              libglib2.0-dev libpixman-1-dev libssl-dev \
-                              libcurl4-openssl-dev libssh-dev libgnutls28-dev \
-                              libsasl2-dev libpam0g-dev libbz2-dev libzstd-dev \
-                              libpcre2-dev pkg-config meson ninja-build tree \
-                              binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
-                              libc6-dev
+        # Host tools only; target libs are built from source for OHOS (musl)
+        sudo apt-get install -y \
+          build-essential curl wget unzip python3 file tree pkg-config \
+          cmake ninja-build meson
 
-    - name: Download and setup SDK
+    - name: Download and setup OpenHarmony NDK
       run: |
         echo "=== Downloading SDK ==="
         curl -OL https://repo.huaweicloud.com/openharmony/os/5.1.0-Release/ohos-sdk-windows_linux-public.tar.gz
@@ -103,7 +100,7 @@ jobs:
         echo "✅ Final native directory: $NATIVE_DIR"
         
         echo "=== Setting up environment ==="
-        # Set up base paths
+        # Set up base paths (OHOS NDK is musl-based)
         export OHOS_NDK_HOME="$(pwd)/$NATIVE_DIR"
         export SYSROOT="$(pwd)/$NATIVE_DIR/sysroot"
         
@@ -123,81 +120,14 @@ jobs:
         echo "Looking for any clang compiler:"
         find "$NATIVE_DIR" -name "*clang*" -type f
         
-        # Find clang compiler dynamically
-        echo ""
-        echo "=== Finding clang compiler ==="
-        CLANG_CANDIDATES=(
-          "$NATIVE_DIR/llvm/bin/aarch64-unknown-linux-ohos-clang"
-          "$NATIVE_DIR/llvm/bin/clang"
-          "$NATIVE_DIR/bin/aarch64-unknown-linux-ohos-clang"
-          "$NATIVE_DIR/bin/clang"
-        )
-        
-        CC=""
-        for candidate in "${CLANG_CANDIDATES[@]}"; do
-          if [ -f "$candidate" ]; then
-            CC="$candidate"
-            echo "✅ Found CC: $CC"
-            break
-          fi
-        done
-        
-        if [ -z "$CC" ]; then
-          echo "❌ No clang compiler found in expected locations"
-          echo "Searching for any clang file:"
-          CLANG_PATH=$(find "$NATIVE_DIR" -type f -name '*clang*' | head -1)
-          if [ -n "$CLANG_PATH" ]; then
-            CC="$CLANG_PATH"
-            echo "✅ Found alternative CC: $CC"
-          else
-            echo "❌ No clang compiler found at all"
-            exit 1
-          fi
-        fi
-        
-        # Find C++ compiler
-        CXX_CANDIDATES=(
-          "$NATIVE_DIR/llvm/bin/aarch64-unknown-linux-ohos-clang++"
-          "$NATIVE_DIR/llvm/bin/clang++"
-          "$NATIVE_DIR/bin/aarch64-unknown-linux-ohos-clang++"
-          "$NATIVE_DIR/bin/clang++"
-        )
-        
-        CXX=""
-        for candidate in "${CXX_CANDIDATES[@]}"; do
-          if [ -f "$candidate" ]; then
-            CXX="$candidate"
-            echo "✅ Found CXX: $CXX"
-            break
-          fi
-        done
-        
-        if [ -z "$CXX" ]; then
-          echo "⚠️ No C++ compiler found, using CC for CXX"
-          CXX="$CC"
-        fi
-        
-        # Find CMake
-        CMAKE_CANDIDATES=(
-          "$NATIVE_DIR/build-tools/cmake/bin/cmake"
-          "$NATIVE_DIR/cmake/bin/cmake"
-          "$NATIVE_DIR/bin/cmake"
-          "/usr/bin/cmake"
-        )
-        
-        CMAKE=""
-        for candidate in "${CMAKE_CANDIDATES[@]}"; do
-          if [ -f "$candidate" ]; then
-            CMAKE="$candidate"
-            echo "✅ Found CMake: $CMAKE"
-            break
-          fi
-        done
-        
-        if [ -z "$CMAKE" ]; then
-          echo "❌ No CMake found"
-          exit 1
-        fi
+        # Record toolchain locations (we will use NDK-provided clang directly)
+        export CC="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang"
+        export CXX="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang++"
+        export LD="$OHOS_NDK_HOME/llvm/bin/ld.lld"
+        export AR="$OHOS_NDK_HOME/llvm/bin/llvm-ar"
+        export RANLIB="$OHOS_NDK_HOME/llvm/bin/llvm-ranlib"
+        export STRIP="$OHOS_NDK_HOME/llvm/bin/llvm-strip"
+        command -v cmake >/dev/null || sudo apt-get install -y cmake
         
         echo "=== Final environment ==="
         echo "OHOS_NDK_HOME: $OHOS_NDK_HOME"
@@ -234,68 +164,44 @@ jobs:
         echo "SYSROOT=$SYSROOT" >> $GITHUB_ENV
         echo "CC=$CC" >> $GITHUB_ENV
         echo "CXX=$CXX" >> $GITHUB_ENV
-        echo "CMAKE=$CMAKE" >> $GITHUB_ENV
+        echo "AR=$AR" >> $GITHUB_ENV
+        echo "RANLIB=$RANLIB" >> $GITHUB_ENV
+        echo "STRIP=$STRIP" >> $GITHUB_ENV
 
-    - name: Build HarmonyOS third-party deps
+    - name: Build OHOS deps (GLib, Pixman, PCRE2)
       run: |
-        set -euxo pipefail
-        tools/build_ohos_deps.sh
-      env:
-        OHOS_NDK_HOME: ${{ env.OHOS_NDK_HOME }}
-        OHOS_SYSROOT: ${{ env.SYSROOT }}
-
-    - name: Build QEMU
-      run: |
-        set -euxo pipefail
+        echo "=== Building OHOS-friendly deps (musl, static) ==="
         export OHOS_NDK_HOME="$OHOS_NDK_HOME"
-        export OHOS_SYSROOT="$SYSROOT"
-        export OHOS_CROSS_TRIPLE="aarch64-unknown-linux-ohos"
-        third_party/qemu/build_harmonyos_full.sh
+        bash tools/build_ohos_deps.sh
+
+    - name: Build QEMU (aarch64-unknown-linux-ohos)
+      run: |
+        echo "=== Building QEMU with OHOS toolchain ==="
+        export OHOS_NDK_HOME="$OHOS_NDK_HOME"
+        export SYSROOT="$SYSROOT"
+        bash third_party/qemu/build_harmonyos_full.sh
+        echo "=== Checking build results ==="
+        ls -la third_party/qemu/build_harmonyos_full/qemu-system-aarch64 || true
+        find third_party/qemu/build_harmonyos_full -maxdepth 1 -type f -name "qemu-system-*" -ls || true
 
     - name: Build NAPI module
       run: |
-        echo "=== Restoring environment variables ==="
-        # Restore environment variables from previous step
-        export OHOS_NDK_HOME="$OHOS_NDK_HOME"
-        export OHOS_SYSROOT="$SYSROOT"
-        export SYSROOT="$SYSROOT"
-        export CC="$CC"
-        export CXX="$CXX"
-        export CMAKE="$CMAKE"
-
-        echo "Debug: OHOS_NDK_HOME=$OHOS_NDK_HOME"
-        echo "Debug: SYSROOT=$SYSROOT"
-        echo "Debug: CC=$CC"
-        echo "Debug: CXX=$CXX"
-
-        echo "=== Building NAPI module ==="
+        echo "=== Building NAPI module (OHOS) ==="
         cd entry/src/main/cpp
-
-        mkdir -p build
-        cd build
-
-        echo "Using CMake: $CMAKE"
-        echo "Using CC: $CC"
-        echo "Using CXX: $CXX"
-        
-        "$CMAKE" .. \
+        rm -rf build && mkdir -p build && cd build
+        cmake .. \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_SYSTEM_NAME=Linux \
           -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-          -DCMAKE_C_COMPILER="$CC" \
-          -DCMAKE_CXX_COMPILER="$CXX" \
-          -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
-          -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
-          -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
-          -DOHOS_NDK_HOME="$OHOS_NDK_HOME" \
-          -DSYSROOT="$SYSROOT"
-        
-        make -j$(nproc)
-        
+          -DCMAKE_C_COMPILER="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang" \
+          -DCMAKE_CXX_COMPILER="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang++" \
+          -DOHOS_NDK_HOME="$OHOS_NDK_HOME"
+        ninja -v
         echo "✅ NAPI module build completed!"
-        
         echo "=== Build artifacts ==="
-        ls -la *.so || echo "No .so files found"
-        find . -name "*.so" -o -name "*.a"
+        ls -la ../libs/arm64-v8a || true
+        find . -name "*.so" -o -name "*.a" || true
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
