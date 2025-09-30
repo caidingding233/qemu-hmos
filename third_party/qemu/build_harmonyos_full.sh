@@ -206,3 +206,19 @@ echo "=== 开始编译 QEMU (make) ==="
 make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 echo "=== 构建完成，产出归档供链接 ==="
+
+# 额外守卫：检查构建指令中是否混入宿主路径或错误目标
+if [ -f "compile_commands.json" ]; then
+  if rg -n "(/usr/include|x86_64-linux-gnu|--target=aarch64-linux-gnu)" compile_commands.json >/dev/null; then
+    echo "error: detected host header paths or linux-gnu target in compile commands" >&2
+    rg -n "(/usr/include|x86_64-linux-gnu|--target=aarch64-linux-gnu)" compile_commands.json || true
+    exit 2
+  fi
+fi
+if [ -d "meson-logs" ]; then
+  if rg -n "(/usr/include|x86_64-linux-gnu|--target=aarch64-linux-gnu)" meson-logs >/dev/null; then
+    echo "error: detected host header paths or linux-gnu target in meson logs" >&2
+    rg -n "(/usr/include|x86_64-linux-gnu|--target=aarch64-linux-gnu)" meson-logs || true
+    exit 2
+  fi
+fi
