@@ -74,7 +74,7 @@ c = '${CLANG_BIN}'
 cpp = '${CXX_BIN}'
 ar = '${AR_BIN}'
 strip = '${STRIP_BIN}'
-pkgconfig = '${PKG_CONFIG_WRAPPER}'
+pkg-config = '${PKG_CONFIG_WRAPPER}'
 ld = '${LD_BIN}'
 cmake = 'cmake'
 python = 'python3'
@@ -82,6 +82,8 @@ python = 'python3'
 [properties]
 needs_exe_wrapper = true
 sys_root = '${SYSROOT}'
+
+[built-in options]
 c_args = ['--target=${CROSS_TRIPLE}', '--sysroot=${SYSROOT}', '-fPIC']
 cpp_args = ['--target=${CROSS_TRIPLE}', '--sysroot=${SYSROOT}', '-fPIC']
 c_link_args = ['--target=${CROSS_TRIPLE}', '--sysroot=${SYSROOT}']
@@ -173,7 +175,6 @@ GLIB_TEST_TAP_STUB
     -Dintrospection=disabled \
     -Dsysprof=disabled \
     -Ddocumentation=false \
-    -Dgtk_doc=false \
     -Dman-pages=disabled \
     -Dselinux=disabled \
     -Dxattr=false \
