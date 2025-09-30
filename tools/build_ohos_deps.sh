@@ -143,6 +143,23 @@ build_glib() {
   local src="${DEPS_ROOT}/glib/src"
   local build_dir="${DEPS_ROOT}/glib/build-ohos"
   log "configuring GLib"
+  # Ensure test template files exist; GLib's meson.build references them unconditionally
+  if [[ ! -f "${src}/tests/template.test.in" ]] || [[ ! -f "${src}/tests/template-tap.test.in" ]]; then
+    log "GLib test templates missing; creating minimal stubs"
+    mkdir -p "${src}/tests"
+    [[ -f "${src}/tests/template.test.in" ]] || cat >"${src}/tests/template.test.in" <<'GLIB_TEST_STUB'
+[Test]
+Type=session
+Exec=@test_exec@
+Output=@test_output@
+GLIB_TEST_STUB
+    [[ -f "${src}/tests/template-tap.test.in" ]] || cat >"${src}/tests/template-tap.test.in" <<'GLIB_TEST_TAP_STUB'
+[Test]
+Type=session
+Exec=@test_exec@
+Output=TAP
+GLIB_TEST_TAP_STUB
+  fi
   rm -rf "${build_dir}"
   meson setup "${build_dir}" "${src}" \
     --cross-file "${MESON_CROSS_FILE}" \
