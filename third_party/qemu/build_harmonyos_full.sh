@@ -100,6 +100,11 @@ export PKG_CONFIG_SYSTEM_LIBRARY_PATH=""
 
 # 清理可能注入宿主头/库的环境变量
 unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH SDKROOT
+# 清空通用编译标志，避免遗留 --target=aarch64-linux-gnu 或 -I/usr/include 等
+export CFLAGS=""
+export CXXFLAGS=""
+export LDFLAGS=""
+export CPPFLAGS=""
 
 echo "Using CC=${CC}"
 echo "Using HOST_CC=${HOST_CC}"
@@ -114,6 +119,8 @@ if ! "$PKG_CONFIG" --exists pixman-1; then
   echo "error: missing pixman-1.pc under ${DEPS_PKGCONFIG}; run tools/build_ohos_deps.sh" >&2
   exit 1
 fi
+echo "glib-2.0 cflags: $($PKG_CONFIG --cflags glib-2.0)"
+echo "pixman-1 cflags: $($PKG_CONFIG --cflags pixman-1)"
 
 BUILD_DIR="build_harmonyos_full"
 rm -rf "$BUILD_DIR" && mkdir -p "$BUILD_DIR"
@@ -158,6 +165,7 @@ MESON_BIN=$(command -v meson || true)
   --disable-kvm \
   --disable-xen \
   --disable-werror \
+  --disable-gio \
   \
   --disable-sdl \
   --disable-gtk \
