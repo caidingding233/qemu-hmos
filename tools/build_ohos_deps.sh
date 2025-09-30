@@ -162,6 +162,18 @@ Exec=@test_exec@
 Output=TAP
 GLIB_TEST_TAP_STUB
   fi
+  # GitHub Actions sets CI=true; GLib expects a GitLab-specific wrapper in that case.
+  # Provide a benign stub so Meson does not fail when it tries to locate the script.
+  if [[ ! -x "${src}/.gitlab-ci/thorough-test-wrapper.sh" ]]; then
+    log "Stub .gitlab-ci/thorough-test-wrapper.sh for CI builds"
+    mkdir -p "${src}/.gitlab-ci"
+    cat >"${src}/.gitlab-ci/thorough-test-wrapper.sh" <<'GLIB_CI_STUB'
+#!/bin/sh
+# Minimal wrapper for CI environments that expect GitLab's thorough-test wrapper.
+exec "$@"
+GLIB_CI_STUB
+    chmod +x "${src}/.gitlab-ci/thorough-test-wrapper.sh"
+  fi
   rm -rf "${build_dir}"
   meson setup "${build_dir}" "${src}" \
     --cross-file "${MESON_CROSS_FILE}" \
