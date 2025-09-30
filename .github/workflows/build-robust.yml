@@ -22,7 +22,7 @@ jobs:
         # Host tools only; target libs are cross-built for OHOS (musl)
         sudo apt-get install -y \
           build-essential curl wget unzip python3 file tree pkg-config \
-          cmake ninja-build meson
+          cmake ninja-build meson ripgrep
 
     - name: Download and setup SDK
       run: |
@@ -314,7 +314,7 @@ jobs:
         ls -la third_party/qemu/build_harmonyos_full/qemu-system-aarch64 || true
         find third_party/qemu/build_harmonyos_full -maxdepth 1 -type f -name "qemu-system-*" -ls || true
 
-    - name: Guard: assert no host headers/targets leaked
+    - name: "Guard: assert no host headers/targets leaked"
       run: |
         set -e
         LOGDIR="third_party/qemu/build_harmonyos_full/meson-logs"
