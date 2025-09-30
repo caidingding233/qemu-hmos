@@ -149,16 +149,38 @@ build_glib() {
   # is checked out with --depth=1, nested submodules such as gvdb may be left
   # uninitialised which forces Meson to attempt a network download (blocked by
   # --wrap-mode=nodownload). Initialise the required ones if they are missing.
-  if git -C "${src}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    declare -a missing_subprojects=()
-    for sp in gvdb libffi proxy-libintl; do
+  declare -a missing_subprojects=()
+  for sp in gvdb libffi proxy-libintl; do
+    if [[ ! -f "${src}/subprojects/${sp}/meson.build" ]]; then
+      missing_subprojects+=("${sp}")
+    fi
+  done
+  if ((${#missing_subprojects[@]})); then
+    if git -C "${src}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      declare -a git_initialise=()
+      for sp in "${missing_subprojects[@]}"; do
+        if git -C "${src}" config --file .gitmodules --get "submodule.subprojects/${sp}.url" >/dev/null 2>&1; then
+          git_initialise+=("subprojects/${sp}")
+        fi
+      done
+      if ((${#git_initialise[@]})); then
+        log "initialising GLib nested subprojects: ${git_initialise[*]}"
+        git -C "${src}" submodule update --init --recursive "${git_initialise[@]}"
+      fi
+    fi
+
+    declare -a still_missing=()
+    for sp in "${missing_subprojects[@]}"; do
       if [[ ! -f "${src}/subprojects/${sp}/meson.build" ]]; then
-        missing_subprojects+=("subprojects/${sp}")
+        still_missing+=("${sp}")
       fi
     done
-    if ((${#missing_subprojects[@]})); then
-      log "initialising GLib nested subprojects: ${missing_subprojects[*]}"
-      git -C "${src}" submodule update --init --recursive "${missing_subprojects[@]}"
+    if ((${#still_missing[@]})); then
+      log "downloading GLib Meson wraps: ${still_missing[*]}"
+      if ! (cd "${src}" && meson subprojects download "${still_missing[@]}"); then
+        log "error: failed to seed GLib subprojects ${still_missing[*]}. Provide them manually or allow downloads."
+        exit 1
+      fi
     fi
   fi
 
