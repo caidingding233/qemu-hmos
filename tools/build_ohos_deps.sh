@@ -149,7 +149,7 @@ build_glib() {
   # is checked out with --depth=1, nested submodules such as gvdb may be left
   # uninitialised which forces Meson to attempt a network download (blocked by
   # --wrap-mode=nodownload). Initialise the required ones if they are missing.
-  if [[ -d "${src}/.git" ]]; then
+  if git -C "${src}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     declare -a missing_subprojects=()
     for sp in gvdb libffi proxy-libintl; do
       if [[ ! -f "${src}/subprojects/${sp}/meson.build" ]]; then
