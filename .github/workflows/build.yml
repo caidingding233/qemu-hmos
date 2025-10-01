@@ -271,7 +271,7 @@ jobs:
           --cross-prefix="" \
           --extra-cflags="--target=aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include -idirafter ${SYSROOT}/usr/include" \
           --extra-cxxflags="--target=aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include -idirafter ${SYSROOT}/usr/include" \
-          --extra-ldflags="--fuse-ld=lld --target=aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64 -lm" \
+          --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64 -lm" \
           -Db_staticpic=true \
           -Ddefault_library=static \
           -Dtools=disabled \
