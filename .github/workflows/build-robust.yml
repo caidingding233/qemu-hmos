@@ -25,7 +25,7 @@ jobs:
                               libsasl2-dev libpam0g-dev libbz2-dev libzstd-dev \
                               libpcre2-dev pkg-config meson tree \
                               binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
-                              libc6-dev
+                              libc6-dev libc6-dev-arm64-cross  # 添加aarch64头文件
 
     - name: Download and setup SDK
       run: |
@@ -324,10 +324,9 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
-        # 强制使用系统glibc头文件，禁用sysroot头文件
-        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu -nostdinc -isystem /usr/include"
-        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu -nostdinc -isystem /usr/include"
-        # 只链接到HarmonyOS的musl库
+        # 使用aarch64 glibc头 + sysroot fallback
+        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include -idirafter ${SYSROOT}/usr/include"
+        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include -idirafter ${SYSROOT}/usr/include"
         export LDFLAGS="$LDFLAGS -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64"
         ../configure \
           --target-list=aarch64-softmmu \
@@ -335,9 +334,9 @@ jobs:
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="--target=aarch64-linux-gnu -nostdinc -isystem /usr/include" \
-          --extra-cxxflags="--target=aarch64-linux-gnu -nostdinc -isystem /usr/include" \
-          --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64 -lm" \
+          --extra-cflags="--target=aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include -idirafter ${SYSROOT}/usr/include" \
+          --extra-cxxflags="--target=aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include -idirafter ${SYSROOT}/usr/include" \
+          --extra-ldflags="--fuse-ld=lld --target=aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64 -lm" \
           -Db_staticpic=true \
           -Ddefault_library=static \
           -Dtools=disabled \
