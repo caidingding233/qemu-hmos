@@ -64,7 +64,6 @@ cat >"${PKG_CONFIG_SCRIPT}" <<EOF
 #!/bin/sh
 EXTRA_PKGCFG="${DEPS_PKGCONFIG}"
 SYSROOT_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
-export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
 # 强制禁用系统搜索路径，避免回退到宿主 .pc
 export PKG_CONFIG_PATH=""
 if [ -d "\$EXTRA_PKGCFG" ]; then
@@ -95,7 +94,6 @@ if [ -d "${DEPS_PKGCONFIG}" ]; then
 else
   export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig"
 fi
-export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
 # 禁止 pkg-config 扫描系统默认路径，防止 /usr/include 混入
 export PKG_CONFIG_SYSTEM_INCLUDE_PATH=""
 export PKG_CONFIG_SYSTEM_LIBRARY_PATH=""

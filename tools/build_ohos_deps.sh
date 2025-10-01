@@ -69,7 +69,6 @@ PKG_CONFIG_WRAPPER="${TOOLCHAIN_DIR}/${CROSS_TRIPLE}-pkg-config"
 cat >"${PKG_CONFIG_WRAPPER}" <<EOF_SCRIPT
 #!/bin/sh
 export PKG_CONFIG_LIBDIR="${PREFIX}/lib/pkgconfig:${SYSROOT}/usr/lib/pkgconfig"
-export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
 exec pkg-config "\$@"
 EOF_SCRIPT
 chmod +x "${PKG_CONFIG_WRAPPER}"
@@ -125,7 +124,6 @@ EOF_SCRIPT
 
 export PKG_CONFIG="${PKG_CONFIG_WRAPPER}"
 export PKG_CONFIG_LIBDIR="${PREFIX}/lib/pkgconfig:${SYSROOT}/usr/lib/pkgconfig"
-export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
 
 build_pcre2() {
   local src="${DEPS_ROOT}/pcre2/src"
