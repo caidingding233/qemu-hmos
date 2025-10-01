@@ -259,10 +259,10 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
-        # 混合策略：编译用系统glibc，运行时动态链接musl
-        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include"
-        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include"
-        # 强制链接到HarmonyOS的musl库
+        # 完全禁用HarmonyOS sysroot头文件，只使用系统glibc
+        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu"
+        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu"
+        # 只链接到HarmonyOS的musl库，不包含头文件
         export LDFLAGS="$LDFLAGS -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64"
         ../configure \
           --target-list=aarch64-softmmu \
@@ -270,8 +270,8 @@ jobs:
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include" \
-          --extra-cxxflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include" \
+          --extra-cflags="--target=aarch64-linux-gnu" \
+          --extra-cxxflags="--target=aarch64-linux-gnu" \
           --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64 -lm" \
           -Db_staticpic=true \
           -Ddefault_library=static \
