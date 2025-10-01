@@ -65,6 +65,9 @@ done
 mkdir -p "${PREFIX}" "${BUILD_ROOT}" "${TOOLCHAIN_DIR}"
 mkdir -p "${PREFIX}/lib/pkgconfig"
 
+# Ensure previous runs or CI environment do not leak host sysroot hints.
+unset PKG_CONFIG_SYSROOT_DIR
+
 PKG_CONFIG_WRAPPER="${TOOLCHAIN_DIR}/${CROSS_TRIPLE}-pkg-config"
 cat >"${PKG_CONFIG_WRAPPER}" <<EOF_SCRIPT
 #!/bin/sh

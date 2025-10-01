@@ -59,6 +59,8 @@ DEPS_PREFIX="${OHOS_DEPS_PREFIX:-${SCRIPT_DIR}/../deps/install-ohos}"
 DEPS_PKGCONFIG="${DEPS_PREFIX}/lib/pkgconfig"
 WRAP_PKGCFG_DIR="${SCRIPT_DIR}/../deps/bin"
 mkdir -p "$WRAP_PKGCFG_DIR"
+# Reset any inherited pkg-config sysroot hints before wiring wrappers.
+unset PKG_CONFIG_SYSROOT_DIR
 PKG_CONFIG_SCRIPT="$WRAP_PKGCFG_DIR/${CROSS_TRIPLE}-pkg-config"
 cat >"${PKG_CONFIG_SCRIPT}" <<EOF
 #!/bin/sh
