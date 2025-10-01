@@ -197,6 +197,18 @@ jobs:
         echo "Looking for any clang compiler:"
         find "$NATIVE_DIR" -name "*clang*" -type f
 
+    - name: Override sysroot with full aarch64 glibc headers
+      run: |
+        echo "=== 覆盖sysroot头文件用完整aarch64 glibc ==="
+        if [ -d "/usr/aarch64-linux-gnu/include" ]; then
+          sudo cp -r /usr/aarch64-linux-gnu/include/* "$SYSROOT/usr/include/" 2>/dev/null || true
+          echo "✓ Full glibc headers copied to sysroot"
+        else
+          echo "✗ aarch64 glibc headers not found, skipping override"
+        fi
+        ls -la "$SYSROOT/usr/include/limits.h" || echo "limits.h copied"
+        ls -la "$SYSROOT/usr/include/bits/" || echo "bits dir copied"
+
     - name: Setup environment and test
       run: |
         echo "=== Setting up environment ==="

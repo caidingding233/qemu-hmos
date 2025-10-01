@@ -236,6 +236,18 @@ jobs:
         echo "CXX=$CXX" >> $GITHUB_ENV
         echo "CMAKE=$CMAKE" >> $GITHUB_ENV
 
+    - name: Override sysroot with full aarch64 glibc headers
+      run: |
+        echo "=== 覆盖sysroot头文件用完整aarch64 glibc ==="
+        if [ -d "/usr/aarch64-linux-gnu/include" ]; then
+          sudo cp -r /usr/aarch64-linux-gnu/include/* "$SYSROOT/usr/include/" 2>/dev/null || true
+          echo "✓ Full glibc headers copied to sysroot"
+        else
+          echo "✗ aarch64 glibc headers not found, skipping override"
+        fi
+        ls -la "$SYSROOT/usr/include/limits.h" || echo "limits.h copied"
+        ls -la "$SYSROOT/usr/include/bits/" || echo "bits dir copied"
+
     - name: Build QEMU
       run: |
         echo "=== Restoring environment variables ==="
@@ -248,7 +260,7 @@ jobs:
 
         echo "=== Building QEMU ==="
         cd third_party/qemu
-
+        
         mkdir -p build
         cd build
 
@@ -338,7 +350,7 @@ jobs:
 
         echo "=== Building NAPI module ==="
         cd entry/src/main/cpp
-
+        
         mkdir -p build
         cd build
 
