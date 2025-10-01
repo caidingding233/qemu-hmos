@@ -116,8 +116,8 @@ jobs:
 
         # 复制aarch64 glibc bits到sysroot补全musl头
         echo "=== 补全sysroot bits目录 ==="
-        mkdir -p "$SYSROOT/usr/include/bits"
-        cp -r /usr/aarch64-linux-gnu/include/bits/* "$SYSROOT/usr/include/bits/" 2>/dev/null || true
+        sudo mkdir -p "$SYSROOT/usr/include/bits"
+        sudo cp -r /usr/aarch64-linux-gnu/include/bits/* "$SYSROOT/usr/include/bits/" 2>/dev/null || true
         ls -la "$SYSROOT/usr/include/bits/" || echo "bits复制完成 (可能为空)"
         
         echo "=== Analyzing extracted content ==="
