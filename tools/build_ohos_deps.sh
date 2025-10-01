@@ -55,6 +55,13 @@ for tool in "${CLANG_BIN}" "${CXX_BIN}" "${AR_BIN}" "${RANLIB_BIN}" "${NM_BIN}" 
   fi
 done
 
+for host_tool in meson ninja pkg-config cmake python3; do
+  if ! command -v "${host_tool}" >/dev/null 2>&1; then
+    log "error: missing build host dependency '${host_tool}' in PATH"
+    exit 1
+  fi
+done
+
 mkdir -p "${PREFIX}" "${BUILD_ROOT}" "${TOOLCHAIN_DIR}"
 mkdir -p "${PREFIX}/lib/pkgconfig"
 
@@ -238,7 +245,9 @@ GLIB_CI_STUB
     -Dglib_assert=false \
     -Dglib_checks=false \
     -Doss_fuzz=disabled
+  log "building GLib via ninja"
   ninja -C "${build_dir}"
+  log "installing GLib"
   ninja -C "${build_dir}" install
 }
 
