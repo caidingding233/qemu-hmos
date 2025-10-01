@@ -147,6 +147,54 @@ build_pcre2() {
     -DPCRE2_SUPPORT_JIT=OFF
   cmake --build "${build_dir}"
   cmake --install "${build_dir}"
+
+  # Upstream CMake occasionally skips installing pkg-config files when cross compiling;
+  # synthesise minimal .pc entries so downstream builds (GLib) can locate our static
+  # PCRE2 artifacts without falling back to the sysroot copies.
+  local pc_dir="${PREFIX}/lib/pkgconfig"
+  mkdir -p "${pc_dir}"
+  local pcre_major pcre_minor pcre_version
+  pcre_major=$(awk '/#define PCRE2_MAJOR/{print $3}' "${src}/src/pcre2.h.generic")
+  pcre_minor=$(awk '/#define PCRE2_MINOR/{print $3}' "${src}/src/pcre2.h.generic")
+  pcre_version="${pcre_major}.${pcre_minor}"
+  if [[ -z "${pcre_major}" || -z "${pcre_minor}" ]]; then
+    log "warning: unable to determine PCRE2 version; defaulting to 10.0"
+    pcre_version="10.0"
+  fi
+  if [[ ! -f "${pc_dir}/libpcre2-8.pc" ]]; then
+    log "creating libpcre2-8.pc"
+    cat >"${pc_dir}/libpcre2-8.pc" <<EOF_PC
+# Auto-generated for OpenHarmony cross builds
+prefix=${PREFIX}
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: libpcre2-8
+Description: PCRE2 - Perl compatible regular expressions (8-bit)
+Version: ${pcre_version}
+Libs: -L\${libdir} -lpcre2-8
+Libs.private:
+Cflags: -I\${includedir} -DPCRE2_STATIC
+EOF_PC
+  fi
+  if [[ ! -f "${pc_dir}/libpcre2-posix.pc" ]]; then
+    log "creating libpcre2-posix.pc"
+    cat >"${pc_dir}/libpcre2-posix.pc" <<EOF_PC
+# Auto-generated for OpenHarmony cross builds
+prefix=${PREFIX}
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: libpcre2-posix
+Description: POSIX wrapper over PCRE2 8-bit
+Version: ${pcre_version}
+Libs: -L\${libdir} -lpcre2-posix
+Requires.private: libpcre2-8
+Cflags: -I\${includedir}
+EOF_PC
+  fi
 }
 
 build_glib() {
