@@ -210,6 +210,12 @@ Exec=@test_exec@
 Output=TAP
 GLIB_TEST_TAP_STUB
   fi
+  # Some Meson logic asserts that tests/lib exists even when tests are disabled.
+  if [[ ! -d "${src}/tests/lib" ]]; then
+    log "Stub GLib tests/lib directory for Meson asserts"
+    mkdir -p "${src}/tests/lib"
+    [[ -f "${src}/tests/lib/__init__.py" ]] || printf '# stub for CI\n' >"${src}/tests/lib/__init__.py"
+  fi
   # GitHub Actions sets CI=true; GLib expects a GitLab-specific wrapper in that case.
   # Provide a benign stub so Meson does not fail when it tries to locate the script.
   if [[ ! -x "${src}/.gitlab-ci/thorough-test-wrapper.sh" ]]; then
