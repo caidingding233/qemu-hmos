@@ -160,7 +160,9 @@ build_glib() {
       declare -a git_initialise=()
       for sp in "${missing_subprojects[@]}"; do
         if git -C "${src}" config --file .gitmodules --get "submodule.subprojects/${sp}.url" >/dev/null 2>&1; then
-          git_initialise+=("subprojects/${sp}")
+          if git -C "${src}" ls-tree --full-tree HEAD "subprojects/${sp}" | grep -q '^160000'; then
+            git_initialise+=("subprojects/${sp}")
+          fi
         fi
       done
       if ((${#git_initialise[@]})); then
