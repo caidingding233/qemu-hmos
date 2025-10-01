@@ -1,4 +1,4 @@
-name: Build QEMU for HarmonyOS (OHOS musl toolchain)
+name: Build QEMU for HarmonyOS, using Huawei's toolchain
 
 on:
   workflow_dispatch:
@@ -12,24 +12,19 @@ jobs:
       uses: actions/checkout@v4
       with:
         submodules: recursive
-        fetch-depth: 1
-        show-progress: true
 
-    - name: Install host build tools
+    - name: Install dependencies
       run: |
         sudo apt-get update
-        # Host tools only; target libs are built from source for OHOS (musl)
-        sudo apt-get install -y \
-          build-essential curl wget unzip python3 python3-pip file tree pkg-config \
-          cmake ninja-build ripgrep
-        # Ensure Meson >= 1.4.0 for GLib builds
-        python3 -m pip install --upgrade --user pip
-        python3 -m pip install --user 'meson>=1.4.0,<1.6'
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
-        export PATH="$HOME/.local/bin:$PATH"
-        meson --version
+        sudo apt-get install -y build-essential cmake curl wget unzip python3 \
+                              libglib2.0-dev libpixman-1-dev libssl-dev \
+                              libcurl4-openssl-dev libssh-dev libgnutls28-dev \
+                              libsasl2-dev libpam0g-dev libbz2-dev libzstd-dev \
+                              libpcre2-dev pkg-config meson tree \
+                              binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
+                              libc6-dev
 
-    - name: Download and setup OpenHarmony NDK
+    - name: Download and setup SDK
       run: |
         echo "=== Downloading SDK ==="
         curl -OL https://repo.huaweicloud.com/openharmony/os/5.1.0-Release/ohos-sdk-windows_linux-public.tar.gz
@@ -108,7 +103,7 @@ jobs:
         echo "✅ Final native directory: $NATIVE_DIR"
         
         echo "=== Setting up environment ==="
-        # Set up base paths (OHOS NDK is musl-based)
+        # Set up base paths
         export OHOS_NDK_HOME="$(pwd)/$NATIVE_DIR"
         export SYSROOT="$(pwd)/$NATIVE_DIR/sysroot"
         
@@ -128,23 +123,88 @@ jobs:
         echo "Looking for any clang compiler:"
         find "$NATIVE_DIR" -name "*clang*" -type f
         
-        # Record toolchain locations (we will use NDK-provided clang directly)
-        export CC="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang"
-        export CXX="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang++"
-        export LD="$OHOS_NDK_HOME/llvm/bin/ld.lld"
-        export AR="$OHOS_NDK_HOME/llvm/bin/llvm-ar"
-        export RANLIB="$OHOS_NDK_HOME/llvm/bin/llvm-ranlib"
-        export STRIP="$OHOS_NDK_HOME/llvm/bin/llvm-strip"
-        command -v cmake >/dev/null || sudo apt-get install -y cmake
-        # Record CMake path for later steps
-        export CMAKE="$(command -v cmake || true)"
+        # Find clang compiler dynamically
+        echo ""
+        echo "=== Finding clang compiler ==="
+        CLANG_CANDIDATES=(
+          "$NATIVE_DIR/llvm/bin/aarch64-unknown-linux-ohos-clang"
+          "$NATIVE_DIR/llvm/bin/clang"
+          "$NATIVE_DIR/bin/aarch64-unknown-linux-ohos-clang"
+          "$NATIVE_DIR/bin/clang"
+        )
+        
+        CC=""
+        for candidate in "${CLANG_CANDIDATES[@]}"; do
+          if [ -f "$candidate" ]; then
+            CC="$candidate"
+            echo "✅ Found CC: $CC"
+            break
+          fi
+        done
+        
+        if [ -z "$CC" ]; then
+          echo "❌ No clang compiler found in expected locations"
+          echo "Searching for any clang file:"
+          CLANG_PATH=$(find "$NATIVE_DIR" -type f -name '*clang*' | head -1)
+          if [ -n "$CLANG_PATH" ]; then
+            CC="$CLANG_PATH"
+            echo "✅ Found alternative CC: $CC"
+          else
+            echo "❌ No clang compiler found at all"
+            exit 1
+          fi
+        fi
+        
+        # Find C++ compiler
+        CXX_CANDIDATES=(
+          "$NATIVE_DIR/llvm/bin/aarch64-unknown-linux-ohos-clang++"
+          "$NATIVE_DIR/llvm/bin/clang++"
+          "$NATIVE_DIR/bin/aarch64-unknown-linux-ohos-clang++"
+          "$NATIVE_DIR/bin/clang++"
+        )
+        
+        CXX=""
+        for candidate in "${CXX_CANDIDATES[@]}"; do
+          if [ -f "$candidate" ]; then
+            CXX="$candidate"
+            echo "✅ Found CXX: $CXX"
+            break
+          fi
+        done
+        
+        if [ -z "$CXX" ]; then
+          echo "⚠️ No C++ compiler found, using CC for CXX"
+          CXX="$CC"
+        fi
+        
+        # Find CMake
+        CMAKE_CANDIDATES=(
+          "$NATIVE_DIR/build-tools/cmake/bin/cmake"
+          "$NATIVE_DIR/cmake/bin/cmake"
+          "$NATIVE_DIR/bin/cmake"
+          "/usr/bin/cmake"
+        )
+        
+        CMAKE=""
+        for candidate in "${CMAKE_CANDIDATES[@]}"; do
+          if [ -f "$candidate" ]; then
+            CMAKE="$candidate"
+            echo "✅ Found CMake: $CMAKE"
+            break
+          fi
+        done
+        
+        if [ -z "$CMAKE" ]; then
+          echo "❌ No CMake found"
+          exit 1
+        fi
         
         echo "=== Final environment ==="
         echo "OHOS_NDK_HOME: $OHOS_NDK_HOME"
         echo "SYSROOT: $SYSROOT"
         echo "CC: $CC"
         echo "CXX: $CXX"
-        echo "CMAKE: ${CMAKE:-$(command -v cmake || true)}"
+        echo "CMAKE: $CMAKE"
         
         echo ""
         echo "=== Testing compiler ==="
@@ -159,12 +219,13 @@ jobs:
         
         echo ""
         echo "=== Testing CMake ==="
-        if command -v cmake >/dev/null 2>&1; then
-          CMAKE="$(command -v cmake)"
+        if [ -f "$CMAKE" ]; then
           echo "✅ CMake exists: $CMAKE"
-          cmake --version | head -3 || echo "CMake version check failed"
+          "$CMAKE" --version | head -3 || echo "CMake version check failed"
         else
-          echo "❌ CMake not found in PATH"
+          echo "❌ CMake not found: $CMAKE"
+          echo "Available files in build-tools/cmake/bin:"
+          ls -la "$(dirname "$CMAKE")" || echo "Cannot list cmake/bin"
           exit 1
         fi
         
@@ -173,53 +234,145 @@ jobs:
         echo "SYSROOT=$SYSROOT" >> $GITHUB_ENV
         echo "CC=$CC" >> $GITHUB_ENV
         echo "CXX=$CXX" >> $GITHUB_ENV
-        echo "AR=$AR" >> $GITHUB_ENV
-        echo "RANLIB=$RANLIB" >> $GITHUB_ENV
-        echo "STRIP=$STRIP" >> $GITHUB_ENV
         echo "CMAKE=$CMAKE" >> $GITHUB_ENV
 
-    - name: Build OHOS deps (GLib, Pixman, PCRE2)
+    - name: Build QEMU
       run: |
-        echo "=== Building OHOS-friendly deps (musl, static) ==="
-        export OHOS_NDK_HOME="$OHOS_NDK_HOME"
-        bash tools/build_ohos_deps.sh
-
-    - name: Build QEMU (aarch64-unknown-linux-ohos)
-      run: |
-        echo "=== Building QEMU with OHOS toolchain ==="
+        echo "=== Restoring environment variables ==="
+        # Restore environment variables from previous step
         export OHOS_NDK_HOME="$OHOS_NDK_HOME"
         export SYSROOT="$SYSROOT"
-        bash third_party/qemu/build_harmonyos_full.sh
+        export CC="$CC"
+        export CXX="$CXX"
+        export CMAKE="$CMAKE"
+
+        echo "=== Building QEMU ==="
+        cd third_party/qemu
+
+        mkdir -p build
+        cd build
+
+        echo "Environment check:"
+        echo "CC: $CC"
+        echo "CXX: $CXX"
+        echo "SYSROOT: $SYSROOT"
+        
+        echo ""
+        echo "=== Running Configure ==="
+        # 混合策略：编译用系统glibc，运行时动态链接musl
+        export CFLAGS="$CFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include"
+        export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include"
+        # 强制链接到HarmonyOS的musl库
+        export LDFLAGS="$LDFLAGS -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64"
+        ../configure \
+          --target-list=aarch64-softmmu \
+          --cc="$CC" \
+          --cxx="$CXX" \
+          --host-cc="/usr/bin/cc" \
+          --cross-prefix="" \
+          --extra-cflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include" \
+          --extra-cxxflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -I/usr/include" \
+          --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64 -lm" \
+          -Db_staticpic=true \
+          -Ddefault_library=static \
+          -Dtools=disabled \
+          --enable-tcg \
+          --disable-kvm \
+          --disable-xen \
+          --disable-werror \
+          --enable-vnc \
+          --enable-slirp \
+          --enable-curl \
+          --enable-fdt \
+          --enable-guest-agent \
+          --enable-vhost-user \
+          --enable-vhost-net \
+          --disable-keyring \
+          --enable-tpm \
+          --disable-gtk \
+          --disable-sdl \
+          --disable-vte \
+          --disable-curses \
+          --disable-brlapi \
+          --disable-spice \
+          --disable-usb-redir \
+          --disable-lzo \
+          --disable-snappy \
+          --disable-bzip2 \
+          --disable-lzfse \
+          --disable-zstd \
+          --disable-libssh \
+          --disable-nettle \
+          --disable-gcrypt \
+          --enable-gnutls
+        
+        echo "✅ Configure completed!"
+        
+        echo "=== Building QEMU ==="
+        # 设置正确的链接器环境变量
+        export LD=aarch64-linux-gnu-ld
+        export AR=aarch64-linux-gnu-ar
+        export RANLIB=aarch64-linux-gnu-ranlib
+        export STRIP=aarch64-linux-gnu-strip
+        make -j$(nproc)
+        
+        echo "✅ QEMU build completed!"
+        
         echo "=== Checking build results ==="
-        ls -la third_party/qemu/build_harmonyos_full/qemu-system-aarch64 || true
-        find third_party/qemu/build_harmonyos_full -maxdepth 1 -type f -name "qemu-system-*" -ls || true
+        ls -la qemu-system-aarch64 || echo "Main binary not found"
+        find . -name "*.so" -o -name "*.a" | head -10
 
     - name: Build NAPI module
       run: |
-        echo "=== Building NAPI module (OHOS) ==="
+        echo "=== Restoring environment variables ==="
+        # Restore environment variables from previous step
+        export OHOS_NDK_HOME="$OHOS_NDK_HOME"
+        export SYSROOT="$SYSROOT"
+        export CC="$CC"
+        export CXX="$CXX"
+        export CMAKE="$CMAKE"
+
+        echo "Debug: OHOS_NDK_HOME=$OHOS_NDK_HOME"
+        echo "Debug: SYSROOT=$SYSROOT"
+        echo "Debug: CC=$CC"
+        echo "Debug: CXX=$CXX"
+
+        echo "=== Building NAPI module ==="
         cd entry/src/main/cpp
-        rm -rf build && mkdir -p build && cd build
-        cmake .. \
-          -G Ninja \
-          -DCMAKE_BUILD_TYPE=Release \
+
+        mkdir -p build
+        cd build
+
+        echo "Using CMake: $CMAKE"
+        echo "Using CC: $CC"
+        echo "Using CXX: $CXX"
+        
+        "$CMAKE" .. \
           -DCMAKE_SYSTEM_NAME=Linux \
           -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-          -DCMAKE_C_COMPILER="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang" \
-          -DCMAKE_CXX_COMPILER="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang++" \
-          -DOHOS_NDK_HOME="$OHOS_NDK_HOME"
-        ninja -v
+          -DCMAKE_C_COMPILER="$CC" \
+          -DCMAKE_CXX_COMPILER="$CXX" \
+          -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
+          -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
+          -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+          -DOHOS_NDK_HOME="$OHOS_NDK_HOME" \
+          -DSYSROOT="$SYSROOT"
+        
+        make -j$(nproc)
+        
         echo "✅ NAPI module build completed!"
+        
         echo "=== Build artifacts ==="
-        ls -la ../libs/arm64-v8a || true
-        find . -name "*.so" -o -name "*.a" || true
+        ls -la *.so || echo "No .so files found"
+        find . -name "*.so" -o -name "*.a"
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: qemu-harmonyos-build
         path: |
-          third_party/qemu/build_harmonyos_full/qemu-system-aarch64
-          third_party/qemu/build_harmonyos_full/*.so
-          third_party/qemu/build_harmonyos_full/*.a
+          third_party/qemu/build/qemu-system-aarch64
+          third_party/qemu/build/*.so
+          third_party/qemu/build/*.a
           entry/src/main/libs/arm64-v8a/*.so
         retention-days: 7
