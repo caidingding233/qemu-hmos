@@ -116,9 +116,26 @@ jobs:
 
         # 复制aarch64 glibc bits到sysroot补全musl头
         echo "=== 补全sysroot bits目录 ==="
+        # 先检查源目录是否存在
+        if [ ! -d "/usr/aarch64-linux-gnu/include/bits" ]; then
+          echo "Error: Source directory /usr/aarch64-linux-gnu/include/bits not found"
+          exit 1
+        fi
+
+        # 执行完整复制
         sudo mkdir -p "$SYSROOT/usr/include/bits"
-        sudo cp -r /usr/aarch64-linux-gnu/include/bits/* "$SYSROOT/usr/include/bits/" 2>/dev/null || true
-        ls -la "$SYSROOT/usr/include/bits/" || echo "bits复制完成 (可能为空)"
+        sudo cp -r /usr/aarch64-linux-gnu/include/bits/* "$SYSROOT/usr/include/bits/"
+
+        # 验证关键文件
+        if [ -f "$SYSROOT/usr/include/bits/alltypes.h" ] && [ -f "$SYSROOT/usr/include/bits/wordsize.h" ]; then
+          echo "✓ Bits directory copied successfully (key files present)"
+        else
+          echo "✗ Copy failed - missing key files"
+          ls -la "$SYSROOT/usr/include/bits/" | head -5
+          exit 1
+        fi
+
+        ls -la "$SYSROOT/usr/include/bits/" | head -5
         
         echo "=== Analyzing extracted content ==="
         echo "Contents after extraction:"
