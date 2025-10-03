@@ -187,6 +187,43 @@ jobs:
           exit 1
         fi
 
+        # 修复 limits.h 中的 alltypes.h 引用问题
+        echo "=== 修复 limits.h 中的 alltypes.h 引用 ==="
+        LIMITS_H="$SYSROOT/usr/include/limits.h"
+        if [ -f "$LIMITS_H" ]; then
+          echo "Checking limits.h for alltypes.h reference..."
+          if grep -q "bits/alltypes.h" "$LIMITS_H"; then
+            echo "Found alltypes.h reference in limits.h, creating compatibility file..."
+            # 创建 alltypes.h 文件，包含必要的类型定义
+            sudo tee "$SYSROOT/usr/include/bits/alltypes.h" > /dev/null << 'EOF'
+#ifndef _BITS_ALLTYPES_H
+#define _BITS_ALLTYPES_H
+
+/* Basic type definitions for compatibility */
+typedef long __LONG_MAX;
+typedef unsigned long __ULONG_MAX;
+typedef int __INT_MAX;
+typedef unsigned int __UINT_MAX;
+
+/* Add other necessary type definitions as needed */
+#ifndef __LONG_MAX
+#define __LONG_MAX 9223372036854775807L
+#endif
+
+#ifndef __ULONG_MAX
+#define __ULONG_MAX 18446744073709551615UL
+#endif
+
+#endif /* _BITS_ALLTYPES_H */
+EOF
+            echo "✓ Created alltypes.h compatibility file"
+          else
+            echo "No alltypes.h reference found in limits.h"
+          fi
+        else
+          echo "limits.h not found in sysroot"
+        fi
+
         echo "Final bits directory contents:"
         ls -la "$SYSROOT/usr/include/bits/" | head -5
         
