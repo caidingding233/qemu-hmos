@@ -167,11 +167,18 @@ jobs:
         echo "Copying from /usr/aarch64-linux-gnu/include/bits to $SYSROOT/usr/include/bits"
         sudo cp -r /usr/aarch64-linux-gnu/include/bits/* "$SYSROOT/usr/include/bits/" 2>&1 | head -20
 
-        # 验证关键文件
-        if [ -f "$SYSROOT/usr/include/bits/alltypes.h" ] && [ -f "$SYSROOT/usr/include/bits/wordsize.h" ]; then
-          echo "✓ Bits directory copied successfully (key files present)"
+        # 验证复制是否成功 - 检查文件数量和基本文件
+        echo "Checking copy success..."
+        SOURCE_COUNT=$(ls /usr/aarch64-linux-gnu/include/bits/ | wc -l)
+        TARGET_COUNT=$(ls "$SYSROOT/usr/include/bits/" | wc -l)
+        
+        echo "Source files count: $SOURCE_COUNT"
+        echo "Target files count: $TARGET_COUNT"
+        
+        if [ "$TARGET_COUNT" -gt 0 ] && [ "$TARGET_COUNT" -ge "$SOURCE_COUNT" ]; then
+          echo "✓ Bits directory copied successfully ($TARGET_COUNT files copied)"
         else
-          echo "✗ Copy failed - missing key files"
+          echo "✗ Copy failed - file count mismatch or empty target"
           echo "Source directory contents:"
           ls -la /usr/aarch64-linux-gnu/include/bits/ | head -5
           echo "Target directory contents:"
