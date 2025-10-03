@@ -216,7 +216,7 @@ jobs:
             sudo mkdir -p "$BITS_DIR"
             
             # 创建 alltypes.h 文件，包含必要的类型定义
-            cat > /tmp/alltypes.h << 'EOF'
+            sudo tee "$BITS_DIR/alltypes.h" > /dev/null << 'EOF'
 #ifndef _BITS_ALLTYPES_H
 #define _BITS_ALLTYPES_H
 
@@ -237,8 +237,6 @@ typedef unsigned int __UINT_MAX;
 
 #endif /* _BITS_ALLTYPES_H */
 EOF
-            sudo cp /tmp/alltypes.h "$BITS_DIR/alltypes.h"
-            rm /tmp/alltypes.h
             echo "✓ Created alltypes.h compatibility file at $BITS_DIR/alltypes.h"
           else
             echo "No alltypes.h reference found in limits.h"
