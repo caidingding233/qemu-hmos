@@ -5,53 +5,89 @@ set -e
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 cd "$SCRIPT_DIR"
 
-echo "=== QEMU 鸿蒙完整功能编译脚本（上游源码） ==="
+echo "=== QEMU 鸿蒙完整功能编译脚本（Linux本地） ==="
 echo "目标：编译 aarch64-softmmu，开启 VNC/TCG/SLIRP 等核心能力；禁用在 OHOS 上不适用或引入 glibc 依赖的特性"
 
 # 强制使用 OHOS 三元组，避免环境变量污染
 CROSS_TRIPLE="aarch64-unknown-linux-ohos"
 
-if [ -z "${OHOS_NDK_HOME:-}" ]; then
-  for candidate in \
-    "${SCRIPT_DIR}/../../ohos-sdk/linux/native" \
-    "${HOME}/Library/OpenHarmony/Sdk/18/native" \
-    "${HOME}/OpenHarmony/Sdk/18/native" \
-    "${HOME}/openharmony/sdk/18/native"; do
-    if [ -d "${candidate}" ]; then
-      OHOS_NDK_HOME="${candidate}"
-      break
-    fi
-  done
-fi
-
-if [ -z "${OHOS_NDK_HOME:-}" ]; then
-  echo "error: set OHOS_NDK_HOME to your OpenHarmony NDK (native) directory" >&2
+# 检查Linux环境
+if [[ "$(uname)" != "Linux" ]]; then
+  echo "❌ 此脚本专为Linux主机设计，请在Linux机器上运行。"
   exit 1
 fi
 
-export OHOS_NDK_HOME
-SYSROOT="${OHOS_SYSROOT:-${OHOS_NDK_HOME}/sysroot}"
-if [ ! -d "${SYSROOT}" ]; then
-  echo "error: sysroot not found at ${SYSROOT}" >&2
+# 安装系统依赖
+echo "=== 安装系统依赖 ==="
+sudo apt update
+sudo apt install -y \
+  build-essential cmake curl wget unzip python3 git \
+  libglib2.0-dev libpixman-1-dev libssl-dev \
+  libcurl4-openssl-dev libssh-dev libgnutls28-dev \
+  libsasl2-dev libpam0g-dev libbz2-dev libzstd-dev \
+  libpcre2-dev pkg-config meson ninja-build tree \
+  binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
+  libc6-dev libc6-dev-arm64-cross
+
+# 下载并设置SDK
+echo "=== 下载SDK ==="
+SDK_URL="https://repo.huaweicloud.com/openharmony/os/5.1.0-Release/ohos-sdk-windows_linux-public.tar.gz"
+SDK_FILE="ohos-sdk-windows_linux-public.tar.gz"
+
+if [ ! -f "$SDK_FILE" ]; then
+  wget -O "$SDK_FILE" "$SDK_URL"
+fi
+
+echo "=== 解压SDK ==="
+tar -xzf "$SDK_FILE"
+rm "$SDK_FILE"
+rm -rf ohos-sdk/{ohos,windows}
+
+cd ohos-sdk/linux
+
+# 查找native SDK
+NATIVE_ZIP=$(find . -name "native-linux-x64-*.zip" | head -1)
+if [ -z "$NATIVE_ZIP" ]; then
+  echo "❌ 未找到native-linux-x64-*.zip"
+  find . -name "*.zip" | head -5
   exit 1
 fi
-export SYSROOT
 
-LLVM_BIN="${OHOS_NDK_HOME}/llvm/bin"
-export CC="${OHOS_CC:-${LLVM_BIN}/${CROSS_TRIPLE}-clang}"
-export CXX="${OHOS_CXX:-${LLVM_BIN}/${CROSS_TRIPLE}-clang++}"
-export AR="${OHOS_AR:-${LLVM_BIN}/llvm-ar}"
-export STRIP="${OHOS_STRIP:-${LLVM_BIN}/llvm-strip}"
-export RANLIB="${OHOS_RANLIB:-${LLVM_BIN}/llvm-ranlib}"
-export LD="${OHOS_LD:-${LLVM_BIN}/ld.lld}"
-HOST_CC="${HOST_CC:-/usr/bin/cc}"
+echo "✅ 找到: $NATIVE_ZIP"
+unzip -q "$NATIVE_ZIP"
+rm "$NATIVE_ZIP"
 
-for tool in "${CC}" "${CXX}" "${AR}" "${RANLIB}" "${STRIP}" "${LD}"; do
-  if [ ! -x "${tool}" ]; then
-    echo "error: required tool not executable: ${tool}" >&2
-    exit 1
-  fi
-done
+# 查找native目录
+NATIVE_DIR=$(find . -type d -name "native*" | head -1 || find . -type d -name "*native*" | head -1 || find . -type d -name "native" | head -1)
+if [ -z "$NATIVE_DIR" ]; then
+  echo "❌ 未找到native目录"
+  find . -type d | head -10
+  exit 1
+fi
+
+echo "✅ Native目录: $NATIVE_DIR"
+
+# 设置环境
+export OHOS_NDK_HOME="$(pwd)/$NATIVE_DIR"
+export SYSROOT="$(pwd)/$NATIVE_DIR/sysroot"
+
+# 查找编译器
+CC="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang"
+CXX="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang++"
+CMAKE="$OHOS_NDK_HOME/build-tools/cmake/bin/cmake"
+
+if [ ! -f "$CC" ]; then
+  echo "❌ Clang未找到: $CC"
+  find "$OHOS_NDK_HOME" -name "*clang*" | head -5
+  exit 1
+fi
+
+echo "✅ 环境设置完成:"
+echo "  CC: $CC"
+echo "  CXX: $CXX"
+echo "  SYSROOT: $SYSROOT"
+
+# 工具检测已在上方完成
 
 # pkg-config for cross
 # Prefer aarch64-unknown-linux-ohos-pkg-config if available; else provide wrapper under deps/bin
@@ -112,6 +148,16 @@ echo "Using CC=${CC}"
 echo "Using HOST_CC=${HOST_CC}"
 echo "Using PKG_CONFIG=${PKG_CONFIG:-pkg-config}"
 
+# 补全sysroot bits目录（解决glibc头文件缺失）
+echo "=== 补全sysroot bits目录 ==="
+if [ -d "/usr/aarch64-linux-gnu/include/bits" ]; then
+  sudo mkdir -p "$SYSROOT/usr/include/bits"
+  sudo cp -r /usr/aarch64-linux-gnu/include/bits/* "$SYSROOT/usr/include/bits/"
+  echo "✓ Bits header copied successfully"
+else
+  echo "✗ aarch64 glibc headers not found, skipping bits copy"
+fi
+
 # 依赖前置校验：必须命中我们交叉构建的 .pc 文件，避免回退宿主
 if ! "$PKG_CONFIG" --exists glib-2.0; then
   echo "error: missing glib-2.0.pc under ${DEPS_PKGCONFIG}; run tools/build_ohos_deps.sh" >&2
@@ -155,9 +201,9 @@ MESON_BIN=$(command -v meson || true)
   --cross-prefix=${CROSS_TRIPLE}- \
   --cc="$CC" \
   --host-cc="$HOST_CC" \
-  --cross-cc-cflags-aarch64="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT}" \
-  --extra-cflags="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT}" \
-  --extra-ldflags="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT}" \
+  --cross-cc-cflags-aarch64="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT} -I${SYSROOT}/usr/include/aarch64-linux-ohos -I${SYSROOT}/usr/include" \
+  --extra-cflags="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT} -I${SYSROOT}/usr/include/aarch64-linux-ohos -I${SYSROOT}/usr/include" \
+  --extra-ldflags="-target ${CROSS_TRIPLE} --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -lm" \
   ${MESON_BIN:+--meson="$MESON_BIN"} \
   --pkg-config="$PKG_CONFIG" \
   --enable-slirp \

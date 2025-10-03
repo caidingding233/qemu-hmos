@@ -5,9 +5,44 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 cd "$SCRIPT_DIR"
 
-echo "=== 链接 QEMU 静态归档为 libqemu_full.so (OHOS) ==="
+echo "=== 链接 QEMU 静态归档为 libqemu_full.so (Linux本地) ==="
 
-export OHOS_NDK_HOME="/Users/caidingding233/Library/OpenHarmony/Sdk/18/native"
+# 检查Linux环境
+if [[ "$(uname)" != "Linux" ]]; then
+  echo "❌ 此脚本专为Linux主机设计，请在Linux机器上运行。"
+  exit 1
+fi
+
+# 安装系统依赖
+echo "=== 安装系统依赖 ==="
+sudo apt update
+sudo apt install -y \
+  build-essential cmake curl wget unzip python3 git \
+  libglib2.0-dev libpixman-1-dev libssl-dev \
+  libcurl4-openssl-dev libssh-dev libgnutls28-dev \
+  libsasl2-dev libpam0g-dev libbz2-dev libzstd-dev \
+  libpcre2-dev pkg-config meson ninja-build tree \
+  binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
+  libc6-dev libc6-dev-arm64-cross
+
+# 自动检测NDK路径
+export OHOS_NDK_HOME=""
+for candidate in \
+  "${SCRIPT_DIR}/../../ohos-sdk/linux/native" \
+  "${HOME}/Library/OpenHarmony/Sdk/18/native" \
+  "${HOME}/OpenHarmony/Sdk/18/native" \
+  "${HOME}/openharmony/sdk/18/native"; do
+  if [ -d "${candidate}" ]; then
+    export OHOS_NDK_HOME="${candidate}"
+    break
+  fi
+done
+
+if [ -z "${OHOS_NDK_HOME:-}" ]; then
+  echo "error: set OHOS_NDK_HOME to your OpenHarmony NDK (native) directory" >&2
+  exit 1
+fi
+
 export SYSROOT="${OHOS_NDK_HOME}/sysroot"
 export CXX="${OHOS_NDK_HOME}/llvm/bin/aarch64-unknown-linux-ohos-clang++"
 export STRIP="${OHOS_NDK_HOME}/llvm/bin/llvm-strip"
@@ -51,11 +86,13 @@ LINK_ARGS+=(
 "${CXX}" ${LINK_ARGS[@]} -o "${OUT_SO}"
 "${STRIP}" -S "${OUT_SO}" || true
 
-APP_LIBS_ARCH="../../entry/src/main/cpp/libs/arm64-v8a"
-APP_LIBS_ROOT="../../entry/src/main/cpp/libs"
+APP_LIBS_ARCH="../../entry/src/main/libs/arm64-v8a"
+APP_LIBS_ROOT="../../entry/src/main/libs"
 mkdir -p "${APP_LIBS_ARCH}" "${APP_LIBS_ROOT}"
 cp -f "${OUT_SO}" "${APP_LIBS_ARCH}/"
 cp -f "${OUT_SO}" "${APP_LIBS_ROOT}/"
 
 echo "Done: ${APP_LIBS_ARCH}/${OUT_SO} and ${APP_LIBS_ROOT}/${OUT_SO}"
+echo "✅ 编译完成! .so文件在 entry/src/main/libs/arm64-v8a/"
+echo "检查: ls entry/src/main/libs/arm64-v8a/libqemu_full.so"
 
