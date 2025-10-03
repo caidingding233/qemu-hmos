@@ -216,27 +216,27 @@ jobs:
             sudo mkdir -p "$BITS_DIR"
             
             # 创建 alltypes.h 文件，包含必要的类型定义
-            sudo tee "$BITS_DIR/alltypes.h" > /dev/null << 'EOF'
-#ifndef _BITS_ALLTYPES_H
-#define _BITS_ALLTYPES_H
-
-/* Basic type definitions for compatibility */
-typedef long __LONG_MAX;
-typedef unsigned long __ULONG_MAX;
-typedef int __INT_MAX;
-typedef unsigned int __UINT_MAX;
-
-/* Add other necessary type definitions as needed */
-#ifndef __LONG_MAX
-#define __LONG_MAX 9223372036854775807L
-#endif
-
-#ifndef __ULONG_MAX
-#define __ULONG_MAX 18446744073709551615UL
-#endif
-
-#endif /* _BITS_ALLTYPES_H */
-EOF
+            {
+              echo '#ifndef _BITS_ALLTYPES_H'
+              echo '#define _BITS_ALLTYPES_H'
+              echo ''
+              echo '/* Basic type definitions for compatibility */'
+              echo 'typedef long __LONG_MAX;'
+              echo 'typedef unsigned long __ULONG_MAX;'
+              echo 'typedef int __INT_MAX;'
+              echo 'typedef unsigned int __UINT_MAX;'
+              echo ''
+              echo '/* Add other necessary type definitions as needed */'
+              echo '#ifndef __LONG_MAX'
+              echo '#define __LONG_MAX 9223372036854775807L'
+              echo '#endif'
+              echo ''
+              echo '#ifndef __ULONG_MAX'
+              echo '#define __ULONG_MAX 18446744073709551615UL'
+              echo '#endif'
+              echo ''
+              echo '#endif /* _BITS_ALLTYPES_H */'
+            } | sudo tee "$BITS_DIR/alltypes.h" > /dev/null
             echo "✓ Created alltypes.h compatibility file at $BITS_DIR/alltypes.h"
           else
             echo "No alltypes.h reference found in limits.h"
