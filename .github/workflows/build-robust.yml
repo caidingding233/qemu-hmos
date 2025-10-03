@@ -142,17 +142,17 @@ jobs:
         export SYSROOT="$(pwd)/$NATIVE_DIR/sysroot"
         echo "SYSROOT set to: $SYSROOT"
 
-        # 复制aarch64 glibc bits到sysroot补全musl头
-        echo "=== 补全sysroot bits目录 ==="
+        # 复制aarch64 glibc完整头文件到sysroot补全musl头
+        echo "=== 补全sysroot完整头文件目录 ==="
         
         # 先检查源目录是否存在
-        if [ ! -d "/usr/aarch64-linux-gnu/include/bits" ]; then
-          echo "Warning: Source directory /usr/aarch64-linux-gnu/include/bits not found"
+        if [ ! -d "/usr/aarch64-linux-gnu/include" ]; then
+          echo "Warning: Source directory /usr/aarch64-linux-gnu/include not found"
           echo "Trying to install aarch64 glibc headers..."
           sudo apt-get install -y libc6-dev-arm64-cross
           
           # 再次检查
-          if [ ! -d "/usr/aarch64-linux-gnu/include/bits" ]; then
+          if [ ! -d "/usr/aarch64-linux-gnu/include" ]; then
             echo "Error: Still cannot find aarch64 glibc headers after installation"
             echo "Available aarch64 directories:"
             find /usr -name "*aarch64*" -type d 2>/dev/null | head -10
@@ -161,28 +161,23 @@ jobs:
         fi
 
         # 确保目标目录存在
-        sudo mkdir -p "$SYSROOT/usr/include/bits"
+        sudo mkdir -p "$SYSROOT/usr/include"
         
-        # 执行复制，添加详细日志
-        echo "Copying from /usr/aarch64-linux-gnu/include/bits to $SYSROOT/usr/include/bits"
-        sudo cp -r /usr/aarch64-linux-gnu/include/bits/* "$SYSROOT/usr/include/bits/" 2>&1 | head -20
+        # 复制完整的头文件目录，包括 bits/, gnu/, sys/ 等
+        echo "Copying all headers from /usr/aarch64-linux-gnu/include to $SYSROOT/usr/include"
+        sudo cp -r /usr/aarch64-linux-gnu/include/* "$SYSROOT/usr/include/" 2>&1 | head -20
 
-        # 验证复制是否成功 - 检查文件数量和基本文件
+        # 验证复制是否成功 - 检查关键文件
         echo "Checking copy success..."
-        SOURCE_COUNT=$(ls /usr/aarch64-linux-gnu/include/bits/ | wc -l)
-        TARGET_COUNT=$(ls "$SYSROOT/usr/include/bits/" | wc -l)
-        
-        echo "Source files count: $SOURCE_COUNT"
-        echo "Target files count: $TARGET_COUNT"
-        
-        if [ "$TARGET_COUNT" -gt 0 ] && [ "$TARGET_COUNT" -ge "$SOURCE_COUNT" ]; then
-          echo "✓ Bits directory copied successfully ($TARGET_COUNT files copied)"
+        if [ -f "$SYSROOT/usr/include/bits/limits.h" ] && [ -f "$SYSROOT/usr/include/limits.h" ]; then
+          echo "✓ Headers copied successfully"
+          echo "Key files present:"
+          ls -la "$SYSROOT/usr/include/bits/limits.h"
+          ls -la "$SYSROOT/usr/include/limits.h"
         else
-          echo "✗ Copy failed - file count mismatch or empty target"
-          echo "Source directory contents:"
-          ls -la /usr/aarch64-linux-gnu/include/bits/ | head -5
+          echo "✗ Copy failed - missing key files"
           echo "Target directory contents:"
-          ls -la "$SYSROOT/usr/include/bits/" | head -5
+          ls -la "$SYSROOT/usr/include/" | head -10
           echo "SYSROOT path: $SYSROOT"
           exit 1
         fi
