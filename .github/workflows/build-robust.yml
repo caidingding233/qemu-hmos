@@ -189,13 +189,34 @@ jobs:
 
         # 修复 limits.h 中的 alltypes.h 引用问题
         echo "=== 修复 limits.h 中的 alltypes.h 引用 ==="
-        LIMITS_H="$SYSROOT/usr/include/limits.h"
-        if [ -f "$LIMITS_H" ]; then
+        
+        # 检查多个可能的 limits.h 位置
+        LIMITS_H_CANDIDATES=(
+          "$SYSROOT/usr/include/limits.h"
+          "$(pwd)/$NATIVE_DIR/sysroot/usr/include/limits.h"
+          "$(pwd)/$NATIVE_DIR/llvm/bin/../../sysroot/usr/include/limits.h"
+        )
+        
+        LIMITS_H=""
+        for candidate in "${LIMITS_H_CANDIDATES[@]}"; do
+          if [ -f "$candidate" ]; then
+            LIMITS_H="$candidate"
+            echo "Found limits.h at: $LIMITS_H"
+            break
+          fi
+        done
+        
+        if [ -n "$LIMITS_H" ]; then
           echo "Checking limits.h for alltypes.h reference..."
           if grep -q "bits/alltypes.h" "$LIMITS_H"; then
             echo "Found alltypes.h reference in limits.h, creating compatibility file..."
+            
+            # 确保 bits 目录存在
+            BITS_DIR="$(dirname "$LIMITS_H")/bits"
+            sudo mkdir -p "$BITS_DIR"
+            
             # 创建 alltypes.h 文件，包含必要的类型定义
-            sudo tee "$SYSROOT/usr/include/bits/alltypes.h" > /dev/null << 'EOF'
+            sudo tee "$BITS_DIR/alltypes.h" > /dev/null << 'EOF'
 #ifndef _BITS_ALLTYPES_H
 #define _BITS_ALLTYPES_H
 
@@ -216,12 +237,16 @@ typedef unsigned int __UINT_MAX;
 
 #endif /* _BITS_ALLTYPES_H */
 EOF
-            echo "✓ Created alltypes.h compatibility file"
+            echo "✓ Created alltypes.h compatibility file at $BITS_DIR/alltypes.h"
           else
             echo "No alltypes.h reference found in limits.h"
           fi
         else
-          echo "limits.h not found in sysroot"
+          echo "limits.h not found in any expected location"
+          echo "Searched locations:"
+          for candidate in "${LIMITS_H_CANDIDATES[@]}"; do
+            echo "  - $candidate"
+          done
         fi
 
         echo "Final bits directory contents:"
