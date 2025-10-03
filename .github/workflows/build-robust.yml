@@ -113,42 +113,12 @@ jobs:
         echo "Extracting: $NATIVE_ZIP"
         unzip -q "$NATIVE_ZIP"
         rm "$NATIVE_ZIP"
-
-        # 复制aarch64 glibc bits到sysroot补全musl头
-        echo "=== 补全sysroot bits目录 ==="
-        # 先检查源目录是否存在
-        if [ ! -d "/usr/aarch64-linux-gnu/include/bits" ]; then
-          echo "Error: Source directory /usr/aarch64-linux-gnu/include/bits not found"
-          exit 1
-        fi
-
-        # 执行完整复制
-        sudo mkdir -p "$SYSROOT/usr/include/bits"
-        sudo cp -r /usr/aarch64-linux-gnu/include/bits/* "$SYSROOT/usr/include/bits/"
-
-        # 验证关键文件
-        if [ -f "$SYSROOT/usr/include/bits/alltypes.h" ] && [ -f "$SYSROOT/usr/include/bits/wordsize.h" ]; then
-          echo "✓ Bits directory copied successfully (key files present)"
-        else
-          echo "✗ Copy failed - missing key files"
-          ls -la "$SYSROOT/usr/include/bits/" | head -5
-          exit 1
-        fi
-
-        ls -la "$SYSROOT/usr/include/bits/" | head -5
         
-        echo "=== Analyzing extracted content ==="
-        echo "Contents after extraction:"
-        ls -la
-        
-        # Look for the extracted directory with multiple patterns
-        echo ""
-        echo "=== Looking for native directory ==="
+        # 先设置SYSROOT变量，因为后面需要用到
+        echo "=== 设置SYSROOT变量 ==="
+        # 查找native目录
         NATIVE_DIR=""
-        
-        # Try different patterns
         for pattern in "native-linux-x64-*" "native-*" "*native*"; do
-          echo "Searching for pattern: $pattern"
           found=$(find . -name "$pattern" -type d | head -1)
           if [ -n "$found" ]; then
             NATIVE_DIR="$found"
@@ -157,9 +127,7 @@ jobs:
           fi
         done
         
-        # If still not found, try generic 'native' directory
         if [ -z "$NATIVE_DIR" ]; then
-          echo "Trying generic 'native' directory search..."
           NATIVE_DIR=$(find . -type d -name 'native' | head -1)
           if [ -n "$NATIVE_DIR" ]; then
             echo "✅ Found generic native directory: $NATIVE_DIR"
@@ -168,13 +136,56 @@ jobs:
         
         if [ -z "$NATIVE_DIR" ]; then
           echo "❌ No native directory found after extraction"
-          echo "Available directories:"
-          find . -type d | head -20
-          echo ""
-          echo "Available files:"
-          find . -type f | head -20
           exit 1
         fi
+        
+        export SYSROOT="$(pwd)/$NATIVE_DIR/sysroot"
+        echo "SYSROOT set to: $SYSROOT"
+
+        # 复制aarch64 glibc bits到sysroot补全musl头
+        echo "=== 补全sysroot bits目录 ==="
+        
+        # 先检查源目录是否存在
+        if [ ! -d "/usr/aarch64-linux-gnu/include/bits" ]; then
+          echo "Warning: Source directory /usr/aarch64-linux-gnu/include/bits not found"
+          echo "Trying to install aarch64 glibc headers..."
+          sudo apt-get install -y libc6-dev-arm64-cross
+          
+          # 再次检查
+          if [ ! -d "/usr/aarch64-linux-gnu/include/bits" ]; then
+            echo "Error: Still cannot find aarch64 glibc headers after installation"
+            echo "Available aarch64 directories:"
+            find /usr -name "*aarch64*" -type d 2>/dev/null | head -10
+            exit 1
+          fi
+        fi
+
+        # 确保目标目录存在
+        sudo mkdir -p "$SYSROOT/usr/include/bits"
+        
+        # 执行复制，添加详细日志
+        echo "Copying from /usr/aarch64-linux-gnu/include/bits to $SYSROOT/usr/include/bits"
+        sudo cp -r /usr/aarch64-linux-gnu/include/bits/* "$SYSROOT/usr/include/bits/" 2>&1 | head -20
+
+        # 验证关键文件
+        if [ -f "$SYSROOT/usr/include/bits/alltypes.h" ] && [ -f "$SYSROOT/usr/include/bits/wordsize.h" ]; then
+          echo "✓ Bits directory copied successfully (key files present)"
+        else
+          echo "✗ Copy failed - missing key files"
+          echo "Source directory contents:"
+          ls -la /usr/aarch64-linux-gnu/include/bits/ | head -5
+          echo "Target directory contents:"
+          ls -la "$SYSROOT/usr/include/bits/" | head -5
+          echo "SYSROOT path: $SYSROOT"
+          exit 1
+        fi
+
+        echo "Final bits directory contents:"
+        ls -la "$SYSROOT/usr/include/bits/" | head -5
+        
+        echo "=== Analyzing extracted content ==="
+        echo "Contents after extraction:"
+        ls -la
         
         echo "✅ Final native directory: $NATIVE_DIR"
 
