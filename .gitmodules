@@ -26,6 +26,3 @@
 	path = third_party/qemu
 	url = https://gitlab.com/qemu-project/qemu.git
 
-[submodule "third_party/qemu-code"]
-	path = third_party/qemu-code
-	url = https://github.com/caidingding233/qemu-code.git

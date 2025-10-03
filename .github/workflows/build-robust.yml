@@ -16,6 +16,13 @@ jobs:
       with:
         submodules: recursive
 
+    - name: Clone qemu-code
+      run: |
+        echo "=== Cloning qemu-code ==="
+        git clone https://github.com/caidingding233/qemu-code.git third_party/qemu-code
+        cd third_party/qemu-code
+        echo "qemu-code cloned successfully"
+
     - name: Install dependencies
       run: |
         sudo apt-get update
