@@ -230,29 +230,54 @@ jobs:
 
     - name: Find gnutls headers
       run: |
-        echo "=== 查找 gnutls 头文件位置 ==="
-        echo "Checking common gnutls locations:"
-        [ -f "/usr/include/gnutls/gnutls.h" ] && echo "✓ /usr/include/gnutls/gnutls.h exists" || echo "✗ /usr/include/gnutls/gnutls.h missing"
-        [ -f "/usr/include/x86_64-linux-gnu/gnutls/gnutls.h" ] && echo "✓ /usr/include/x86_64-linux-gnu/gnutls/gnutls.h exists" || echo "✗ /usr/include/x86_64-linux-gnu/gnutls/gnutls.h missing"
-        [ -f "/usr/lib/x86_64-linux-gnu/gnutls/gnutls.h" ] && echo "✓ /usr/lib/x86_64-linux-gnu/gnutls/gnutls.h exists" || echo "✗ /usr/lib/x86_64-linux-gnu/gnutls/gnutls.h missing"
+        echo "=== 🔍 查找 gnutls 头文件位置 ==="
+        
+        # 进度条函数
+        show_progress() {
+          local current=$1
+          local total=$2
+          local desc=$3
+          local percent=$((current * 100 / total))
+          local filled=$((percent / 2))
+          local empty=$((50 - filled))
+          printf "\r["
+          printf "%*s" $filled | tr ' ' '='
+          printf "%*s" $empty | tr ' ' ' '
+          printf "] %d%% %s" $percent "$desc"
+        }
+        
+        echo "📋 检查标准 gnutls 位置..."
+        show_progress 1 4 "检查 /usr/include/gnutls/"
+        [ -f "/usr/include/gnutls/gnutls.h" ] && echo " ✅" || echo " ❌"
+        
+        show_progress 2 4 "检查 /usr/include/x86_64-linux-gnu/gnutls/"
+        [ -f "/usr/include/x86_64-linux-gnu/gnutls/gnutls.h" ] && echo " ✅" || echo " ❌"
+        
+        show_progress 3 4 "检查 /usr/lib/x86_64-linux-gnu/gnutls/"
+        [ -f "/usr/lib/x86_64-linux-gnu/gnutls/gnutls.h" ] && echo " ✅" || echo " ❌"
+        
+        show_progress 4 4 "分析结果..."
         echo ""
-        echo "Installed gnutls packages:"
-        dpkg -l | grep gnutls || echo "No gnutls packages found"
+        
+        echo "📦 已安装的 gnutls 包:"
+        dpkg -l | grep gnutls | head -5 || echo "   (无 gnutls 包)"
         echo ""
-        echo "=== 设置 gnutls 头文件路径 ==="
+        
+        echo "🎯 设置 gnutls 头文件路径..."
         if [ -f "/usr/include/gnutls/gnutls.h" ]; then
           echo "GNUTLS_HEADER_PATH=/usr/include/gnutls" >> $GITHUB_ENV
-          echo "✓ Using /usr/include/gnutls"
+          echo "✅ 使用 /usr/include/gnutls"
         elif [ -f "/usr/include/x86_64-linux-gnu/gnutls/gnutls.h" ]; then
           echo "GNUTLS_HEADER_PATH=/usr/include/x86_64-linux-gnu/gnutls" >> $GITHUB_ENV
-          echo "✓ Using /usr/include/x86_64-linux-gnu/gnutls"
+          echo "✅ 使用 /usr/include/x86_64-linux-gnu/gnutls"
         elif [ -f "/usr/lib/x86_64-linux-gnu/gnutls/gnutls.h" ]; then
           echo "GNUTLS_HEADER_PATH=/usr/lib/x86_64-linux-gnu/gnutls" >> $GITHUB_ENV
-          echo "✓ Using /usr/lib/x86_64-linux-gnu/gnutls"
+          echo "✅ 使用 /usr/lib/x86_64-linux-gnu/gnutls"
         else
-          echo "❌ No gnutls headers found, will try to disable gnutls"
+          echo "⚠️  未找到 gnutls 头文件，将禁用 gnutls 支持"
           echo "GNUTLS_HEADER_PATH=" >> $GITHUB_ENV
         fi
+        echo ""
 
     - name: Setup environment and test
       run: |
@@ -647,7 +672,23 @@ jobs:
         echo "Verifying CONFIG_POSIX_MEMALIGN definition:"
         grep -r "CONFIG_POSIX_MEMALIGN" . || echo "No CONFIG_POSIX_MEMALIGN found"
         
-        echo "=== Building QEMU ==="
+        echo "=== 🚀 构建 QEMU ==="
+        
+        # 进度条函数
+        show_progress() {
+          local current=$1
+          local total=$2
+          local desc=$3
+          local percent=$((current * 100 / total))
+          local filled=$((percent / 2))
+          local empty=$((50 - filled))
+          printf "\r["
+          printf "%*s" $filled | tr ' ' '='
+          printf "%*s" $empty | tr ' ' ' '
+          printf "] %d%% %s" $percent "$desc"
+        }
+        
+        show_progress 1 5 "设置链接器工具..."
         # 设置正确的链接器环境变量，使用OHOS NDK的工具
         export LD="$CC"
         export AR="$(dirname "$CC")/llvm-ar"
@@ -658,14 +699,34 @@ jobs:
         [ ! -f "$AR" ] && export AR="aarch64-linux-gnu-ar"
         [ ! -f "$RANLIB" ] && export RANLIB="aarch64-linux-gnu-ranlib"
         [ ! -f "$STRIP" ] && export STRIP="aarch64-linux-gnu-strip"
+        echo " ✅"
         
-        echo "Using tools:"
-        echo "LD: $LD"
-        echo "AR: $AR"
-        echo "RANLIB: $RANLIB"
-        echo "STRIP: $STRIP"
+        show_progress 2 5 "验证工具链..."
+        echo "🔧 使用工具:"
+        echo "   LD: $LD"
+        echo "   AR: $AR"
+        echo "   RANLIB: $RANLIB"
+        echo "   STRIP: $STRIP"
+        echo " ✅"
         
-        make -j$(nproc)
+        show_progress 3 5 "开始编译..."
+        echo "⚙️  使用 $(nproc) 个并行任务编译 QEMU..."
+        echo "📊 编译进度:"
+        
+        # 启动编译并显示进度
+        make -j$(nproc) 2>&1 | while IFS= read -r line; do
+          if [[ $line =~ \[([0-9]+)/([0-9]+)\] ]]; then
+            current="${BASH_REMATCH[1]}"
+            total="${BASH_REMATCH[2]}"
+            show_progress $current $total "编译中..."
+          else
+            echo ""
+            echo "$line"
+          fi
+        done
+        
+        show_progress 5 5 "编译完成!"
+        echo " ✅"
         
         echo "✅ QEMU build completed!"
         
