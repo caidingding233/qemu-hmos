@@ -82,29 +82,29 @@ jobs:
         set -e
         mkdir -p cross
         cat > cross/aarch64-ohos.ini <<'EOF'
-[binaries]
-c = '${CC}'
-cpp = '${CXX}'
-ar = '${AR}'
-strip = '${STRIP}'
-pkgconfig = 'pkg-config'
-ld = '${CC}'
+        [binaries]
+        c = '${CC}'
+        cpp = '${CXX}'
+        ar = '${AR}'
+        strip = '${STRIP}'
+        pkgconfig = 'pkg-config'
+        ld = '${CC}'
 
-[host_machine]
-system = 'linux'
-cpu_family = 'aarch64'
-cpu = 'armv8'
-endian = 'little'
+        [host_machine]
+        system = 'linux'
+        cpu_family = 'aarch64'
+        cpu = 'armv8'
+        endian = 'little'
 
-[paths]
-sys_root = '${SYSROOT}'
+        [paths]
+        sys_root = '${SYSROOT}'
 
-[built-in options]
-c_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
-cpp_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
-c_link_args = ['--sysroot=${SYSROOT}']
-cpp_link_args = ['--sysroot=${SYSROOT}']
-EOF
+        [built-in options]
+        c_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
+        cpp_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
+        c_link_args = ['--sysroot=${SYSROOT}']
+        cpp_link_args = ['--sysroot=${SYSROOT}']
+        EOF
 
     - name: Provide subprojects (glib/pcre2/libffi/pixman via wraps)
       run: |
