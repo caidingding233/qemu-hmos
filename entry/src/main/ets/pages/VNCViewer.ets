@@ -46,7 +46,7 @@ struct VNCViewer {
       try {
         const jsBytes: Uint8Array = await rm.getRawFileContent('novnc/novnc.min.js')
         const jsFile = await fs.open(filesDir + '/novnc.min.js', fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY)
-        await fs.write(jsFile.fd, jsBytes)
+        await fs.write(jsFile.fd, jsBytes.buffer.slice())
         await fs.close(jsFile)
         hasNoVncMin = true
       } catch (_) {
@@ -56,7 +56,7 @@ struct VNCViewer {
         try {
           const esmBytes: Uint8Array = await rm.getRawFileContent('novnc/novnc.esm.js')
           const esmFile = await fs.open(filesDir + '/novnc.esm.js', fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY)
-          await fs.write(esmFile.fd, esmBytes)
+          await fs.write(esmFile.fd, esmBytes.buffer.slice())
           await fs.close(esmFile)
           hasNoVncEsm = true
         } catch (_) {
@@ -68,7 +68,7 @@ struct VNCViewer {
       const htmlPath = filesDir + '/index.html'
       const baseUrl = 'file://' + filesDir + '/'
       const htmlHead = `<!DOCTYPE html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><style>html,body,#root{height:100%;margin:0;padding:0;background:#000;color:#fff;font-family:system-ui,-apple-system}#toolbar{position:fixed;top:8px;left:8px;right:8px;display:flex;gap:8px;align-items:center}#screen{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center}canvas{max-width:100%;max-height:100%;}</style></head><body>`
-      const htmlBody = `<div id="toolbar"><span>noVNC</span><span id="status">Connecting ws://127.0.0.1:${this.vncPort}</span></div><div id="screen"><canvas id="vncCanvas"></canvas></div>`
+      const htmlBody = `<div id="toolbar"><span>noVNC</span><span id="status">Connecting ws://127.0.0.1:${this.vncPort}</span><button onclick="toggleFullscreen()">全屏</button></div><div id="screen"><canvas id="vncCanvas"></canvas></div>`
       const htmlScript = hasNoVncMin
         ? `<script>(function(){
               function tryLoad(srcs, onload, onerror){
@@ -77,6 +77,14 @@ struct VNCViewer {
                 s.src=srcs[0]; s.onload=onload; s.onerror=function(){ tryLoad(srcs.slice(1), onload, onerror); };
                 document.head.appendChild(s);
               }
+              function toggleFullscreen(){
+                if(!document.fullscreenElement){
+                  document.documentElement.requestFullscreen();
+                }else{
+                  document.exitFullscreen();
+                }
+              }
+              window.toggleFullscreen = toggleFullscreen;
               document.getElementById('status').innerText='加载 noVNC...';
               var candidates=['./novnc.min.js','internal://app/novnc/novnc.min.js','file://${filesDir}/novnc.min.js'];
               tryLoad(candidates, function(){
@@ -84,8 +92,10 @@ struct VNCViewer {
                   var target=document.getElementById('vncCanvas');
                   var rfb=new RFB(target,'ws://127.0.0.1:${this.vncPort}');
                   rfb.viewOnly=false; rfb.scaleViewport=true; rfb.background='#000';
-                  rfb.addEventListener('connect',function(){document.getElementById('status').innerText='已连接';});
+                  rfb.addEventListener('connect',function(){document.getElementById('status').innerText='已连接 - 点击全屏按钮获得更好体验';});
                   rfb.addEventListener('disconnect',function(){document.getElementById('status').innerText='已断开';});
+                  rfb.addEventListener('credentialsrequired',function(){document.getElementById('status').innerText='需要认证';});
+                  rfb.addEventListener('securityfailure',function(e){document.getElementById('status').innerText='安全失败: '+e.detail.reason;});
                 }catch(e){ document.getElementById('status').innerText='加载失败: '+e; }
               }, function(err){ document.getElementById('status').innerText='加载失败: '+err; });
             })();</script>`

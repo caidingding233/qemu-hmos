@@ -275,14 +275,17 @@ jobs:
         export CFLAGS="$CFLAGS --target=aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include -idirafter ${SYSROOT}/usr/include"
         export CXXFLAGS="$CXXFLAGS --target=aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include -idirafter ${SYSROOT}/usr/include"
         export LDFLAGS="$LDFLAGS -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64"
+        # 设置 PKG_CONFIG_PATH 作为环境变量
+        export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH"
+        
         ../configure \
           --target-list=aarch64-softmmu \
           --cc="$CC" \
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="--target=aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include -idirafter ${SYSROOT}/usr/include" \
-          --extra-cxxflags="--target=aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include -idirafter ${SYSROOT}/usr/include" \
+          --extra-cflags="--target=aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include -idirafter ${SYSROOT}/usr/include -D__aarch64__" \
+          --extra-cxxflags="--target=aarch64-linux-gnu -isystem /usr/aarch64-linux-gnu/include -idirafter ${SYSROOT}/usr/include -D__aarch64__" \
           --extra-ldflags="--target=aarch64-linux-gnu --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -Wl,-rpath,/system/lib64 -lm" \
           -Db_staticpic=true \
           -Ddefault_library=static \

@@ -39,6 +39,8 @@ static int prctl(int option, unsigned long arg2) {
 }
 #else
 #include <sys/prctl.h>
+#include <sys/ioctl.h>
+#include <linux/kvm.h>
 #endif
 
 // NAPI常量定义（如官方头已定义则不重复定义）
@@ -113,18 +115,86 @@ static std::mutex g_rdp_mutex;
 
 // 检测KVM支持
 static bool kvmSupported() {
+    // 检查KVM设备文件是否存在
     int fd = open("/dev/kvm", O_RDWR);
     if (fd < 0) {
         return false;
     }
+    
+    // 检查KVM版本
+    int kvm_version = ioctl(fd, KVM_GET_API_VERSION, 0);
+    if (kvm_version < 0) {
+        close(fd);
+        return false;
+    }
+    
+    // 检查KVM能力
+    int ret = ioctl(fd, KVM_CHECK_EXTENSION, KVM_CAP_USER_MEMORY);
+    if (ret <= 0) {
+        close(fd);
+        return false;
+    }
+    
     close(fd);
     return true;
 }
 
 // 启用JIT权限
 static bool enableJit() {
+    // 检查是否已经启用JIT
+    int current_jit = 0;
+    if (prctl(PRCTL_JIT_ENABLE, 0, &current_jit) == 0 && current_jit == 1) {
+        return true;
+    }
+    
+    // 尝试启用JIT
     int r = prctl(PRCTL_JIT_ENABLE, 1);
-    return r == 0;
+    if (r != 0) {
+        return false;
+    }
+    
+    // 验证JIT是否成功启用
+    int verify_jit = 0;
+    if (prctl(PRCTL_JIT_ENABLE, 0, &verify_jit) == 0 && verify_jit == 1) {
+        return true;
+    }
+    
+    return false;
+}
+
+// 获取设备能力信息
+static napi_value GetDeviceCapabilities(napi_env env, napi_callback_info info) {
+    napi_value result;
+    napi_create_object(env, &result);
+    
+    // KVM支持
+    bool kvm_supported = kvmSupported();
+    napi_value kvm_value;
+    napi_get_boolean(env, kvm_supported, &kvm_value);
+    napi_set_named_property(env, result, "kvmSupported", kvm_value);
+    
+    // JIT支持
+    bool jit_supported = enableJit();
+    napi_value jit_value;
+    napi_get_boolean(env, jit_supported, &jit_value);
+    napi_set_named_property(env, result, "jitSupported", jit_value);
+    
+    // 内存信息
+    long pages = sysconf(_SC_PHYS_PAGES);
+    long page_size = sysconf(_SC_PAGE_SIZE);
+    long total_memory = pages * page_size;
+    
+    napi_value memory_value;
+    napi_create_int64(env, total_memory, &memory_value);
+    napi_set_named_property(env, result, "totalMemory", memory_value);
+    
+    // CPU核心数
+    long cpu_cores = sysconf(_SC_NPROCESSORS_ONLN);
+    napi_value cores_value;
+    napi_create_int64(env, cpu_cores, &cores_value);
+    napi_set_named_property(env, result, "cpuCores", cores_value);
+    
+    return result;
 }
 
 // 解析VM配置参数
@@ -1492,6 +1562,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "getVmLogs", 0, GetVmLogs, 0, 0, 0, napi_default, 0 },
         { "getVmStatus", 0, GetVmStatus, 0, 0, 0, napi_default, 0 },
         { "checkCoreLib", 0, CheckCoreLib, 0, 0, 0, napi_default, 0 },
+        { "getDeviceCapabilities", 0, GetDeviceCapabilities, 0, 0, 0, napi_default, 0 },
         { "createRdpClient", 0, CreateRdpClient, 0, 0, 0, napi_default, 0 },
         { "connectRdp", 0, ConnectRdp, 0, 0, 0, napi_default, 0 },
         { "disconnectRdp", 0, DisconnectRdp, 0, 0, 0, napi_default, 0 },

@@ -91,15 +91,19 @@ struct RDPViewer {
           .height(56)
           .padding({ left: 16, right: 16, top: 0, bottom: 0 })
           .backgroundColor('#F8F9FA')
-          .justifyContent(2)
-          .alignItems(1)
+          .justifyContent(FlexAlign.SpaceBetween)
+          .alignItems(VerticalAlign.Center)
         }
         
         // RDP显示区域
         RDPDisplay({
           vmId: this.vmId,
           rdpHost: this.rdpHost,
-          rdpPort: this.rdpPort
+          rdpPort: this.rdpPort,
+          connectionQuality: this.connectionQuality,
+          colorDepth: this.colorDepth,
+          enableAudio: this.enableAudio,
+          enableClipboard: this.enableClipboard
         })
           .width('100%')
           .flexGrow(1)

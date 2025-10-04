@@ -17,6 +17,13 @@ export interface VMStatus {
   logPath: string;
 }
 
+export interface DeviceCapabilities {
+  kvmSupported: boolean;
+  jitSupported: boolean;
+  totalMemory: number;
+  cpuCores: number;
+}
+
 export const version: () => string;
 export const enableJit: () => boolean;
 export const kvmSupported: () => boolean;
@@ -24,6 +31,7 @@ export const startVm: (config: VMConfig) => boolean;
 export const stopVm: (name: string) => boolean;
 export const getVmLogs: (name: string, startLine?: number) => string[];
 export const getVmStatus: (name: string) => string;
+export const getDeviceCapabilities: () => DeviceCapabilities;
 
 declare const _default: {
   version: typeof version;
@@ -33,5 +41,6 @@ declare const _default: {
   stopVm: typeof stopVm;
   getVmLogs: typeof getVmLogs;
   getVmStatus: typeof getVmStatus;
+  getDeviceCapabilities: typeof getDeviceCapabilities;
 };
 export default _default;

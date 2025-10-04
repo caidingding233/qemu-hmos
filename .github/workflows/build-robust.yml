@@ -500,6 +500,9 @@ jobs:
         # 启用 configure 的详细日志
         export CONFIGURE_DEBUG=1
         
+        # 设置 PKG_CONFIG_PATH 作为环境变量（不是 configure 参数）
+        export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH"
+        
         # 运行 configure 并捕获退出码
         if ! ../configure \
           --target-list=aarch64-softmmu \
@@ -507,10 +510,9 @@ jobs:
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-        --extra-cflags="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH" \
-        --extra-cxxflags="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH" \
-        --pkg-config-path="/usr/lib/x86_64-linux-gnu/pkgconfig" \
-              --extra-ldflags="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu" \
+          --extra-cflags="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH -D__aarch64__" \
+          --extra-cxxflags="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH -D__aarch64__" \
+          --extra-ldflags="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu" \
           -Db_staticpic=true \
           -Ddefault_library=static \
           -Dtools=disabled \
@@ -542,7 +544,7 @@ jobs:
           --disable-libssh \
           --disable-nettle \
           --disable-gcrypt \
-              --enable-gnutls; then
+          --enable-gnutls; then
             echo "❌ Configure failed, showing detailed logs:"
             echo "=== config.log content ==="
             if [ -f "config.log" ]; then

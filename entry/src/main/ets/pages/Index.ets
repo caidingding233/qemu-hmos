@@ -292,8 +292,8 @@ struct Index {
         diskSizeGB: vm.config.diskSizeGB,
         memoryMB: vm.config.memoryMB,
         cpuCount: vm.config.cpuCount,
-        accel: qemu.kvmSupported() ? 'kvm' : 'tcg',
-        display: mode === 'install' ? 'vnc=:1,websocket=5701' : 'vnc=:1',
+        accel: qemu.kvmSupported() ? 'kvm' : 'tcg,thread=multi,tb-size=128',
+        display: mode === 'install' ? 'vnc=127.0.0.1:1,websocket=5701' : 'vnc=127.0.0.1:1',
         nographic: false
       })
 
@@ -827,17 +827,18 @@ struct Index {
                     .height(48)
                     .fill('#9C27B0')
                     .margin({ bottom: 8 });
-                  Text('镜像管理')
+                  Text('设备能力')
                     .fontSize(14)
                     .fontWeight(FontWeight.Medium)
                     .fontColor('#333333');
-                  Text('下载系统镜像')
+                  Text('JIT/KVM检测')
                     .fontSize(12)
                     .fontColor('#666666')
                     .margin({ top: 4 });
                 }
                 .layoutWeight(1)
-                .alignItems(HorizontalAlign.Center);
+                .alignItems(HorizontalAlign.Center)
+                .onClick(() => this.showDeviceCapabilities());
 
                 Column() {
                   Circle()
@@ -845,17 +846,18 @@ struct Index {
                     .height(48)
                     .fill('#607D8B')
                     .margin({ bottom: 8 });
-                  Text('空间管理')
+                  Text('日志查看')
                     .fontSize(14)
                     .fontWeight(FontWeight.Medium)
                     .fontColor('#333333');
-                  Text('磁盘空间监控')
+                  Text('系统日志导出')
                     .fontSize(12)
                     .fontColor('#666666')
                     .margin({ top: 4 });
                 }
                 .layoutWeight(1)
-                .alignItems(HorizontalAlign.Center);
+                .alignItems(HorizontalAlign.Center)
+                .onClick(() => this.showSystemLogs());
 
                 Column() {
                   Circle()
@@ -873,22 +875,23 @@ struct Index {
                     .margin({ top: 4 });
                 }
                 .layoutWeight(1)
-                .alignItems(HorizontalAlign.Center);
+                .alignItems(HorizontalAlign.Center)
+                .onClick(() => this.showSystemSettings());
               }
               .width('100%')
               .margin({ bottom: 24 });
 
-              Text('• 支持断点续传下载')
+              Text('• JIT权限检测与启用')
                 .fontSize(14)
                 .fontColor('#666666')
                 .margin({ bottom: 8 });
 
-              Text('• 实时空间占用统计')
+              Text('• KVM硬件加速支持')
                 .fontSize(14)
                 .fontColor('#666666')
                 .margin({ bottom: 8 });
 
-              Text('• 高级QEMU参数配置')
+              Text('• 系统日志实时查看')
                 .fontSize(14)
                 .fontColor('#666666')
                 .margin({ top: 8 });
@@ -1193,6 +1196,9 @@ struct Index {
       try { await rm.getRawFileContent('novnc/novnc.min.js'); hasMin = true } catch (_) {}
       try { await rm.getRawFileContent('novnc/novnc.esm.js'); hasEsm = true } catch (_) {}
 
+      // 获取设备能力信息
+      const capabilities = qemu.getDeviceCapabilities()
+
       const lines: string[] = []
       lines.push(`Core.loaded: ${core.loaded === true}`)
       lines.push(`Core.foundLd: ${core.foundLd === true}${core.errLd ? ' ('+core.errLd+')' : ''}`)
@@ -1204,6 +1210,10 @@ struct Index {
       lines.push(`Core.foundFiles: ${core.foundFiles === true}${core.errFiles ? ' ('+core.errFiles+')' : ''}`)
       lines.push(`noVNC.min.js: ${hasMin}`)
       lines.push(`noVNC.esm.js: ${hasEsm}`)
+      lines.push(`KVM支持: ${capabilities.kvmSupported}`)
+      lines.push(`JIT支持: ${capabilities.jitSupported}`)
+      lines.push(`总内存: ${Math.round(capabilities.totalMemory / 1024 / 1024 / 1024)}GB`)
+      lines.push(`CPU核心: ${capabilities.cpuCores}`)
 
       AlertDialog.show({
         title: '依赖诊断',
@@ -1214,5 +1224,64 @@ struct Index {
       const msg: string = e instanceof Error ? e.message : `${e}`
       AlertDialog.show({ title: '诊断失败', message: msg, primaryButton: { value: '确定', action: () => {} } })
     }
+  }
+
+  // 显示设备能力
+  showDeviceCapabilities() {
+    try {
+      const jitEnabled = qemu.enableJit()
+      const kvmSupported = qemu.kvmSupported()
+      const version = qemu.version()
+      
+      const capabilities = [
+        `QEMU版本: ${version}`,
+        `JIT权限: ${jitEnabled ? '✓ 已启用' : '✗ 未启用'}`,
+        `KVM支持: ${kvmSupported ? '✓ 支持' : '✗ 不支持'}`,
+        `加速模式: ${kvmSupported ? 'KVM硬件加速' : 'TCG软件模拟'}`,
+        `推荐配置: ${kvmSupported ? '4核6GB' : '2核4GB'}`,
+        `注意事项: ${jitEnabled ? 'JIT已启用，性能最佳' : 'JIT未启用，需要调试签名'}`
+      ]
+      
+      AlertDialog.show({
+        title: '设备能力检测',
+        message: capabilities.join('\n'),
+        primaryButton: { value: '确定', action: () => {} }
+      })
+    } catch (e) {
+      AlertDialog.show({
+        title: '检测失败',
+        message: `设备能力检测失败: ${e}`,
+        primaryButton: { value: '确定', action: () => {} }
+      })
+    }
+  }
+
+  // 显示系统日志
+  showSystemLogs() {
+    try {
+      const logs = qemu.getVmLogs('system', 0)
+      const logText = logs.length > 0 ? logs.join('\n') : '暂无系统日志'
+      
+      AlertDialog.show({
+        title: '系统日志',
+        message: logText,
+        primaryButton: { value: '确定', action: () => {} }
+      })
+    } catch (e) {
+      AlertDialog.show({
+        title: '日志获取失败',
+        message: `无法获取系统日志: ${e}`,
+        primaryButton: { value: '确定', action: () => {} }
+      })
+    }
+  }
+
+  // 显示系统设置
+  showSystemSettings() {
+    AlertDialog.show({
+      title: '系统设置',
+      message: '系统设置功能开发中...\n\n将包含：\n• QEMU参数配置\n• 网络设置\n• 存储管理\n• 性能调优',
+      primaryButton: { value: '确定', action: () => {} }
+    })
   }
 }

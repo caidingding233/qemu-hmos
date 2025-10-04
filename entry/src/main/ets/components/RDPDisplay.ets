@@ -150,6 +150,7 @@ class RDPConnection {
       
     } catch (error) {
       console.error('RDP连接失败:', error)
+      this.errorMessage = `连接失败: ${JSON.stringify(error)}`
       this.state = RDPConnectionState.ERROR
       this.callbacks.onError?.(error.toString())
     }
@@ -171,6 +172,7 @@ class RDPConnection {
       
     } catch (error) {
       console.error('RDP认证失败:', error)
+      this.errorMessage = `认证失败: ${JSON.stringify(error)}`
       this.state = RDPConnectionState.ERROR
       this.callbacks.onError?.(error.toString())
     }
@@ -234,6 +236,10 @@ export struct RDPDisplay {
   @Prop vmId: string = ''
   @Prop rdpHost: string = 'localhost'
   @Prop rdpPort: number = 3389
+  @Prop connectionQuality: string = 'auto'
+  @Prop colorDepth: number = 16
+  @Prop enableAudio: boolean = true
+  @Prop enableClipboard: boolean = true
   
   @State connectionState: RDPConnectionState = RDPConnectionState.DISCONNECTED
   @State errorMessage: string = ''
@@ -291,7 +297,7 @@ export struct RDPDisplay {
       port: this.rdpPort,
       width: this.displayWidth,
       height: this.displayHeight,
-      colorDepth: 16
+      colorDepth: this.colorDepth
     }
     
     await this.rdpConnection.connect(config)

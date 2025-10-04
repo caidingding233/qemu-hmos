@@ -245,13 +245,16 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
+        # 设置 PKG_CONFIG_PATH 作为环境变量
+        export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH"
+        
         ../configure \
           --target-list=aarch64-softmmu \
           --cc="$CC" \
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
+          --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -D__aarch64__" \
           --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT}" \
           -Db_staticpic=true \
           -Db_pie=false \
