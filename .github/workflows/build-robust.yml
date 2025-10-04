@@ -471,6 +471,7 @@ jobs:
         
         export CFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH"
         export CXXFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH"
+        export CPPFLAGS="-I/usr/include/gnutls"
         export LDFLAGS="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu"
         
         # 确保环境变量正确设置
