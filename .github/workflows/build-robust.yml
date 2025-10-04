@@ -426,45 +426,47 @@ jobs:
         # 添加 gnutls 头文件路径，解决交叉编译问题
         # 先创建 posix_memalign_fallback.h 文件，供 configure 使用
         echo "Creating posix_memalign_fallback.h for configure phase"
-        echo '#ifndef POSIX_MEMALIGN_FALLBACK_H' > posix_memalign_fallback.h
-        echo '#define POSIX_MEMALIGN_FALLBACK_H' >> posix_memalign_fallback.h
-        echo '' >> posix_memalign_fallback.h
-        echo '#include <stdlib.h>' >> posix_memalign_fallback.h
-        echo '#include <errno.h>' >> posix_memalign_fallback.h
-        echo '#include <stdint.h>' >> posix_memalign_fallback.h
-        echo '' >> posix_memalign_fallback.h
-        echo '// Fallback implementation of posix_memalign for HarmonyOS musl' >> posix_memalign_fallback.h
-        echo 'static inline int posix_memalign_fallback(void **memptr, size_t alignment, size_t size) {' >> posix_memalign_fallback.h
-        echo '    if (alignment < sizeof(void*) || (alignment & (alignment - 1)) != 0) {' >> posix_memalign_fallback.h
-        echo '        return EINVAL;' >> posix_memalign_fallback.h
-        echo '    }' >> posix_memalign_fallback.h
-        echo '    ' >> posix_memalign_fallback.h
-        echo '    // Use aligned_alloc if available, otherwise use malloc + manual alignment' >> posix_memalign_fallback.h
-        echo '    #ifdef __GLIBC__' >> posix_memalign_fallback.h
-        echo '    *memptr = aligned_alloc(alignment, size);' >> posix_memalign_fallback.h
-        echo '    return *memptr ? 0 : ENOMEM;' >> posix_memalign_fallback.h
-        echo '    #else' >> posix_memalign_fallback.h
-        echo '    // Fallback: allocate extra space and align manually' >> posix_memalign_fallback.h
-        echo '    void *ptr = malloc(size + alignment - 1);' >> posix_memalign_fallback.h
-        echo '    if (!ptr) return ENOMEM;' >> posix_memalign_fallback.h
-        echo '    ' >> posix_memalign_fallback.h
-        echo '    uintptr_t addr = (uintptr_t)ptr;' >> posix_memalign_fallback.h
-        echo '    uintptr_t aligned = (addr + alignment - 1) & ~(alignment - 1);' >> posix_memalign_fallback.h
-        echo '    *memptr = (void*)aligned;' >> posix_memalign_fallback.h
-        echo '    return 0;' >> posix_memalign_fallback.h
-        echo '    #endif' >> posix_memalign_fallback.h
-        echo '}' >> posix_memalign_fallback.h
-        echo '' >> posix_memalign_fallback.h
-        echo '// Override posix_memalign if not available' >> posix_memalign_fallback.h
-        echo '#ifndef CONFIG_POSIX_MEMALIGN' >> posix_memalign_fallback.h
-        echo '#define posix_memalign posix_memalign_fallback' >> posix_memalign_fallback.h
-        echo '#endif' >> posix_memalign_fallback.h
-        echo '' >> posix_memalign_fallback.h
-        echo '#endif' >> posix_memalign_fallback.h
+        cat > posix_memalign_fallback.h << 'EOF'
+#ifndef POSIX_MEMALIGN_FALLBACK_H
+#define POSIX_MEMALIGN_FALLBACK_H
+
+#include <stdlib.h>
+#include <errno.h>
+#include <stdint.h>
+
+// Fallback implementation of posix_memalign for HarmonyOS musl
+static inline int posix_memalign_fallback(void **memptr, size_t alignment, size_t size) {
+    if (alignment < sizeof(void*) || (alignment & (alignment - 1)) != 0) {
+        return EINVAL;
+    }
+    
+    // Use aligned_alloc if available, otherwise use malloc + manual alignment
+    #ifdef __GLIBC__
+    *memptr = aligned_alloc(alignment, size);
+    return *memptr ? 0 : ENOMEM;
+    #else
+    // Fallback: allocate extra space and align manually
+    void *ptr = malloc(size + alignment - 1);
+    if (!ptr) return ENOMEM;
+    
+    uintptr_t addr = (uintptr_t)ptr;
+    uintptr_t aligned = (addr + alignment - 1) & ~(alignment - 1);
+    *memptr = (void*)aligned;
+    return 0;
+    #endif
+}
+
+// Override posix_memalign if not available
+#ifndef CONFIG_POSIX_MEMALIGN
+#define posix_memalign posix_memalign_fallback
+#endif
+
+#endif
+EOF
 
         export CFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h"
         export CXXFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h"
-        export LDFLAGS="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu"
+        export LDFLAGS="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu -Wl,--no-fix-cortex-a53-843419"
         
         # 确保环境变量正确设置
         export CC="$CC"
@@ -500,7 +502,7 @@ jobs:
           --cross-prefix="" \
               --extra-cflags="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h" \
               --extra-cxxflags="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h" \
-              --extra-ldflags="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu" \
+              --extra-ldflags="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu -Wl,--no-fix-cortex-a53-843419" \
           -Db_staticpic=true \
           -Ddefault_library=static \
           -Dtools=disabled \
