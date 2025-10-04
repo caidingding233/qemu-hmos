@@ -81,7 +81,7 @@ jobs:
       run: |
         set -e
         mkdir -p cross
-        cat > cross/aarch64-ohos.ini <<'EOF'
+        cat > cross/aarch64-ohos.ini <<EOF
         [binaries]
         c = '${CC}'
         cpp = '${CXX}'
@@ -105,6 +105,10 @@ jobs:
         c_link_args = ['--sysroot=${SYSROOT}']
         cpp_link_args = ['--sysroot=${SYSROOT}']
         EOF
+        echo "Cross file written to: $GITHUB_WORKSPACE/cross/aarch64-ohos.ini"
+        ls -la cross
+        echo "Preview:"
+        sed -n '1,25p' cross/aarch64-ohos.ini
 
     - name: Provide subprojects (glib/pcre2/libffi/pixman via wraps)
       run: |
@@ -122,12 +126,20 @@ jobs:
     - name: Build QEMU (鸿蒙版 UTM - ARM + X86 多目标)
       run: |
         set -e
+        CROSS_FILE="$GITHUB_WORKSPACE/cross/aarch64-ohos.ini"
+        echo "Using CROSS_FILE=$CROSS_FILE"
+        if [ ! -f "$CROSS_FILE" ]; then
+          echo "::error::Cross file not found at $CROSS_FILE"
+          ls -la "$GITHUB_WORKSPACE" || true
+          ls -la "$GITHUB_WORKSPACE/cross" || true
+          exit 1
+        fi
         cd third_party/qemu
         rm -rf build && mkdir build && cd build
         
         # 鸿蒙版 UTM 多目标构建：ARM + X86 一次搞定
         meson setup \
-          --cross-file=../../cross/aarch64-ohos.ini \
+          --cross-file="$CROSS_FILE" \
           --default-library=static \
           -Dtarget_list="aarch64-softmmu,x86_64-softmmu,i386-softmmu" \
           -Dcc="${CC}" \
