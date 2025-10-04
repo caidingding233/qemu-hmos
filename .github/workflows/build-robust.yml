@@ -81,7 +81,7 @@ jobs:
       run: |
         set -e
         mkdir -p cross
-        cat > cross/aarch64-ohos.ini <<EOF
+        cat > cross/aarch64-ohos.ini <<'EOF'
 [binaries]
 c = '${CC}'
 cpp = '${CXX}'
