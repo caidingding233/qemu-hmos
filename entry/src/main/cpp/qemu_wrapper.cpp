@@ -13,6 +13,10 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <sys/statvfs.h>
+#include <algorithm>
+#include <ctime>
+#include <chrono>
 
 // QEMU 虚拟机实例结构
 struct QemuVmInstance {
@@ -34,6 +38,26 @@ static std::map<qemu_vm_handle_t, std::unique_ptr<QemuVmInstance>> g_vm_instance
 static std::mutex g_vm_mutex;
 static bool g_qemu_initialized = false;
 
+// 检查磁盘空间
+static bool check_disk_space(const std::string& path, size_t required_bytes) {
+    struct statvfs stat;
+    if (statvfs(path.c_str(), &stat) != 0) {
+        return false;
+    }
+    
+    size_t available_bytes = stat.f_bavail * stat.f_frsize;
+    return available_bytes >= required_bytes;
+}
+
+// 获取磁盘空间信息
+static size_t get_available_disk_space(const std::string& path) {
+    struct statvfs stat;
+    if (statvfs(path.c_str(), &stat) != 0) {
+        return 0;
+    }
+    return stat.f_bavail * stat.f_frsize;
+}
+
 // 内部辅助函数
 static std::string build_qemu_command(const qemu_vm_config_t* config) {
     std::string cmd = "qemu-system-aarch64";
@@ -42,8 +66,15 @@ static std::string build_qemu_command(const qemu_vm_config_t* config) {
     cmd += " -name " + std::string(config->name ? config->name : "vm");
     cmd += " -machine " + std::string(config->machine_type ? config->machine_type : "virt");
     cmd += " -cpu " + std::string(config->cpu_type ? config->cpu_type : "cortex-a57");
-    cmd += " -m " + std::to_string(config->memory_mb > 0 ? config->memory_mb : 6144); // 默认6GB
-    cmd += " -smp " + std::to_string(config->cpu_count > 0 ? config->cpu_count : 4);   // 默认4核
+    // 内存配置（默认6GB，最大16GB）
+    int memory_mb = config->memory_mb > 0 ? config->memory_mb : 6144;
+    memory_mb = std::min(memory_mb, 16384); // 限制最大16GB
+    cmd += " -m " + std::to_string(memory_mb);
+    
+    // CPU配置（默认4核，最大8核）
+    int cpu_count = config->cpu_count > 0 ? config->cpu_count : 4;
+    cpu_count = std::min(cpu_count, 8); // 限制最大8核
+    cmd += " -smp " + std::to_string(cpu_count);
     
     // 加速模式
     if (config->accel_mode) {
@@ -116,6 +147,11 @@ static std::string build_qemu_command(const qemu_vm_config_t* config) {
 }
 
 static void monitor_qemu_process(QemuVmInstance* instance) {
+    int crash_count = 0;
+    const int max_crashes = 3;
+    const int crash_reset_time = 300; // 5分钟
+    auto last_crash_time = std::chrono::steady_clock::now();
+    
     while (!instance->should_stop) {
         if (instance->qemu_pid > 0) {
             int status;
@@ -123,12 +159,88 @@ static void monitor_qemu_process(QemuVmInstance* instance) {
             
             if (result == instance->qemu_pid) {
                 // QEMU 进程已退出
-                instance->state = QEMU_VM_STOPPED;
-                instance->qemu_pid = -1;
-                break;
+                auto now = std::chrono::steady_clock::now();
+                auto time_since_last_crash = std::chrono::duration_cast<std::chrono::seconds>(now - last_crash_time).count();
+                
+                // 重置崩溃计数（如果超过重置时间）
+                if (time_since_last_crash > crash_reset_time) {
+                    crash_count = 0;
+                }
+                
+                // 记录崩溃信息
+                std::ofstream log_file(instance->log_file, std::ios::app);
+                if (log_file.is_open()) {
+                    log_file << "[" << std::time(nullptr) << "] QEMU process exited with status: " << status << std::endl;
+                    if (WIFEXITED(status)) {
+                        log_file << "[" << std::time(nullptr) << "] Exit code: " << WEXITSTATUS(status) << std::endl;
+                    } else if (WIFSIGNALED(status)) {
+                        log_file << "[" << std::time(nullptr) << "] Killed by signal: " << WTERMSIG(status) << std::endl;
+                    }
+                }
+                log_file.close();
+                
+                // 检查是否需要自动重启
+                if (crash_count < max_crashes && !instance->should_stop) {
+                    crash_count++;
+                    last_crash_time = now;
+                    
+                    log_file.open(instance->log_file, std::ios::app);
+                    if (log_file.is_open()) {
+                        log_file << "[" << std::time(nullptr) << "] Attempting auto-restart (attempt " << crash_count << "/" << max_crashes << ")" << std::endl;
+                    }
+                    log_file.close();
+                    
+                    // 等待一段时间后重启
+                    std::this_thread::sleep_for(std::chrono::seconds(5));
+                    
+                    // 重新启动QEMU
+                    std::string cmd = build_qemu_command(&instance->config);
+                    pid_t new_pid = fork();
+                    if (new_pid == 0) {
+                        execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+                        _exit(1);
+                    } else if (new_pid > 0) {
+                        instance->qemu_pid = new_pid;
+                        instance->state = QEMU_VM_RUNNING;
+                        
+                        log_file.open(instance->log_file, std::ios::app);
+                        if (log_file.is_open()) {
+                            log_file << "[" << std::time(nullptr) << "] QEMU restarted with PID: " << new_pid << std::endl;
+                        }
+                        log_file.close();
+                    } else {
+                        instance->state = QEMU_VM_ERROR;
+                        log_file.open(instance->log_file, std::ios::app);
+                        if (log_file.is_open()) {
+                            log_file << "[" << std::time(nullptr) << "] Failed to restart QEMU" << std::endl;
+                        }
+                        log_file.close();
+                        break;
+                    }
+                } else {
+                    // 超过最大重启次数或手动停止
+                    instance->state = QEMU_VM_STOPPED;
+                    instance->qemu_pid = -1;
+                    
+                    log_file.open(instance->log_file, std::ios::app);
+                    if (log_file.is_open()) {
+                        if (crash_count >= max_crashes) {
+                            log_file << "[" << std::time(nullptr) << "] Max restart attempts reached, giving up" << std::endl;
+                        } else {
+                            log_file << "[" << std::time(nullptr) << "] VM stopped manually" << std::endl;
+                        }
+                    }
+                    log_file.close();
+                    break;
+                }
             } else if (result == -1) {
                 // 等待出错
                 instance->state = QEMU_VM_ERROR;
+                std::ofstream log_file(instance->log_file, std::ios::app);
+                if (log_file.is_open()) {
+                    log_file << "[" << std::time(nullptr) << "] Error waiting for QEMU process: " << strerror(errno) << std::endl;
+                }
+                log_file.close();
                 break;
             }
         }
@@ -227,6 +339,17 @@ int qemu_vm_start(qemu_vm_handle_t handle) {
     auto& instance = it->second;
     if (instance->state == QEMU_VM_RUNNING) {
         return 0; // 已在运行
+    }
+    
+    // 检查磁盘空间
+    size_t required_space = instance->config.disk_size_gb * 1024 * 1024 * 1024; // 转换为字节
+    std::string disk_path = instance->config.disk_path ? instance->config.disk_path : "/data/storage/el2/base/haps/entry/files/vm_disks/";
+    
+    if (!check_disk_space(disk_path, required_space)) {
+        size_t available_space = get_available_disk_space(disk_path);
+        std::cerr << "Insufficient disk space. Required: " << required_space 
+                  << " bytes, Available: " << available_space << " bytes" << std::endl;
+        return -2; // 磁盘空间不足
     }
     
     // 构建 QEMU 命令

@@ -7,6 +7,7 @@ let qemu: any = null;
 import type { CoreDiag } from '../types/qemu'
 import picker from '@ohos.file.picker'
 import fs from '@ohos.file.fs'
+import os from '@ohos.os'
 import { VmStore, type VMMetaPersist } from '../managers/VmStore'
 
 
@@ -1245,12 +1246,66 @@ struct Index {
       AlertDialog.show({
         title: '设备能力检测',
         message: capabilities.join('\n'),
-        primaryButton: { value: '确定', action: () => {} }
+        primaryButton: { value: '确定', action: () => {} },
+        secondaryButton: { value: '导出日志', action: () => this.exportLogs() }
       })
     } catch (e) {
       AlertDialog.show({
         title: '检测失败',
         message: `设备能力检测失败: ${e}`,
+        primaryButton: { value: '确定', action: () => {} }
+      })
+    }
+  }
+
+  // 导出日志
+  async exportLogs() {
+    try {
+      const ctx: common.UIAbilityContext = getContext(this) as common.UIAbilityContext
+      const rm = ctx.resourceManager
+      
+      // 获取设备能力信息
+      const capabilities = qemu.getDeviceCapabilities()
+      
+      // 获取VM日志
+      const vmLogs = qemu.getVmLogs('default-vm')
+      
+      // 构建日志内容
+      const logContent = [
+        '=== QEMU-HMOS 系统日志 ===',
+        `导出时间: ${new Date().toISOString()}`,
+        '',
+        '=== 设备能力 ===',
+        `KVM支持: ${capabilities.kvmSupported}`,
+        `JIT支持: ${capabilities.jitSupported}`,
+        `总内存: ${Math.round(capabilities.totalMemory / 1024 / 1024 / 1024)}GB`,
+        `CPU核心: ${capabilities.cpuCores}`,
+        '',
+        '=== VM日志 ===',
+        ...vmLogs,
+        '',
+        '=== 系统信息 ===',
+        `HarmonyOS版本: ${os.getProperty('os.version')}`,
+        `设备型号: ${os.getProperty('os.name')}`,
+        `架构: ${os.getProperty('os.arch')}`
+      ].join('\n')
+      
+      // 保存日志文件
+      const logPath = '/data/storage/el2/base/haps/entry/files/qemu_logs.txt'
+      const file = await fileIo.open(logPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY)
+      await fileIo.write(file.fd, new TextEncoder().encode(logContent))
+      await fileIo.close(file.fd)
+      
+      AlertDialog.show({
+        title: '日志导出成功',
+        message: `日志已保存到: ${logPath}`,
+        primaryButton: { value: '确定', action: () => {} }
+      })
+      
+    } catch (e) {
+      AlertDialog.show({
+        title: '日志导出失败',
+        message: `导出失败: ${e}`,
         primaryButton: { value: '确定', action: () => {} }
       })
     }

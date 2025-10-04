@@ -32,6 +32,12 @@ export const stopVm: (name: string) => boolean;
 export const getVmLogs: (name: string, startLine?: number) => string[];
 export const getVmStatus: (name: string) => string;
 export const getDeviceCapabilities: () => DeviceCapabilities;
+export const pauseVm: (name: string) => boolean;
+export const resumeVm: (name: string) => boolean;
+export const createSnapshot: (name: string, snapshotName: string) => boolean;
+export const restoreSnapshot: (name: string, snapshotName: string) => boolean;
+export const listSnapshots: (name: string) => string[];
+export const deleteSnapshot: (name: string, snapshotName: string) => boolean;
 
 declare const _default: {
   version: typeof version;
@@ -42,5 +48,11 @@ declare const _default: {
   getVmLogs: typeof getVmLogs;
   getVmStatus: typeof getVmStatus;
   getDeviceCapabilities: typeof getDeviceCapabilities;
+  pauseVm: typeof pauseVm;
+  resumeVm: typeof resumeVm;
+  createSnapshot: typeof createSnapshot;
+  restoreSnapshot: typeof restoreSnapshot;
+  listSnapshots: typeof listSnapshots;
+  deleteSnapshot: typeof deleteSnapshot;
 };
 export default _default;

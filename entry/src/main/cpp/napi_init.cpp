@@ -197,6 +197,164 @@ static napi_value GetDeviceCapabilities(napi_env env, napi_callback_info info) {
     return result;
 }
 
+// 暂停VM
+static napi_value PauseVm(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "Missing VM name parameter");
+        return nullptr;
+    }
+    
+    char vm_name[256];
+    size_t name_len;
+    napi_get_value_string_utf8(env, args[0], vm_name, sizeof(vm_name), &name_len);
+    
+    // 这里应该实现真正的暂停逻辑
+    // 目前返回模拟结果
+    bool success = true;
+    
+    napi_value result;
+    napi_get_boolean(env, success, &result);
+    return result;
+}
+
+// 恢复VM
+static napi_value ResumeVm(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "Missing VM name parameter");
+        return nullptr;
+    }
+    
+    char vm_name[256];
+    size_t name_len;
+    napi_get_value_string_utf8(env, args[0], vm_name, sizeof(vm_name), &name_len);
+    
+    // 这里应该实现真正的恢复逻辑
+    // 目前返回模拟结果
+    bool success = true;
+    
+    napi_value result;
+    napi_get_boolean(env, success, &result);
+    return result;
+}
+
+// 创建快照
+static napi_value CreateSnapshot(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "Missing VM name and snapshot name parameters");
+        return nullptr;
+    }
+    
+    char vm_name[256];
+    char snapshot_name[256];
+    size_t name_len;
+    napi_get_value_string_utf8(env, args[0], vm_name, sizeof(vm_name), &name_len);
+    napi_get_value_string_utf8(env, args[1], snapshot_name, sizeof(snapshot_name), &name_len);
+    
+    // 这里应该实现真正的快照创建逻辑
+    // 目前返回模拟结果
+    bool success = true;
+    
+    napi_value result;
+    napi_get_boolean(env, success, &result);
+    return result;
+}
+
+// 恢复快照
+static napi_value RestoreSnapshot(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "Missing VM name and snapshot name parameters");
+        return nullptr;
+    }
+    
+    char vm_name[256];
+    char snapshot_name[256];
+    size_t name_len;
+    napi_get_value_string_utf8(env, args[0], vm_name, sizeof(vm_name), &name_len);
+    napi_get_value_string_utf8(env, args[1], snapshot_name, sizeof(snapshot_name), &name_len);
+    
+    // 这里应该实现真正的快照恢复逻辑
+    // 目前返回模拟结果
+    bool success = true;
+    
+    napi_value result;
+    napi_get_boolean(env, success, &result);
+    return result;
+}
+
+// 列出快照
+static napi_value ListSnapshots(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "Missing VM name parameter");
+        return nullptr;
+    }
+    
+    char vm_name[256];
+    size_t name_len;
+    napi_get_value_string_utf8(env, args[0], vm_name, sizeof(vm_name), &name_len);
+    
+    // 这里应该实现真正的快照列表逻辑
+    // 目前返回模拟结果
+    const char* snapshots[] = {"snapshot1", "snapshot2", "snapshot3"};
+    int count = 3;
+    
+    napi_value result;
+    napi_create_array_with_length(env, count, &result);
+    
+    for (int i = 0; i < count; i++) {
+        napi_value snapshot;
+        napi_create_string_utf8(env, snapshots[i], NAPI_AUTO_LENGTH, &snapshot);
+        napi_set_element(env, result, i, snapshot);
+    }
+    
+    return result;
+}
+
+// 删除快照
+static napi_value DeleteSnapshot(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "Missing VM name and snapshot name parameters");
+        return nullptr;
+    }
+    
+    char vm_name[256];
+    char snapshot_name[256];
+    size_t name_len;
+    napi_get_value_string_utf8(env, args[0], vm_name, sizeof(vm_name), &name_len);
+    napi_get_value_string_utf8(env, args[1], snapshot_name, sizeof(snapshot_name), &name_len);
+    
+    // 这里应该实现真正的快照删除逻辑
+    // 目前返回模拟结果
+    bool success = true;
+    
+    napi_value result;
+    napi_get_boolean(env, success, &result);
+    return result;
+}
+
 // 解析VM配置参数
 static VMConfig ParseVMConfig(napi_env env, napi_value config, bool &ok) {
     VMConfig vmConfig = {};
@@ -1563,6 +1721,12 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "getVmStatus", 0, GetVmStatus, 0, 0, 0, napi_default, 0 },
         { "checkCoreLib", 0, CheckCoreLib, 0, 0, 0, napi_default, 0 },
         { "getDeviceCapabilities", 0, GetDeviceCapabilities, 0, 0, 0, napi_default, 0 },
+        { "pauseVm", 0, PauseVm, 0, 0, 0, napi_default, 0 },
+        { "resumeVm", 0, ResumeVm, 0, 0, 0, napi_default, 0 },
+        { "createSnapshot", 0, CreateSnapshot, 0, 0, 0, napi_default, 0 },
+        { "restoreSnapshot", 0, RestoreSnapshot, 0, 0, 0, napi_default, 0 },
+        { "listSnapshots", 0, ListSnapshots, 0, 0, 0, napi_default, 0 },
+        { "deleteSnapshot", 0, DeleteSnapshot, 0, 0, 0, napi_default, 0 },
         { "createRdpClient", 0, CreateRdpClient, 0, 0, 0, napi_default, 0 },
         { "connectRdp", 0, ConnectRdp, 0, 0, 0, napi_default, 0 },
         { "disconnectRdp", 0, DisconnectRdp, 0, 0, 0, napi_default, 0 },
