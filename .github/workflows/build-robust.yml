@@ -231,12 +231,6 @@ jobs:
     - name: Find gnutls headers
       run: |
         echo "=== 查找 gnutls 头文件位置 ==="
-        echo "Searching for gnutls/gnutls.h:"
-        find /usr -name "gnutls.h" 2>/dev/null | head -10
-        echo ""
-        echo "Searching for gnutls directories:"
-        find /usr -type d -name "*gnutls*" 2>/dev/null | head -10
-        echo ""
         echo "Checking common gnutls locations:"
         [ -f "/usr/include/gnutls/gnutls.h" ] && echo "✓ /usr/include/gnutls/gnutls.h exists" || echo "✗ /usr/include/gnutls/gnutls.h missing"
         [ -f "/usr/include/x86_64-linux-gnu/gnutls/gnutls.h" ] && echo "✓ /usr/include/x86_64-linux-gnu/gnutls/gnutls.h exists" || echo "✗ /usr/include/x86_64-linux-gnu/gnutls/gnutls.h missing"
@@ -244,6 +238,21 @@ jobs:
         echo ""
         echo "Installed gnutls packages:"
         dpkg -l | grep gnutls || echo "No gnutls packages found"
+        echo ""
+        echo "=== 设置 gnutls 头文件路径 ==="
+        if [ -f "/usr/include/gnutls/gnutls.h" ]; then
+          echo "GNUTLS_HEADER_PATH=/usr/include/gnutls" >> $GITHUB_ENV
+          echo "✓ Using /usr/include/gnutls"
+        elif [ -f "/usr/include/x86_64-linux-gnu/gnutls/gnutls.h" ]; then
+          echo "GNUTLS_HEADER_PATH=/usr/include/x86_64-linux-gnu/gnutls" >> $GITHUB_ENV
+          echo "✓ Using /usr/include/x86_64-linux-gnu/gnutls"
+        elif [ -f "/usr/lib/x86_64-linux-gnu/gnutls/gnutls.h" ]; then
+          echo "GNUTLS_HEADER_PATH=/usr/lib/x86_64-linux-gnu/gnutls" >> $GITHUB_ENV
+          echo "✓ Using /usr/lib/x86_64-linux-gnu/gnutls"
+        else
+          echo "❌ No gnutls headers found, will try to disable gnutls"
+          echo "GNUTLS_HEADER_PATH=" >> $GITHUB_ENV
+        fi
 
     - name: Setup environment and test
       run: |
@@ -498,30 +507,16 @@ jobs:
         FALLBACK_H_PATH="$(pwd)/posix_memalign_fallback.h"
         echo "Fallback header path: $FALLBACK_H_PATH"
         
-        # 动态查找 gnutls 头文件路径
-        echo "=== 动态查找 gnutls 头文件路径 ==="
-        GNUTLS_INCLUDE_PATHS=""
-        for path in "/usr/include/gnutls" "/usr/include/x86_64-linux-gnu/gnutls" "/usr/lib/x86_64-linux-gnu/gnutls"; do
-          if [ -d "$path" ] && [ -f "$path/gnutls.h" ]; then
-            echo "✓ Found gnutls headers at: $path"
-            GNUTLS_INCLUDE_PATHS="$GNUTLS_INCLUDE_PATHS -I$path"
-          else
-            echo "✗ Not found at: $path"
-          fi
-        done
+        # 使用环境变量中的 gnutls 头文件路径
+        echo "=== 使用 gnutls 头文件路径 ==="
+        echo "GNUTLS_HEADER_PATH from previous step: $GNUTLS_HEADER_PATH"
         
-        if [ -z "$GNUTLS_INCLUDE_PATHS" ]; then
-          echo "❌ No gnutls headers found, trying to find any gnutls.h file:"
-          GNUTLS_H_PATH=$(find /usr -name "gnutls.h" 2>/dev/null | head -1)
-          if [ -n "$GNUTLS_H_PATH" ]; then
-            GNUTLS_DIR=$(dirname "$GNUTLS_H_PATH")
-            echo "✓ Found gnutls.h at: $GNUTLS_H_PATH"
-            echo "✓ Using include directory: $GNUTLS_DIR"
-            GNUTLS_INCLUDE_PATHS="-I$GNUTLS_DIR"
-          else
-            echo "❌ No gnutls.h file found anywhere"
-            exit 1
-          fi
+        if [ -n "$GNUTLS_HEADER_PATH" ] && [ -f "$GNUTLS_HEADER_PATH/gnutls.h" ]; then
+          GNUTLS_INCLUDE_PATHS="-I$GNUTLS_HEADER_PATH"
+          echo "✓ Using gnutls headers from: $GNUTLS_HEADER_PATH"
+        else
+          echo "❌ No valid gnutls headers found, will disable gnutls support"
+          GNUTLS_INCLUDE_PATHS=""
         fi
         
         echo "Final gnutls include paths: $GNUTLS_INCLUDE_PATHS"
@@ -559,6 +554,15 @@ jobs:
         
         # 设置 PKG_CONFIG_PATH 作为环境变量（不是 configure 参数）
         export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH"
+        
+        # 根据 gnutls 头文件可用性决定是否启用 gnutls
+        if [ -n "$GNUTLS_INCLUDE_PATHS" ]; then
+          GNUTLS_OPTION="--enable-gnutls"
+          echo "✓ Enabling gnutls support"
+        else
+          GNUTLS_OPTION="--disable-gnutls"
+          echo "⚠️ Disabling gnutls support (headers not found)"
+        fi
         
         # 运行 configure 并捕获退出码
         if ! ../configure \
@@ -601,7 +605,7 @@ jobs:
           --disable-libssh \
           --disable-nettle \
           --disable-gcrypt \
-          --enable-gnutls; then
+          $GNUTLS_OPTION; then
             echo "❌ Configure failed, showing detailed logs:"
             echo "=== config.log content ==="
             if [ -f "config.log" ]; then
