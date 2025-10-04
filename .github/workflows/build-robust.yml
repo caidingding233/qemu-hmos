@@ -384,6 +384,7 @@ jobs:
           -Db_staticpic=true \
           -Ddefault_library=static \
           -Dtools=disabled \
+          -DCONFIG_POSIX_MEMALIGN=true \
           --enable-tcg \
           --disable-kvm \
           --disable-xen \
