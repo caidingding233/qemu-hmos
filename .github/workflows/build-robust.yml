@@ -368,21 +368,21 @@ jobs:
         echo "=== Testing posix_memalign availability ==="
         # 测试 posix_memalign 是否可用
         cat > test_memalign.c << 'EOF'
-#include <stdlib.h>
-#include <stdio.h>
-int main() {
-    void *ptr;
-    int ret = posix_memalign(&ptr, 16, 1024);
-    if (ret == 0) {
-        printf("posix_memalign available\n");
-        free(ptr);
-        return 0;
-    } else {
-        printf("posix_memalign failed: %d\n", ret);
-        return 1;
-    }
-}
-EOF
+        #include <stdlib.h>
+        #include <stdio.h>
+        int main() {
+            void *ptr;
+            int ret = posix_memalign(&ptr, 16, 1024);
+            if (ret == 0) {
+                printf("posix_memalign available\n");
+                free(ptr);
+                return 0;
+            } else {
+                printf("posix_memalign failed: %d\n", ret);
+                return 1;
+            }
+        }
+        EOF
         
         if "$CC" -o test_memalign test_memalign.c 2>/dev/null && ./test_memalign; then
             echo "✅ posix_memalign is available"
