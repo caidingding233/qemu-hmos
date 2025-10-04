@@ -2,9 +2,6 @@ name: Build QEMU-HMOS (Simplified)
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 jobs:
   build:
