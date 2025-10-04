@@ -366,7 +366,7 @@ jobs:
         
         echo ""
         echo "=== Testing posix_memalign availability ==="
-        # 测试 posix_memalign 是否可用
+        # 测试 posix_memalign 是否可用（跳过执行测试，因为交叉编译）
         cat > test_memalign.c << 'EOF'
         #include <stdlib.h>
         #include <stdio.h>
@@ -384,14 +384,41 @@ jobs:
         }
         EOF
         
-        if "$CC" -o test_memalign test_memalign.c 2>/dev/null && ./test_memalign; then
-            echo "✅ posix_memalign is available"
+        # 只测试编译，不执行（因为交叉编译）
+        if "$CC" -o test_memalign test_memalign.c 2>/dev/null; then
+            echo "✅ posix_memalign compiles successfully"
             export POSIX_MEMALIGN_AVAILABLE=1
         else
-            echo "⚠️ posix_memalign not available, will use fallback"
+            echo "⚠️ posix_memalign compilation failed, will use fallback"
             export POSIX_MEMALIGN_AVAILABLE=0
         fi
         rm -f test_memalign.c test_memalign
+        
+        echo ""
+        echo "=== Testing compiler availability ==="
+        # 测试编译器是否真的可用
+        echo "Testing CC: $CC"
+        if [ -f "$CC" ]; then
+            echo "✅ CC exists: $CC"
+            file "$CC"
+            "$CC" --version 2>&1 | head -3 || echo "CC version check failed"
+        else
+            echo "❌ CC not found: $CC"
+            echo "Available files in llvm/bin:"
+            ls -la "$(dirname "$CC")" || echo "Cannot list llvm/bin"
+            exit 1
+        fi
+        
+        echo ""
+        echo "Testing CXX: $CXX"
+        if [ -f "$CXX" ]; then
+            echo "✅ CXX exists: $CXX"
+            file "$CXX"
+            "$CXX" --version 2>&1 | head -3 || echo "CXX version check failed"
+        else
+            echo "❌ CXX not found: $CXX"
+            exit 1
+        fi
         
         echo ""
         echo "=== Running Configure ==="
