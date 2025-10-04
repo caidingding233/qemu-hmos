@@ -605,12 +605,12 @@ EOF
         echo "=== Creating libqemu_full.so ==="
         # 创建 libqemu_full.so 用于鸿蒙 App
         if [ -f "qemu-system-aarch64" ]; then
-          echo "Creating libqemu_full.so from qemu-system-aarch64..."
-          cp qemu-system-aarch64 libqemu_full.so
-          echo "✓ libqemu_full.so created successfully"
-          ls -la libqemu_full.so
+            echo "Creating libqemu_full.so from qemu-system-aarch64..."
+            cp qemu-system-aarch64 libqemu_full.so
+            echo "✓ libqemu_full.so created successfully"
+            ls -la libqemu_full.so
         else
-          echo "✗ qemu-system-aarch64 not found, cannot create libqemu_full.so"
+            echo "✗ qemu-system-aarch64 not found, cannot create libqemu_full.so"
         fi
 
     - name: Upload artifacts
