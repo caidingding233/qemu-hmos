@@ -493,8 +493,8 @@ EOF
         # 启用 configure 的详细日志
         export CONFIGURE_DEBUG=1
         
-            # 运行 configure 并捕获退出码
-            if ! ../configure \
+        # 运行 configure 并捕获退出码
+        if ! ../configure \
               --target-list=aarch64-softmmu \
               --cc="$CC" \
               --cxx="$CXX" \
@@ -535,18 +535,18 @@ EOF
               --disable-nettle \
               --disable-gcrypt \
               --enable-gnutls; then
-                echo "❌ Configure failed, showing detailed logs:"
-                echo "=== config.log content ==="
-                if [ -f "config.log" ]; then
-                    cat config.log
-                else
-                    echo "config.log not found"
-                fi
-                echo "=== End of config.log ==="
-                exit 1
+            echo "❌ Configure failed, showing detailed logs:"
+            echo "=== config.log content ==="
+            if [ -f "config.log" ]; then
+                cat config.log
+            else
+                echo "config.log not found"
             fi
-            
-            echo "✅ Configure completed!"
+            echo "=== End of config.log ==="
+            exit 1
+        fi
+        
+        echo "✅ Configure completed!"
         
         echo "=== Fixing posix_memalign detection ==="
         # 华为 SDK 有 posix_memalign 声明但没有实现，我们需要强制启用
