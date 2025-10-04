@@ -429,6 +429,16 @@ jobs:
         export CXXFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h"
         export LDFLAGS="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu"
         
+        # 确保环境变量正确设置
+        export CC="$CC"
+        export CXX="$CXX"
+        export PATH="$(dirname "$CC"):$PATH"
+        
+        echo "Final environment before configure:"
+        echo "CC: $CC"
+        echo "CXX: $CXX"
+        echo "PATH: $PATH"
+        
         ../configure \
           --target-list=aarch64-softmmu \
           --cc="$CC" \
