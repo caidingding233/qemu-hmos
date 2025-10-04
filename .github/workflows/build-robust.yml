@@ -31,7 +31,8 @@ jobs:
                               libpcre2-dev pkg-config meson tree \
                               binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
                               libc6-dev libc6-dev-arm64-cross \
-                              libgnutls-openssl-dev  # 添加gnutls openssl支持
+                              libgnutls-openssl-dev libgnutls30-dev \
+                              gnutls-dev libgnutls28-dev  # 确保gnutls开发包完整安装
 
     - name: Download and setup SDK
       run: |
@@ -215,6 +216,23 @@ jobs:
         [ -f "$SYSROOT/usr/include/limits.h" ] && echo "✓ limits.h exists" || echo "✗ limits.h missing"
         [ -d "$SYSROOT/usr/include/bits" ] && echo "✓ bits directory exists" || echo "✗ bits directory missing"
         [ -f "$SYSROOT/usr/include/bits/limits.h" ] && echo "✓ bits/limits.h exists" || echo "✗ bits/limits.h missing"
+
+    - name: Find gnutls headers
+      run: |
+        echo "=== 查找 gnutls 头文件位置 ==="
+        echo "Searching for gnutls/gnutls.h:"
+        find /usr -name "gnutls.h" 2>/dev/null | head -10
+        echo ""
+        echo "Searching for gnutls directories:"
+        find /usr -type d -name "*gnutls*" 2>/dev/null | head -10
+        echo ""
+        echo "Checking common gnutls locations:"
+        [ -f "/usr/include/gnutls/gnutls.h" ] && echo "✓ /usr/include/gnutls/gnutls.h exists" || echo "✗ /usr/include/gnutls/gnutls.h missing"
+        [ -f "/usr/include/x86_64-linux-gnu/gnutls/gnutls.h" ] && echo "✓ /usr/include/x86_64-linux-gnu/gnutls/gnutls.h exists" || echo "✗ /usr/include/x86_64-linux-gnu/gnutls/gnutls.h missing"
+        [ -f "/usr/lib/x86_64-linux-gnu/gnutls/gnutls.h" ] && echo "✓ /usr/lib/x86_64-linux-gnu/gnutls/gnutls.h exists" || echo "✗ /usr/lib/x86_64-linux-gnu/gnutls/gnutls.h missing"
+        echo ""
+        echo "Installed gnutls packages:"
+        dpkg -l | grep gnutls || echo "No gnutls packages found"
 
     - name: Setup environment and test
       run: |
@@ -469,9 +487,37 @@ jobs:
         FALLBACK_H_PATH="$(pwd)/posix_memalign_fallback.h"
         echo "Fallback header path: $FALLBACK_H_PATH"
         
-        export CFLAGS="-march=armv8-a -I/usr/include/gnutls -I/usr/include/x86_64-linux-gnu/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH"
-        export CXXFLAGS="-march=armv8-a -I/usr/include/gnutls -I/usr/include/x86_64-linux-gnu/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH"
-        export CPPFLAGS="-I/usr/include/gnutls -I/usr/include/x86_64-linux-gnu/gnutls"
+        # 动态查找 gnutls 头文件路径
+        echo "=== 动态查找 gnutls 头文件路径 ==="
+        GNUTLS_INCLUDE_PATHS=""
+        for path in "/usr/include/gnutls" "/usr/include/x86_64-linux-gnu/gnutls" "/usr/lib/x86_64-linux-gnu/gnutls"; do
+          if [ -d "$path" ] && [ -f "$path/gnutls.h" ]; then
+            echo "✓ Found gnutls headers at: $path"
+            GNUTLS_INCLUDE_PATHS="$GNUTLS_INCLUDE_PATHS -I$path"
+          else
+            echo "✗ Not found at: $path"
+          fi
+        done
+        
+        if [ -z "$GNUTLS_INCLUDE_PATHS" ]; then
+          echo "❌ No gnutls headers found, trying to find any gnutls.h file:"
+          GNUTLS_H_PATH=$(find /usr -name "gnutls.h" 2>/dev/null | head -1)
+          if [ -n "$GNUTLS_H_PATH" ]; then
+            GNUTLS_DIR=$(dirname "$GNUTLS_H_PATH")
+            echo "✓ Found gnutls.h at: $GNUTLS_H_PATH"
+            echo "✓ Using include directory: $GNUTLS_DIR"
+            GNUTLS_INCLUDE_PATHS="-I$GNUTLS_DIR"
+          else
+            echo "❌ No gnutls.h file found anywhere"
+            exit 1
+          fi
+        fi
+        
+        echo "Final gnutls include paths: $GNUTLS_INCLUDE_PATHS"
+        
+        export CFLAGS="-march=armv8-a $GNUTLS_INCLUDE_PATHS -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH"
+        export CXXFLAGS="-march=armv8-a $GNUTLS_INCLUDE_PATHS -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH"
+        export CPPFLAGS="$GNUTLS_INCLUDE_PATHS"
         export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH"
         export LDFLAGS="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu"
         
@@ -510,8 +556,8 @@ jobs:
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="-march=armv8-a -I/usr/include/gnutls -I/usr/include/x86_64-linux-gnu/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH -D__aarch64__" \
-          --extra-cxxflags="-march=armv8-a -I/usr/include/gnutls -I/usr/include/x86_64-linux-gnu/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH -D__aarch64__" \
+          --extra-cflags="-march=armv8-a $GNUTLS_INCLUDE_PATHS -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH -D__aarch64__" \
+          --extra-cxxflags="-march=armv8-a $GNUTLS_INCLUDE_PATHS -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH -D__aarch64__" \
           --extra-ldflags="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu" \
           -Db_staticpic=true \
           -Ddefault_library=static \
