@@ -19,7 +19,30 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential curl wget unzip python3 \
-                                ninja-build meson pkg-config git ca-certificates
+                                pkg-config git ca-certificates
+
+    - name: Setup Python (for Meson/Ninja)
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install Meson>=1.6 & Ninja, and lock PATH
+      run: |
+        python -m pip install --upgrade --user 'meson>=1.6.0' 'ninja>=1.11'
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        MESON_BIN="$(python -c 'import shutil;print(shutil.which("meson"))')"
+        NINJA_BIN="$(python -c 'import shutil;print(shutil.which("ninja"))')"
+        echo "MESON=$MESON_BIN" >> $GITHUB_ENV
+        echo "NINJA=$NINJA_BIN" >> $GITHUB_ENV
+        echo "Using MESON=$MESON_BIN"
+        echo "Using NINJA=$NINJA_BIN"
+        "$MESON_BIN" --version
+        "$NINJA_BIN" --version
+        # Hard guard: fail if < 1.5
+        if ! "$MESON_BIN" --version | awk '{split($1,a,"."); exit !((a[1] > 1) || (a[1]==1 && a[2]>=5));}'; then
+          echo "::error::Meson too old"; exit 1; fi
+        type -a meson || true
 
     - name: Download HarmonyOS/OpenHarmony NDK (linux)
       run: |
@@ -87,7 +110,7 @@ jobs:
         cpp = '${CXX}'
         ar = '${AR}'
         strip = '${STRIP}'
-        pkgconfig = 'pkg-config'
+        pkg-config = 'pkg-config'
         ld = '${CC}'
 
         [host_machine]
@@ -96,10 +119,8 @@ jobs:
         cpu = 'armv8'
         endian = 'little'
 
-        [paths]
-        sys_root = '${SYSROOT}'
-
         [built-in options]
+        sys_root = '${SYSROOT}'
         c_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
         cpp_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
         c_link_args = ['--sysroot=${SYSROOT}']
@@ -108,24 +129,30 @@ jobs:
         echo "Cross file written to: $GITHUB_WORKSPACE/cross/aarch64-ohos.ini"
         ls -la cross
         echo "Preview:"
-        sed -n '1,25p' cross/aarch64-ohos.ini
+        sed -n '1,80p' cross/aarch64-ohos.ini
 
     - name: Provide subprojects (glib/pcre2/libffi/pixman via wraps)
       run: |
         set -e
         cd third_party/qemu
         mkdir -p subprojects
-        # 用 wrapdb 安装依赖（交叉编译时 Meson 会按 cross file 构建）
-        meson wrap install glib
-        meson wrap install pcre2
-        meson wrap install libffi
-        meson wrap install pixman
-        # 保险：若网络抖，可重复尝试
+        "$MESON" wrap install glib
+        "$MESON" wrap install pcre2
+        "$MESON" wrap install libffi
+        "$MESON" wrap install pixman
         ls -la subprojects
 
     - name: Build QEMU (鸿蒙版 UTM - ARM + X86 多目标)
       run: |
         set -e
+        echo "MESON is $MESON"
+        echo "NINJA is $NINJA"
+        if [ ! -x "$MESON" ]; then
+          echo "::error::MESON not found or not executable at $MESON"
+          which meson || true
+          ls -la "$HOME/.local/bin" || true
+          exit 1
+        fi
         CROSS_FILE="$GITHUB_WORKSPACE/cross/aarch64-ohos.ini"
         echo "Using CROSS_FILE=$CROSS_FILE"
         if [ ! -f "$CROSS_FILE" ]; then
@@ -138,7 +165,7 @@ jobs:
         rm -rf build && mkdir build && cd build
         
         # 鸿蒙版 UTM 多目标构建：ARM + X86 一次搞定
-        meson setup \
+        "$MESON" setup \
           --cross-file="$CROSS_FILE" \
           --default-library=static \
           -Dtarget_list="aarch64-softmmu,x86_64-softmmu,i386-softmmu" \
@@ -167,7 +194,7 @@ jobs:
           ..
 
         # 构建所有目标
-        ninja -v -j"$(nproc)"
+        "$NINJA" -v -j"$(nproc)"
 
         # 产物检查 - 鸿蒙版 UTM 多架构支持
         echo "=== 构建产物检查 ==="
