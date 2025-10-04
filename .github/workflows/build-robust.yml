@@ -439,6 +439,21 @@ jobs:
         echo "CXX: $CXX"
         echo "PATH: $PATH"
         
+        # 测试编译器是否能正常工作
+        echo "Testing compiler with simple test:"
+        echo 'int main() { return 0; }' > test_cc.c
+        if "$CC" -o test_cc test_cc.c 2>&1; then
+            echo "✅ CC test compilation successful"
+        else
+            echo "❌ CC test compilation failed"
+            echo "CC output:"
+            "$CC" -o test_cc test_cc.c 2>&1 || true
+        fi
+        rm -f test_cc.c test_cc
+        
+        # 启用 configure 的详细日志
+        export CONFIGURE_DEBUG=1
+        
         ../configure \
           --target-list=aarch64-softmmu \
           --cc="$CC" \
@@ -482,6 +497,19 @@ jobs:
           --enable-gnutls
         
         echo "✅ Configure completed!"
+        
+        # 如果 configure 失败，显示详细日志
+        if [ $? -ne 0 ]; then
+            echo "❌ Configure failed, showing detailed logs:"
+            echo "=== config.log content ==="
+            if [ -f "config.log" ]; then
+                tail -50 config.log
+            else
+                echo "config.log not found"
+            fi
+            echo "=== End of config.log ==="
+            exit 1
+        fi
         
         echo "=== Fixing posix_memalign detection ==="
         # 华为 SDK 有 posix_memalign 声明但没有实现，我们需要强制启用
