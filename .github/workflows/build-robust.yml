@@ -24,13 +24,15 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
+        sudo apt-get update
         sudo apt-get install -y build-essential cmake curl wget unzip python3 \
                               libglib2.0-dev libpixman-1-dev libssl-dev \
                               libcurl4-openssl-dev libssh-dev libgnutls28-dev \
                               libsasl2-dev libpam0g-dev libbz2-dev libzstd-dev \
                               libpcre2-dev pkg-config meson tree \
                               binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
-                              libc6-dev libc6-dev-arm64-cross  # 添加aarch64头文件
+                              libc6-dev libc6-dev-arm64-cross \
+                              libgnutls30-dev libgnutls-openssl27-dev  # 添加更多gnutls支持
 
     - name: Download and setup SDK
       run: |
@@ -366,10 +368,10 @@ jobs:
         echo ""
         echo "=== Running Configure ==="
         # 使用华为的编译器包装脚本，让它自动处理 musl 头文件
-        # 不手动设置 CFLAGS，让华为的编译器脚本处理
-        export CFLAGS="-march=armv8-a"
-        export CXXFLAGS="-march=armv8-a"
-        export LDFLAGS="-L${SYSROOT}/usr/lib"
+        # 添加 gnutls 头文件路径，解决交叉编译问题
+        export CFLAGS="-march=armv8-a -I/usr/include/gnutls"
+        export CXXFLAGS="-march=armv8-a -I/usr/include/gnutls"
+        export LDFLAGS="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu"
         
         ../configure \
           --target-list=aarch64-softmmu \
@@ -377,9 +379,9 @@ jobs:
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="-march=armv8-a" \
-          --extra-cxxflags="-march=armv8-a" \
-          --extra-ldflags="-L${SYSROOT}/usr/lib" \
+          --extra-cflags="-march=armv8-a -I/usr/include/gnutls" \
+          --extra-cxxflags="-march=armv8-a -I/usr/include/gnutls" \
+          --extra-ldflags="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu" \
           -Db_staticpic=true \
           -Ddefault_library=static \
           -Dtools=disabled \
