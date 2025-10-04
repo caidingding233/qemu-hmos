@@ -397,8 +397,9 @@ jobs:
         echo "=== Running Configure ==="
         # 使用华为的编译器包装脚本，让它自动处理 musl 头文件
         # 添加 gnutls 头文件路径，解决交叉编译问题
-        export CFLAGS="-march=armv8-a -I/usr/include/gnutls"
-        export CXXFLAGS="-march=armv8-a -I/usr/include/gnutls"
+        # 强制定义 CONFIG_POSIX_MEMALIGN 宏
+        export CFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1"
+        export CXXFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1"
         export LDFLAGS="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu"
         
         ../configure \
@@ -407,8 +408,8 @@ jobs:
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="-march=armv8-a -I/usr/include/gnutls" \
-          --extra-cxxflags="-march=armv8-a -I/usr/include/gnutls" \
+          --extra-cflags="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1" \
+          --extra-cxxflags="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1" \
           --extra-ldflags="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu" \
           -Db_staticpic=true \
           -Ddefault_library=static \
@@ -446,22 +447,30 @@ jobs:
         echo "✅ Configure completed!"
         
         echo "=== Fixing posix_memalign detection ==="
-        # 如果 posix_memalign 测试通过但 configure 没有检测到，手动修复
-        if [ "$POSIX_MEMALIGN_AVAILABLE" = "1" ]; then
-            echo "Manually enabling CONFIG_POSIX_MEMALIGN in config.h"
-            if [ -f "config.h" ]; then
-                # 确保 CONFIG_POSIX_MEMALIGN 被定义
-                if ! grep -q "CONFIG_POSIX_MEMALIGN" config.h; then
-                    echo "#define CONFIG_POSIX_MEMALIGN 1" >> config.h
-                    echo "✓ Added CONFIG_POSIX_MEMALIGN to config.h"
-                else
-                    echo "✓ CONFIG_POSIX_MEMALIGN already defined in config.h"
-                fi
-            else
-                echo "⚠️ config.h not found, creating it"
-                echo "#define CONFIG_POSIX_MEMALIGN 1" > config.h
+        # 强制启用 CONFIG_POSIX_MEMALIGN，因为华为编译器可能检测失败
+        echo "Force enabling CONFIG_POSIX_MEMALIGN for HarmonyOS musl compatibility"
+        
+        # 查找并修复所有可能的配置文件
+        for config_file in "config.h" "config-host.h" "config-target.h"; do
+            if [ -f "$config_file" ]; then
+                echo "Processing $config_file"
+                # 移除任何现有的 CONFIG_POSIX_MEMALIGN 定义
+                sed -i '/CONFIG_POSIX_MEMALIGN/d' "$config_file"
+                # 添加正确的定义
+                echo "#define CONFIG_POSIX_MEMALIGN 1" >> "$config_file"
+                echo "✓ Added CONFIG_POSIX_MEMALIGN to $config_file"
             fi
+        done
+        
+        # 如果没有任何配置文件，创建一个
+        if [ ! -f "config.h" ] && [ ! -f "config-host.h" ]; then
+            echo "Creating config.h with CONFIG_POSIX_MEMALIGN"
+            echo "#define CONFIG_POSIX_MEMALIGN 1" > config.h
         fi
+        
+        # 验证修复结果
+        echo "Verifying CONFIG_POSIX_MEMALIGN definition:"
+        grep -r "CONFIG_POSIX_MEMALIGN" . || echo "No CONFIG_POSIX_MEMALIGN found"
         
         echo "=== Building QEMU ==="
         # 设置正确的链接器环境变量，使用OHOS NDK的工具
