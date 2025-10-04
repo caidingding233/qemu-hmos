@@ -59,13 +59,46 @@ static size_t get_available_disk_space(const std::string& path) {
 }
 
 // 内部辅助函数
+static std::string get_qemu_binary(const qemu_vm_config_t* config) {
+    // 根据配置选择QEMU二进制文件
+    if (config->arch_type) {
+        if (strcmp(config->arch_type, "x86_64") == 0) {
+            return "qemu-system-x86_64";
+        } else if (strcmp(config->arch_type, "i386") == 0) {
+            return "qemu-system-i386";
+        } else if (strcmp(config->arch_type, "aarch64") == 0) {
+            return "qemu-system-aarch64";
+        }
+    }
+    // 默认使用 aarch64（鸿蒙版 UTM 推荐）
+    return "qemu-system-aarch64";
+}
+
 static std::string build_qemu_command(const qemu_vm_config_t* config) {
-    std::string cmd = "qemu-system-aarch64";
+    std::string cmd = get_qemu_binary(config);
     
     // 基本配置
     cmd += " -name " + std::string(config->name ? config->name : "vm");
-    cmd += " -machine " + std::string(config->machine_type ? config->machine_type : "virt");
-    cmd += " -cpu " + std::string(config->cpu_type ? config->cpu_type : "cortex-a57");
+    
+    // 根据架构设置默认机器类型和CPU
+    std::string machine_type = config->machine_type ? config->machine_type : "virt";
+    std::string cpu_type = config->cpu_type ? config->cpu_type : "cortex-a57";
+    
+    if (config->arch_type) {
+        if (strcmp(config->arch_type, "x86_64") == 0) {
+            machine_type = config->machine_type ? config->machine_type : "pc";
+            cpu_type = config->cpu_type ? config->cpu_type : "qemu64";
+        } else if (strcmp(config->arch_type, "i386") == 0) {
+            machine_type = config->machine_type ? config->machine_type : "pc";
+            cpu_type = config->cpu_type ? config->cpu_type : "qemu32";
+        } else if (strcmp(config->arch_type, "aarch64") == 0) {
+            machine_type = config->machine_type ? config->machine_type : "virt,gic-version=3,virtualization=on";
+            cpu_type = config->cpu_type ? config->cpu_type : "max";
+        }
+    }
+    
+    cmd += " -machine " + machine_type;
+    cmd += " -cpu " + cpu_type;
     // 内存配置（默认6GB，最大16GB）
     int memory_mb = config->memory_mb > 0 ? config->memory_mb : 6144;
     memory_mb = std::min(memory_mb, 16384); // 限制最大16GB

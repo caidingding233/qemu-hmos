@@ -77,6 +77,7 @@ constexpr size_t MAX_LOG_BUFFER_SIZE = 1000;
 // VM配置结构
 struct VMConfig {
     std::string name;
+    std::string archType;        // 架构类型：aarch64, x86_64, i386
     std::string isoPath;
     int diskSizeGB;
     int memoryMB;
@@ -372,6 +373,17 @@ static VMConfig ParseVMConfig(napi_env env, napi_value config, bool &ok) {
     }
     HilogPrint("QEMU: ParseVMConfig got name: " + vmConfig.name);
     
+    // 获取架构类型（可选，默认为 aarch64）
+    napi_value archValue;
+    if (napi_get_named_property(env, config, "archType", &archValue) == napi_ok) {
+        std::string arch;
+        if (NapiGetStringUtf8(env, archValue, arch)) {
+            vmConfig.archType = arch;
+        }
+    } else {
+        vmConfig.archType = "aarch64"; // 默认使用 aarch64（鸿蒙版 UTM 推荐）
+    }
+    
     // 获取isoPath（可选）
     napi_value isoValue;
     if (napi_get_named_property(env, config, "isoPath", &isoValue) == napi_ok) {
@@ -568,14 +580,30 @@ static bool CreateVirtualDisk(const std::string& diskPath, int sizeGB) {
 static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
     std::vector<std::string> args;
     
-    args.push_back("qemu-system-aarch64");
+    // 根据架构选择QEMU二进制文件
+    if (config.archType == "x86_64") {
+        args.push_back("qemu-system-x86_64");
+    } else if (config.archType == "i386") {
+        args.push_back("qemu-system-i386");
+    } else {
+        args.push_back("qemu-system-aarch64"); // 默认 aarch64
+    }
     
-    // 基本配置
+    // 根据架构设置机器类型和CPU
+    if (config.archType == "x86_64" || config.archType == "i386") {
+        args.push_back("-machine");
+        args.push_back("pc");
+        
+        args.push_back("-cpu");
+        args.push_back(config.archType == "i386" ? "qemu32" : "qemu64");
+    } else {
+        // aarch64 配置
     args.push_back("-machine");
     args.push_back("virt,gic-version=3,virtualization=on");
     
     args.push_back("-cpu");
     args.push_back("max");
+    }
     
     args.push_back("-smp");
     args.push_back(std::to_string(config.cpuCount));
@@ -587,14 +615,21 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
     args.push_back("-accel");
     args.push_back(config.accel);
     
-    // 固件配置 - 使用HAP内部资源的完整路径
-    // 尝试从多个可能的位置查找固件文件
+    // 固件配置 - 根据架构选择固件
     std::string biosPath;
+    std::string biosFileName;
+    
+    if (config.archType == "x86_64" || config.archType == "i386") {
+        biosFileName = "OVMF_CODE.fd"; // x86 固件
+    } else {
+        biosFileName = "edk2-aarch64-code.fd"; // ARM 固件
+    }
+    
     std::vector<std::string> biosPaths = {
-        "/data/storage/el1/bundle/entry/resources/rawfile/edk2-aarch64-code.fd",
-        "/data/storage/el2/base/haps/entry/resources/rawfile/edk2-aarch64-code.fd",
-        "/data/storage/el2/base/haps/entry/files/edk2-aarch64-code.fd",
-        "edk2-aarch64-code.fd"  // 作为fallback
+        "/data/storage/el1/bundle/entry/resources/rawfile/" + biosFileName,
+        "/data/storage/el2/base/haps/entry/resources/rawfile/" + biosFileName,
+        "/data/storage/el2/base/haps/entry/files/" + biosFileName,
+        biosFileName  // 作为fallback
     };
     
     for (const auto& path : biosPaths) {
@@ -609,15 +644,23 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         args.push_back("-bios");
         args.push_back(biosPath);
     } else {
-        HilogPrint(std::string("QEMU: WARNING - BIOS file not found, letting QEMU use built-in default"));
+        HilogPrint(std::string("QEMU: WARNING - BIOS file not found for ") + config.archType + ", letting QEMU use built-in default");
     }
     
-    // 磁盘配置
+    // 磁盘配置 - 根据架构选择存储控制器
     if (FileExists(config.diskPath)) {
         args.push_back("-drive");
         args.push_back("if=none,id=d0,file=" + config.diskPath + ",format=qcow2,cache=writeback,aio=threads,discard=unmap");
-        args.push_back("-device");
-        args.push_back("nvme,drive=d0,serial=nvme0");
+        
+        if (config.archType == "x86_64" || config.archType == "i386") {
+            // x86 使用 SATA 控制器
+            args.push_back("-device");
+            args.push_back("ide-hd,drive=d0,serial=hd0");
+        } else {
+            // ARM 使用 NVMe 控制器
+            args.push_back("-device");
+            args.push_back("nvme,drive=d0,serial=nvme0");
+        }
     }
     
     // ISO光驱配置
@@ -626,11 +669,19 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         args.push_back(config.isoPath);
     }
     
-    // 网络配置
+    // 网络配置 - 根据架构选择网络设备
     args.push_back("-netdev");
     args.push_back("user,id=n0,hostfwd=tcp:127.0.0.1:3390-:3389");
-    args.push_back("-device");
-    args.push_back("virtio-net-pci,netdev=n0");
+    
+    if (config.archType == "x86_64" || config.archType == "i386") {
+        // x86 使用 e1000 网卡
+        args.push_back("-device");
+        args.push_back("e1000,netdev=n0");
+    } else {
+        // ARM 使用 virtio 网卡
+        args.push_back("-device");
+        args.push_back("virtio-net-pci,netdev=n0");
+    }
     
     // 显示配置
     if (config.nographic) {

@@ -40,6 +40,7 @@ typedef struct {
 // QEMU 虚拟机配置
 typedef struct {
     const char* name;                    // 虚拟机名称
+    const char* arch_type;               // 架构类型：aarch64, x86_64, i386
     const char* machine_type;            // 机器类型，如 "virt"
     const char* cpu_type;                // CPU 类型，如 "cortex-a57"
     int memory_mb;                       // 内存大小（MB）

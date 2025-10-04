@@ -1,5 +1,6 @@
 export interface VMConfig {
   name: string;
+  archType?: 'aarch64' | 'x86_64' | 'i386';  // 架构类型
   isoPath?: string;
   diskSizeGB?: number;
   memoryMB?: number;

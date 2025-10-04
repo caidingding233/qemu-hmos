@@ -17,6 +17,7 @@ interface CopyResult { ok: boolean; path: string }
 // QEMU配置接口
 interface VMConfig {
   name: string;
+  archType?: 'aarch64' | 'x86_64' | 'i386';  // 架构类型
   isoPath?: string;
   diskSizeGB?: number;
   memoryMB?: number;
@@ -46,6 +47,7 @@ interface QemuDiagAPI {
 // QEMU配置类
 class QemuConfig {
   name: string = '';
+  archType: 'aarch64' | 'x86_64' | 'i386' = 'aarch64';  // 默认 ARM64
   osType: string = 'Windows';
   diskSizeGB: number = 64;
   memoryMB: number = 6144;
@@ -74,6 +76,7 @@ struct Index {
   @State showCreateDialog: boolean = false;
   @State newVMName: string = '';
   @State newVMOS: string = 'Windows';
+  @State newVMArchType: 'aarch64' | 'x86_64' | 'i386' = 'aarch64';
   @State newVMDiskSize: number = 64;
   @State newVMMemory: number = 6144;
   @State newVMCPU: number = 4;
@@ -226,6 +229,7 @@ struct Index {
       newVM.status = 'stopped';
       newVM.config = {
         name: this.newVMName.trim(),
+        archType: this.newVMArchType,
         osType: this.newVMOS,
         diskSizeGB: this.newVMDiskSize,
         memoryMB: this.newVMMemory,
@@ -289,6 +293,7 @@ struct Index {
       // 启动 VM
       const success: boolean = qemu.startVm({
         name: vm.name,
+        archType: vm.config.archType || 'aarch64',
         isoPath: vm.config.isoPath || '',
         diskSizeGB: vm.config.diskSizeGB,
         memoryMB: vm.config.memoryMB,
@@ -442,6 +447,7 @@ struct Index {
   resetCreateForm() {
     this.newVMName = '';
     this.newVMOS = 'Windows';
+    this.newVMArchType = 'aarch64';
     this.newVMDiskSize = 64;
     this.newVMMemory = 6144;
     this.newVMCPU = 4;
@@ -969,6 +975,28 @@ struct Index {
                 .selected(0)
                 .onSelect((index: number) => {
                   this.newVMOS = index === 0 ? 'Windows' : 'Linux';
+                })
+                .layoutWeight(1);
+            }
+            .width('100%')
+            .margin({ bottom: 20 });
+
+            // 架构选择
+            Row() {
+              Text('架构类型')
+                .fontSize(14)
+                .fontColor('#666666')
+                .width(80);
+
+              Select([
+                { value: 'aarch64 (推荐)' },
+                { value: 'x86_64 (兼容)' },
+                { value: 'i386 (兼容)' }
+              ])
+                .selected(0)
+                .onSelect((index: number) => {
+                  const archTypes = ['aarch64', 'x86_64', 'i386'];
+                  this.newVMArchType = archTypes[index] as 'aarch64' | 'x86_64' | 'i386';
                 })
                 .layoutWeight(1);
             }

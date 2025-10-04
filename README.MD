@@ -78,11 +78,21 @@ make -j
 
 ## 📅 路线图与版本规划
 
-| 阶段 | 功能重点 |
-|------|-----------|
-| MVP | QEMU 嵌入 + VNC / RDP 启动 + StartProgram + 文件映射 |
-| V1 | 媒体透传 / 快照 / 恢复 / UI 优化 |
-| V2+ | RemoteApp / RAIL / GPU 加速 / USB / virtiofs / 多系统模板 |
+### 鸿蒙版 UTM 完整路线图
+详细规划请参考我们的[路线图](docs/ROADMAP.md)
+
+### 核心目标
+- **网络 ✅、显示 ✅、ARM+X86 ✅**
+- 最终能跑 Windows 11 + Microsoft 365/OneDrive 在线服务
+- 和鸿蒙的"一体化"体验（OneDrive/剪贴板/文件透传、柔光屏优化）
+
+### 阶段规划
+
+| 阶段 | 功能重点 | 时间线 |
+|------|-----------|--------|
+| **Phase 1** | QEMU 多目标构建 + VNC/RDP + OneDrive档位1 + StartProgram | 4周内 |
+| **Phase 2** | OneDrive档位2 + 桌面卡片 + 剪贴板通知 + 权限封装 | 8周内 |
+| **Phase 3** | 快照备份 + CLI工具 + 性能优化 + OneDrive档位3 | 12周内 |
 
 ---
 
