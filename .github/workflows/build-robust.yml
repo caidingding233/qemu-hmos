@@ -147,176 +147,33 @@ jobs:
         export SYSROOT="$(pwd)/$NATIVE_DIR/sysroot"
         echo "SYSROOT set to: $SYSROOT"
 
-        # 复制aarch64 glibc完整头文件到sysroot补全musl头
-        echo "=== 补全sysroot完整头文件目录 ==="
+        # 验证华为 SDK 的 musl 头文件系统
+        echo "=== 验证华为 SDK musl 头文件系统 ==="
         
-        # 先检查源目录是否存在
-        if [ ! -d "/usr/aarch64-linux-gnu/include" ]; then
-          echo "Warning: Source directory /usr/aarch64-linux-gnu/include not found"
-          echo "Trying to install aarch64 glibc headers..."
-          sudo apt-get install -y libc6-dev-arm64-cross
-          
-          # 再次检查
-          if [ ! -d "/usr/aarch64-linux-gnu/include" ]; then
-            echo "Error: Still cannot find aarch64 glibc headers after installation"
-            echo "Available aarch64 directories:"
-            find /usr -name "*aarch64*" -type d 2>/dev/null | head -10
-            exit 1
-          fi
-        fi
-
-        # 确保目标目录存在并设置正确权限
-        echo "Creating target directory with proper permissions..."
-        sudo mkdir -p "$SYSROOT/usr/include"
-        sudo chown -R runner:runner "$SYSROOT/usr/include" || true
+        echo "检查华为 SDK 的 musl 头文件结构..."
+        echo "SYSROOT: $SYSROOT"
         
-        # 复制完整的头文件目录，包括 bits/, gnu/, sys/ 等
-        echo "Copying all headers from /usr/aarch64-linux-gnu/include to $SYSROOT/usr/include"
-
-        # 使用 rsync 进行更安全的复制，避免权限问题
-        if sudo rsync -av --no-perms --no-owner --no-group /usr/aarch64-linux-gnu/include/ "$SYSROOT/usr/include/"; then
-          echo "✓ Headers copied successfully with rsync"
+        # 检查关键文件是否存在
+        echo "检查关键头文件:"
+        [ -f "$SYSROOT/usr/include/sys/socket.h" ] && echo "✓ sys/socket.h 存在" || echo "✗ sys/socket.h 缺失"
+        [ -f "$SYSROOT/usr/include/aarch64-linux-ohos/bits/alltypes.h" ] && echo "✓ alltypes.h 存在" || echo "✗ alltypes.h 缺失"
+        [ -f "$SYSROOT/usr/include/aarch64-linux-ohos/bits/socket.h" ] && echo "✓ bits/socket.h 存在" || echo "✗ bits/socket.h 缺失"
+        
+        # 检查类型定义
+        echo "检查类型定义:"
+        if grep -q "socklen_t" "$SYSROOT/usr/include/aarch64-linux-ohos/bits/alltypes.h" 2>/dev/null; then
+          echo "✓ socklen_t 已定义"
         else
-          echo "⚠️ Rsync failed, trying cp with different approach..."
-          # 如果 rsync 失败，尝试逐个复制关键目录
-          for dir in bits gnu sys asm asm-generic; do
-            if [ -d "/usr/aarch64-linux-gnu/include/$dir" ]; then
-              echo "Copying $dir directory..."
-              sudo cp -r "/usr/aarch64-linux-gnu/include/$dir" "$SYSROOT/usr/include/" || echo "Failed to copy $dir"
-            fi
-          done
-          # 复制关键头文件
-          sudo cp /usr/aarch64-linux-gnu/include/*.h "$SYSROOT/usr/include/" 2>/dev/null || echo "Some .h files copy failed"
+          echo "✗ socklen_t 未定义"
         fi
-
-        # 设置正确的权限
-        sudo chown -R runner:runner "$SYSROOT/usr/include" || true
-        sudo chmod -R 755 "$SYSROOT/usr/include" || true
-
-        # 验证复制是否成功 - 检查关键文件
-        echo "Checking copy success..."
-        if [ -f "$SYSROOT/usr/include/bits/limits.h" ] && [ -f "$SYSROOT/usr/include/limits.h" ]; then
-          echo "✓ Headers verified successfully"
-          echo "Key files present:"
-          ls -la "$SYSROOT/usr/include/bits/limits.h"
-          ls -la "$SYSROOT/usr/include/limits.h"
+        
+        if grep -q "sa_family_t" "$SYSROOT/usr/include/aarch64-linux-ohos/bits/alltypes.h" 2>/dev/null; then
+          echo "✓ sa_family_t 已定义"
         else
-          echo "⚠️ Some key files missing, but continuing with available headers"
-          echo "Available files in target:"
-          find "$SYSROOT/usr/include" -type f 2>/dev/null | head -10 || echo "Cannot list target directory"
-          echo "SYSROOT path: $SYSROOT"
-          # 不退出，继续构建
+          echo "✗ sa_family_t 未定义"
         fi
-
-        # 修复华为 SDK 头文件问题
-        echo "=== 修复华为 SDK 头文件问题 ==="
         
-        # 创建兼容性头文件修复
-        COMPAT_DIR="$SYSROOT/usr/include/compat"
-        sudo mkdir -p "$COMPAT_DIR"
-        
-        # 修复 socklen_t 问题
-        echo "Creating socklen_t compatibility fix..."
-        {
-          echo '#ifndef _COMPAT_SOCKLEN_H'
-          echo '#define _COMPAT_SOCKLEN_H'
-          echo ''
-          echo '#ifndef socklen_t'
-          echo '#define socklen_t __socklen_t'
-          echo '#endif'
-          echo ''
-          echo '#endif /* _COMPAT_SOCKLEN_H */'
-        } | sudo tee "$COMPAT_DIR/socklen.h" > /dev/null
-        
-        # 修复 socket 结构体问题
-        echo "Creating socket structures compatibility fix..."
-        {
-          echo '#ifndef _COMPAT_SOCKET_H'
-          echo '#define _COMPAT_SOCKET_H'
-          echo ''
-          echo '#include <bits/types.h>'
-          echo ''
-          echo '#ifndef sa_family_t'
-          echo 'typedef unsigned short sa_family_t;'
-          echo '#endif'
-          echo ''
-          echo '#ifndef __SOCKADDR_COMMON_SIZE'
-          echo '#define __SOCKADDR_COMMON_SIZE (sizeof (unsigned short int))'
-          echo '#endif'
-          echo ''
-          echo '#ifndef __SOCKADDR_COMMON'
-          echo '#define __SOCKADDR_COMMON(sa_prefix) \\'
-          echo '  sa_family_t sa_prefix##family'
-          echo '#endif'
-          echo ''
-          echo '/* Minimal sockaddr definition */'
-          echo 'struct sockaddr {'
-          echo '  __SOCKADDR_COMMON (sa_);'
-          echo '  char sa_data[14];'
-          echo '};'
-          echo ''
-          echo '/* Minimal sockaddr_storage definition */'
-          echo 'struct sockaddr_storage {'
-          echo '  __SOCKADDR_COMMON (ss_);'
-          echo '  char __ss_padding[128 - sizeof (__SOCKADDR_COMMON_SIZE)];'
-          echo '};'
-          echo ''
-          echo '/* Minimal msghdr definition */'
-          echo 'struct msghdr {'
-          echo '  void *msg_name;'
-          echo '  socklen_t msg_namelen;'
-          echo '  struct iovec *msg_iov;'
-          echo '  int msg_iovlen;'
-          echo '  void *msg_control;'
-          echo '  socklen_t msg_controllen;'
-          echo '  int msg_flags;'
-          echo '};'
-          echo ''
-          echo '/* Minimal iovec definition */'
-          echo 'struct iovec {'
-          echo '  void *iov_base;'
-          echo '  size_t iov_len;'
-          echo '};'
-          echo ''
-          echo '#endif /* _COMPAT_SOCKET_H */'
-        } | sudo tee "$COMPAT_DIR/socket.h" > /dev/null
-        
-        # 修复 stat 重复定义问题
-        echo "Creating stat compatibility fix..."
-        {
-          echo '#ifndef _COMPAT_STAT_H'
-          echo '#define _COMPAT_STAT_H'
-          echo ''
-          echo '#ifndef _STAT_VER'
-          echo '#define _STAT_VER 0'
-          echo '#endif'
-          echo ''
-          echo '#ifndef __USE_FILE_OFFSET64'
-          echo 'typedef long __off_t;'
-          echo '#else'
-          echo 'typedef long long __off_t;'
-          echo '#endif'
-          echo ''
-          echo 'struct stat {'
-          echo '  __dev_t st_dev;'
-          echo '  __ino_t st_ino;'
-          echo '  __mode_t st_mode;'
-          echo '  __nlink_t st_nlink;'
-          echo '  __uid_t st_uid;'
-          echo '  __gid_t st_gid;'
-          echo '  __dev_t st_rdev;'
-          echo '  __off_t st_size;'
-          echo '  __blksize_t st_blksize;'
-          echo '  __blkcnt_t st_blocks;'
-          echo '  __time_t st_atime;'
-          echo '  __time_t st_mtime;'
-          echo '  __time_t st_ctime;'
-          echo '};'
-          echo ''
-          echo '#endif /* _COMPAT_STAT_H */'
-        } | sudo tee "$COMPAT_DIR/stat.h" > /dev/null
-        
-        echo "✓ Created compatibility header files"
+        echo "华为 SDK 使用 musl libc，头文件结构正确，无需额外修复"
         
         echo "=== Analyzing extracted content ==="
         echo "Contents after extraction:"
@@ -508,10 +365,11 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
-        # 使用简化的配置，包含兼容性头文件路径
-        export CFLAGS="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -march=armv8-a -I${SYSROOT}/usr/include/compat"
-        export CXXFLAGS="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -march=armv8-a -I${SYSROOT}/usr/include/compat"
-        export LDFLAGS="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib"
+        # 使用华为的编译器包装脚本，让它自动处理 musl 头文件
+        # 不手动设置 CFLAGS，让华为的编译器脚本处理
+        export CFLAGS="-march=armv8-a"
+        export CXXFLAGS="-march=armv8-a"
+        export LDFLAGS="-L${SYSROOT}/usr/lib"
         
         ../configure \
           --target-list=aarch64-softmmu \
@@ -519,9 +377,9 @@ jobs:
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -march=armv8-a -I${SYSROOT}/usr/include/compat" \
-          --extra-cxxflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -march=armv8-a -I${SYSROOT}/usr/include/compat" \
-          --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib" \
+          --extra-cflags="-march=armv8-a" \
+          --extra-cxxflags="-march=armv8-a" \
+          --extra-ldflags="-L${SYSROOT}/usr/lib" \
           -Db_staticpic=true \
           -Ddefault_library=static \
           -Dtools=disabled \
