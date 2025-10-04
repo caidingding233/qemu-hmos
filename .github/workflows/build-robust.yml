@@ -31,8 +31,8 @@ jobs:
                               libpcre2-dev pkg-config meson tree \
                               binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
                               libc6-dev libc6-dev-arm64-cross \
-                              libgnutls-openssl-dev libgnutls30-dev \
-                              gnutls-dev libgnutls28-dev  # 确保gnutls开发包完整安装
+                              libgnutls-openssl-dev libgnutls-dev \
+                              gnutls-dev  # 确保gnutls开发包完整安装
 
     - name: Download and setup SDK
       run: |
