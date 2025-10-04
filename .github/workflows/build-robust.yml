@@ -16,12 +16,10 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Clone qemu-code
+    - name: Update submodules (including qemu-code)
       run: |
-        echo "=== Cloning qemu-code ==="
-        git clone https://github.com/caidingding233/qemu-code.git third_party/qemu-code
-        cd third_party/qemu-code
-        echo "qemu-code cloned successfully"
+        echo "=== Updating submodules ==="
+        git submodule update --init --recursive
 
     - name: Install dependencies
       run: |
