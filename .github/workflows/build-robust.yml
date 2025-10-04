@@ -422,11 +422,11 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
-            # 使用华为的编译器包装脚本，让它自动处理 musl 头文件
-            # 添加 gnutls 头文件路径，解决交叉编译问题
-            # 先创建 posix_memalign_fallback.h 文件，供 configure 使用
-            echo "Creating posix_memalign_fallback.h for configure phase"
-            cat > posix_memalign_fallback.h << 'EOF'
+        # 使用华为的编译器包装脚本，让它自动处理 musl 头文件
+        # 添加 gnutls 头文件路径，解决交叉编译问题
+        # 先创建 posix_memalign_fallback.h 文件，供 configure 使用
+        echo "Creating posix_memalign_fallback.h for configure phase"
+        cat > posix_memalign_fallback.h << 'EOF'
 #ifndef POSIX_MEMALIGN_FALLBACK_H
 #define POSIX_MEMALIGN_FALLBACK_H
 
@@ -464,9 +464,9 @@ static inline int posix_memalign_fallback(void **memptr, size_t alignment, size_
 #endif
 EOF
 
-            export CFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h"
-            export CXXFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h"
-            export LDFLAGS="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu"
+        export CFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h"
+        export CXXFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h"
+        export LDFLAGS="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu"
         
         # 确保环境变量正确设置
         export CC="$CC"
