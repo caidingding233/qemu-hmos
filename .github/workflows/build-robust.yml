@@ -31,8 +31,7 @@ jobs:
                               libpcre2-dev pkg-config meson tree \
                               binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
                               libc6-dev libc6-dev-arm64-cross \
-                              libgnutls-openssl-dev libgnutls-dev \
-                              gnutls-dev  # 确保gnutls开发包完整安装
+                              libgnutls-openssl-dev  # 确保gnutls开发包完整安装
 
     - name: Download and setup SDK
       run: |
@@ -216,6 +215,18 @@ jobs:
         [ -f "$SYSROOT/usr/include/limits.h" ] && echo "✓ limits.h exists" || echo "✗ limits.h missing"
         [ -d "$SYSROOT/usr/include/bits" ] && echo "✓ bits directory exists" || echo "✗ bits directory missing"
         [ -f "$SYSROOT/usr/include/bits/limits.h" ] && echo "✓ bits/limits.h exists" || echo "✗ bits/limits.h missing"
+
+    - name: Check available gnutls packages
+      run: |
+        echo "=== 检查可用的 gnutls 包 ==="
+        echo "Searching for gnutls packages:"
+        apt search gnutls 2>/dev/null | grep -E "^libgnutls.*dev|^gnutls.*dev" | head -10
+        echo ""
+        echo "Trying to install additional gnutls packages:"
+        sudo apt-get install -y libgnutls28-dev libgnutls-openssl-dev || echo "Some packages may not be available"
+        echo ""
+        echo "Installed gnutls packages:"
+        dpkg -l | grep gnutls || echo "No gnutls packages found"
 
     - name: Find gnutls headers
       run: |
