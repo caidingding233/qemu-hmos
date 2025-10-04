@@ -365,6 +365,35 @@ jobs:
         echo "SYSROOT: $SYSROOT"
         
         echo ""
+        echo "=== Testing posix_memalign availability ==="
+        # 测试 posix_memalign 是否可用
+        cat > test_memalign.c << 'EOF'
+#include <stdlib.h>
+#include <stdio.h>
+int main() {
+    void *ptr;
+    int ret = posix_memalign(&ptr, 16, 1024);
+    if (ret == 0) {
+        printf("posix_memalign available\n");
+        free(ptr);
+        return 0;
+    } else {
+        printf("posix_memalign failed: %d\n", ret);
+        return 1;
+    }
+}
+EOF
+        
+        if "$CC" -o test_memalign test_memalign.c 2>/dev/null && ./test_memalign; then
+            echo "✅ posix_memalign is available"
+            export POSIX_MEMALIGN_AVAILABLE=1
+        else
+            echo "⚠️ posix_memalign not available, will use fallback"
+            export POSIX_MEMALIGN_AVAILABLE=0
+        fi
+        rm -f test_memalign.c test_memalign
+        
+        echo ""
         echo "=== Running Configure ==="
         # 使用华为的编译器包装脚本，让它自动处理 musl 头文件
         # 添加 gnutls 头文件路径，解决交叉编译问题
@@ -384,7 +413,6 @@ jobs:
           -Db_staticpic=true \
           -Ddefault_library=static \
           -Dtools=disabled \
-          -DCONFIG_POSIX_MEMALIGN=true \
           --enable-tcg \
           --disable-kvm \
           --disable-xen \
@@ -416,6 +444,24 @@ jobs:
           --enable-gnutls
         
         echo "✅ Configure completed!"
+        
+        echo "=== Fixing posix_memalign detection ==="
+        # 如果 posix_memalign 测试通过但 configure 没有检测到，手动修复
+        if [ "$POSIX_MEMALIGN_AVAILABLE" = "1" ]; then
+            echo "Manually enabling CONFIG_POSIX_MEMALIGN in config.h"
+            if [ -f "config.h" ]; then
+                # 确保 CONFIG_POSIX_MEMALIGN 被定义
+                if ! grep -q "CONFIG_POSIX_MEMALIGN" config.h; then
+                    echo "#define CONFIG_POSIX_MEMALIGN 1" >> config.h
+                    echo "✓ Added CONFIG_POSIX_MEMALIGN to config.h"
+                else
+                    echo "✓ CONFIG_POSIX_MEMALIGN already defined in config.h"
+                fi
+            else
+                echo "⚠️ config.h not found, creating it"
+                echo "#define CONFIG_POSIX_MEMALIGN 1" > config.h
+            fi
+        fi
         
         echo "=== Building QEMU ==="
         # 设置正确的链接器环境变量，使用OHOS NDK的工具
