@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
-
+    
     steps:
     - name: Checkout (with submodules)
       uses: actions/checkout@v4
@@ -129,7 +129,7 @@ EOF
         meson setup \
           --cross-file=../../cross/aarch64-ohos.ini \
           --default-library=static \
-          -Dtarget_list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
+          -Dtarget_list="aarch64-softmmu,x86_64-softmmu,i386-softmmu" \
           -Dcc="${CC}" \
           -Dcxx="${CXX}" \
           -Dhost_cc="/usr/bin/cc" \
