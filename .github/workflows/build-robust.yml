@@ -208,70 +208,115 @@ jobs:
           # 不退出，继续构建
         fi
 
-        # 修复 limits.h 中的 alltypes.h 引用问题
-        echo "=== 修复 limits.h 中的 alltypes.h 引用 ==="
+        # 修复华为 SDK 头文件问题
+        echo "=== 修复华为 SDK 头文件问题 ==="
         
-        # 检查多个可能的 limits.h 位置
-        LIMITS_H_CANDIDATES=(
-          "$SYSROOT/usr/include/limits.h"
-          "$(pwd)/$NATIVE_DIR/sysroot/usr/include/limits.h"
-          "$(pwd)/$NATIVE_DIR/llvm/bin/../../sysroot/usr/include/limits.h"
-        )
+        # 创建兼容性头文件修复
+        COMPAT_DIR="$SYSROOT/usr/include/compat"
+        sudo mkdir -p "$COMPAT_DIR"
         
-        LIMITS_H=""
-        for candidate in "${LIMITS_H_CANDIDATES[@]}"; do
-          if [ -f "$candidate" ]; then
-            LIMITS_H="$candidate"
-            echo "Found limits.h at: $LIMITS_H"
-            break
-          fi
-        done
+        # 修复 socklen_t 问题
+        echo "Creating socklen_t compatibility fix..."
+        {
+          echo '#ifndef _COMPAT_SOCKLEN_H'
+          echo '#define _COMPAT_SOCKLEN_H'
+          echo ''
+          echo '#ifndef socklen_t'
+          echo '#define socklen_t __socklen_t'
+          echo '#endif'
+          echo ''
+          echo '#endif /* _COMPAT_SOCKLEN_H */'
+        } | sudo tee "$COMPAT_DIR/socklen.h" > /dev/null
         
-        if [ -n "$LIMITS_H" ]; then
-          echo "Checking limits.h for alltypes.h reference..."
-          if grep -q "bits/alltypes.h" "$LIMITS_H"; then
-            echo "Found alltypes.h reference in limits.h, creating compatibility file..."
-            
-            # 确保 bits 目录存在
-            BITS_DIR="$(dirname "$LIMITS_H")/bits"
-            sudo mkdir -p "$BITS_DIR"
-            
-            # 创建 alltypes.h 文件，包含必要的类型定义
-            {
-              echo '#ifndef _BITS_ALLTYPES_H'
-              echo '#define _BITS_ALLTYPES_H'
-              echo ''
-              echo '/* Basic type definitions for compatibility */'
-              echo 'typedef long __LONG_MAX;'
-              echo 'typedef unsigned long __ULONG_MAX;'
-              echo 'typedef int __INT_MAX;'
-              echo 'typedef unsigned int __UINT_MAX;'
-              echo ''
-              echo '/* Add other necessary type definitions as needed */'
-              echo '#ifndef __LONG_MAX'
-              echo '#define __LONG_MAX 9223372036854775807L'
-              echo '#endif'
-              echo ''
-              echo '#ifndef __ULONG_MAX'
-              echo '#define __ULONG_MAX 18446744073709551615UL'
-              echo '#endif'
-              echo ''
-              echo '#endif /* _BITS_ALLTYPES_H */'
-            } | sudo tee "$BITS_DIR/alltypes.h" > /dev/null
-            echo "✓ Created alltypes.h compatibility file at $BITS_DIR/alltypes.h"
-          else
-            echo "No alltypes.h reference found in limits.h"
-          fi
-        else
-          echo "limits.h not found in any expected location"
-          echo "Searched locations:"
-          for candidate in "${LIMITS_H_CANDIDATES[@]}"; do
-            echo "  - $candidate"
-          done
-        fi
-
-        echo "Final bits directory contents:"
-        ls -la "$SYSROOT/usr/include/bits/" | head -5
+        # 修复 socket 结构体问题
+        echo "Creating socket structures compatibility fix..."
+        {
+          echo '#ifndef _COMPAT_SOCKET_H'
+          echo '#define _COMPAT_SOCKET_H'
+          echo ''
+          echo '#include <bits/types.h>'
+          echo ''
+          echo '#ifndef sa_family_t'
+          echo 'typedef unsigned short sa_family_t;'
+          echo '#endif'
+          echo ''
+          echo '#ifndef __SOCKADDR_COMMON_SIZE'
+          echo '#define __SOCKADDR_COMMON_SIZE (sizeof (unsigned short int))'
+          echo '#endif'
+          echo ''
+          echo '#ifndef __SOCKADDR_COMMON'
+          echo '#define __SOCKADDR_COMMON(sa_prefix) \\'
+          echo '  sa_family_t sa_prefix##family'
+          echo '#endif'
+          echo ''
+          echo '/* Minimal sockaddr definition */'
+          echo 'struct sockaddr {'
+          echo '  __SOCKADDR_COMMON (sa_);'
+          echo '  char sa_data[14];'
+          echo '};'
+          echo ''
+          echo '/* Minimal sockaddr_storage definition */'
+          echo 'struct sockaddr_storage {'
+          echo '  __SOCKADDR_COMMON (ss_);'
+          echo '  char __ss_padding[128 - sizeof (__SOCKADDR_COMMON_SIZE)];'
+          echo '};'
+          echo ''
+          echo '/* Minimal msghdr definition */'
+          echo 'struct msghdr {'
+          echo '  void *msg_name;'
+          echo '  socklen_t msg_namelen;'
+          echo '  struct iovec *msg_iov;'
+          echo '  int msg_iovlen;'
+          echo '  void *msg_control;'
+          echo '  socklen_t msg_controllen;'
+          echo '  int msg_flags;'
+          echo '};'
+          echo ''
+          echo '/* Minimal iovec definition */'
+          echo 'struct iovec {'
+          echo '  void *iov_base;'
+          echo '  size_t iov_len;'
+          echo '};'
+          echo ''
+          echo '#endif /* _COMPAT_SOCKET_H */'
+        } | sudo tee "$COMPAT_DIR/socket.h" > /dev/null
+        
+        # 修复 stat 重复定义问题
+        echo "Creating stat compatibility fix..."
+        {
+          echo '#ifndef _COMPAT_STAT_H'
+          echo '#define _COMPAT_STAT_H'
+          echo ''
+          echo '#ifndef _STAT_VER'
+          echo '#define _STAT_VER 0'
+          echo '#endif'
+          echo ''
+          echo '#ifndef __USE_FILE_OFFSET64'
+          echo 'typedef long __off_t;'
+          echo '#else'
+          echo 'typedef long long __off_t;'
+          echo '#endif'
+          echo ''
+          echo 'struct stat {'
+          echo '  __dev_t st_dev;'
+          echo '  __ino_t st_ino;'
+          echo '  __mode_t st_mode;'
+          echo '  __nlink_t st_nlink;'
+          echo '  __uid_t st_uid;'
+          echo '  __gid_t st_gid;'
+          echo '  __dev_t st_rdev;'
+          echo '  __off_t st_size;'
+          echo '  __blksize_t st_blksize;'
+          echo '  __blkcnt_t st_blocks;'
+          echo '  __time_t st_atime;'
+          echo '  __time_t st_mtime;'
+          echo '  __time_t st_ctime;'
+          echo '};'
+          echo ''
+          echo '#endif /* _COMPAT_STAT_H */'
+        } | sudo tee "$COMPAT_DIR/stat.h" > /dev/null
+        
+        echo "✓ Created compatibility header files"
         
         echo "=== Analyzing extracted content ==="
         echo "Contents after extraction:"
@@ -463,9 +508,9 @@ jobs:
         
         echo ""
         echo "=== Running Configure ==="
-        # 使用简化的配置，避免复杂的头文件路径问题
-        export CFLAGS="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -march=armv8-a"
-        export CXXFLAGS="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -march=armv8-a"
+        # 使用简化的配置，包含兼容性头文件路径
+        export CFLAGS="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -march=armv8-a -I${SYSROOT}/usr/include/compat"
+        export CXXFLAGS="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -march=armv8-a -I${SYSROOT}/usr/include/compat"
         export LDFLAGS="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib"
         
         ../configure \
@@ -474,8 +519,8 @@ jobs:
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-          --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -march=armv8-a" \
-          --extra-cxxflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -march=armv8-a" \
+          --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -march=armv8-a -I${SYSROOT}/usr/include/compat" \
+          --extra-cxxflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -march=armv8-a -I${SYSROOT}/usr/include/compat" \
           --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=${SYSROOT} -L${SYSROOT}/usr/lib" \
           -Db_staticpic=true \
           -Ddefault_library=static \
