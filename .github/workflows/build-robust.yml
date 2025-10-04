@@ -24,7 +24,6 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get update
         sudo apt-get install -y build-essential cmake curl wget unzip python3 \
                               libglib2.0-dev libpixman-1-dev libssl-dev \
                               libcurl4-openssl-dev libssh-dev libgnutls28-dev \
@@ -32,7 +31,7 @@ jobs:
                               libpcre2-dev pkg-config meson tree \
                               binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
                               libc6-dev libc6-dev-arm64-cross \
-                              libgnutls30-dev libgnutls-openssl27-dev  # 添加更多gnutls支持
+                              libgnutls-openssl-dev  # 添加gnutls openssl支持
 
     - name: Download and setup SDK
       run: |
