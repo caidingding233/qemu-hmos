@@ -119,8 +119,10 @@ jobs:
         cpu = 'armv8'
         endian = 'little'
 
-        [built-in options]
+        [paths]
         sys_root = '${SYSROOT}'
+
+        [built-in options]
         c_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
         cpp_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
         c_link_args = ['--sysroot=${SYSROOT}']
