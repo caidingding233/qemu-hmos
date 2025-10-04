@@ -426,6 +426,7 @@ jobs:
         # 添加 gnutls 头文件路径，解决交叉编译问题
         # 先创建 posix_memalign_fallback.h 文件，供 configure 使用
         echo "Creating posix_memalign_fallback.h for configure phase"
+        # 确保文件在 build 目录中创建
         cat > posix_memalign_fallback.h << 'EOF'
         #ifndef POSIX_MEMALIGN_FALLBACK_H
         #define POSIX_MEMALIGN_FALLBACK_H
@@ -464,9 +465,13 @@ jobs:
         #endif
         EOF
 
-        export CFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h"
-        export CXXFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h"
-        export LDFLAGS="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu -Wl,--no-fix-cortex-a53-843419"
+        # 获取绝对路径
+        FALLBACK_H_PATH="$(pwd)/posix_memalign_fallback.h"
+        echo "Fallback header path: $FALLBACK_H_PATH"
+        
+        export CFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH"
+        export CXXFLAGS="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH"
+        export LDFLAGS="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu"
         
         # 确保环境变量正确设置
         export CC="$CC"
@@ -500,9 +505,9 @@ jobs:
           --cxx="$CXX" \
           --host-cc="/usr/bin/cc" \
           --cross-prefix="" \
-              --extra-cflags="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h" \
-              --extra-cxxflags="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include posix_memalign_fallback.h" \
-              --extra-ldflags="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu -Wl,--no-fix-cortex-a53-843419" \
+        --extra-cflags="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH" \
+        --extra-cxxflags="-march=armv8-a -I/usr/include/gnutls -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH" \
+              --extra-ldflags="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu" \
           -Db_staticpic=true \
           -Ddefault_library=static \
           -Dtools=disabled \
