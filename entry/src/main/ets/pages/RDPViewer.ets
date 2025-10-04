@@ -1,6 +1,7 @@
 // RDP远程桌面查看器页面
 import { RDPDisplay } from '../components/RDPDisplay'
 import router from '@ohos.router'
+import { DisplayManager } from '../utils/DisplayManager'
 
 @Entry
 @Component
@@ -15,6 +16,8 @@ struct RDPViewer {
   @State colorDepth: number = 16
   @State enableAudio: boolean = true
   @State enableClipboard: boolean = true
+  @State displayConfig: any = null
+  private displayManager: DisplayManager = DisplayManager.getInstance()
   
   aboutToAppear() {
     // 获取路由参数
@@ -26,6 +29,18 @@ struct RDPViewer {
       if (typeof params.rdpHost === 'string') this.rdpHost = params.rdpHost
       if (typeof params.rdpPort === 'number') this.rdpPort = params.rdpPort
     }
+    
+    // 初始化显示配置
+    this.displayManager.updateRDPConfig({
+      host: this.rdpHost,
+      port: this.rdpPort,
+      connectionQuality: this.connectionQuality as 'auto' | 'low' | 'medium' | 'high',
+      colorDepth: this.colorDepth as 16 | 24 | 32,
+      enableAudio: this.enableAudio,
+      enableClipboard: this.enableClipboard
+    });
+    this.displayManager.optimizeDisplaySettings();
+    this.displayConfig = this.displayManager.getDisplayConfig();
   }
   
   // 返回虚拟机列表

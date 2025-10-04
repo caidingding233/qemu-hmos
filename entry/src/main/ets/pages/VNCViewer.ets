@@ -2,6 +2,7 @@ import router from '@ohos.router'
 import common from '@ohos.app.ability.common'
 import webview from '@ohos.web.webview'
 import fs from '@ohos.file.fs'
+import { DisplayManager } from '../utils/DisplayManager'
 
 // 简易的 noVNC 加载器：从 rawfile/novnc/ 读取 novnc.min.js 并嵌入到 WebView
 // 若未放置该文件，则显示提示文案。
@@ -15,7 +16,9 @@ struct VNCViewer {
   @State vmName: string = ''
   @State vncPort: number = 5701
   @State statusText: string = '正在加载VNC页面…'
+  @State displayConfig: any = null
   private webCtrl: webview.WebviewController = new webview.WebviewController()
+  private displayManager: DisplayManager = DisplayManager.getInstance()
 
   aboutToAppear() {
     const params = router.getParams()
@@ -26,6 +29,14 @@ struct VNCViewer {
         if (typeof p.vmInfo.vncPort === 'number') this.vncPort = p.vmInfo.vncPort
       }
     }
+    
+    // 初始化显示配置
+    this.displayManager.updateVNCConfig({
+      port: this.vncPort
+    });
+    this.displayManager.optimizeDisplaySettings();
+    this.displayConfig = this.displayManager.getDisplayConfig();
+    
     this.loadNoVnc()
   }
 

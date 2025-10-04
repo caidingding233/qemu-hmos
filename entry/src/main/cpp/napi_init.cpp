@@ -669,9 +669,18 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         args.push_back(config.isoPath);
     }
     
-    // 网络配置 - 根据架构选择网络设备
+    // 网络配置 - 鸿蒙版 UTM 多端口转发支持
+    std::string hostfwd = "user,id=n0,dhcp=on,dns=on";
+    hostfwd += ",hostfwd=tcp:127.0.0.1:3390-:3389"; // RDP
+    hostfwd += ",hostfwd=tcp:127.0.0.1:2222-:22"; // SSH
+    hostfwd += ",hostfwd=tcp:127.0.0.1:8080-:80"; // HTTP
+    hostfwd += ",hostfwd=tcp:127.0.0.1:8443-:443"; // HTTPS
+    hostfwd += ",hostfwd=tcp:127.0.0.1:5900-:5900"; // VNC
+    hostfwd += ",hostfwd=tcp:127.0.0.1:2121-:21"; // FTP
+    hostfwd += ",hostfwd=tcp:127.0.0.1:4450-:445"; // SMB
+    
     args.push_back("-netdev");
-    args.push_back("user,id=n0,hostfwd=tcp:127.0.0.1:3390-:3389");
+    args.push_back(hostfwd);
     
     if (config.archType == "x86_64" || config.archType == "i386") {
         // x86 使用 e1000 网卡

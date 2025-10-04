@@ -760,6 +760,27 @@ struct Index {
                   Circle()
                     .width(48)
                     .height(48)
+                    .fill('#0078D4')
+                    .margin({ bottom: 8 });
+                  Text('Office 365')
+                    .fontSize(14)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#333333');
+                  Text('OneDrive集成')
+                    .fontSize(12)
+                    .fontColor('#666666')
+                    .margin({ top: 4 });
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Center)
+                .onClick(() => {
+                  router.pushUrl({ url: 'pages/OfficeApps' });
+                });
+
+                Column() {
+                  Circle()
+                    .width(48)
+                    .height(48)
                     .fill('#FF9800')
                     .margin({ bottom: 8 });
                   Text('桌面集成')
