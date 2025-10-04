@@ -1,757 +1,182 @@
-name: Build QEMU with Huawei's toolchain (Robust)
+name: Build QEMU for HarmonyOS (Robust)
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    
+
     steps:
-    - name: Checkout
+    - name: Checkout (with submodules)
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    - name: Update submodules (including qemu-code)
-      run: |
-        echo "=== Updating submodules ==="
-        git submodule update --init --recursive
-
-    - name: Install dependencies
+    - name: Install minimal deps (host tools only)
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential cmake curl wget unzip python3 \
-                              libglib2.0-dev libpixman-1-dev libssl-dev \
-                              libcurl4-openssl-dev libssh-dev libgnutls28-dev \
-                              libsasl2-dev libpam0g-dev libbz2-dev libzstd-dev \
-                              libpcre2-dev pkg-config meson tree \
-                              binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
-                              libc6-dev libc6-dev-arm64-cross \
-                              libgnutls-openssl-dev  # 确保gnutls开发包完整安装
+        sudo apt-get install -y build-essential curl wget unzip python3 \
+                                ninja-build meson pkg-config git ca-certificates
 
-    - name: Download and setup SDK
+    - name: Download HarmonyOS/OpenHarmony NDK (linux)
       run: |
-        echo "=== Downloading SDK ==="
-        # Try multiple SDK URLs
-        SDK_URLS=(
+        set -e
+        urls=(
           "https://repo.huaweicloud.com/openharmony/os/5.1.0-Release/ohos-sdk-windows_linux-public.tar.gz"
           "https://repo.huaweicloud.com/openharmony/os/5.0.0-Release/ohos-sdk-windows_linux-public.tar.gz"
           "https://repo.huaweicloud.com/openharmony/os/4.1.0-Release/ohos-sdk-windows_linux-public.tar.gz"
         )
-        
-        SDK_DOWNLOADED=false
-        for url in "${SDK_URLS[@]}"; do
-          echo "Trying SDK URL: $url"
-          if curl -L -o ohos-sdk.tar.gz "$url"; then
-            echo "✅ SDK downloaded successfully from: $url"
-            SDK_DOWNLOADED=true
+        for u in "${urls[@]}"; do
+          echo "Try $u"
+          if curl -L --retry 3 -o ohos-sdk.tar.gz "$u"; then
             break
-          else
-            echo "❌ Failed to download from: $url"
           fi
         done
-        
-        if [ "$SDK_DOWNLOADED" = false ]; then
-          echo "❌ All SDK download attempts failed"
-          exit 1
-        fi
-        
-        echo "=== Extracting SDK ==="
         tar -xzf ohos-sdk.tar.gz
-        rm ohos-sdk.tar.gz
-        rm -rf ohos-sdk/{ohos,windows}
-        
-        echo "=== Analyzing SDK structure ==="
-        echo "Root SDK structure:"
-        ls -la ohos-sdk/
-        
-        echo ""
-        echo "Linux SDK structure:"
-        ls -la ohos-sdk/linux/
-        
-        echo ""
-        echo "All files in linux directory:"
-        find ohos-sdk/linux -type f | head -20
+        rm -f ohos-sdk.tar.gz
+        # 仅保留 linux 目录
+        rm -rf ohos-sdk/ohos ohos-sdk/windows || true
+        ls -la ohos-sdk/linux
 
-    - name: Find and extract native SDK
+    - name: Locate native toolchain (clang & sysroot)
+      id: ndk
       run: |
-        echo "=== Finding native SDK ==="
+        set -e
         cd ohos-sdk/linux
-        
-        # Look for any zip files that might contain native tools
-        echo "Looking for zip files:"
-        find . -name "*.zip" -type f
-        
-        # Try different patterns for native SDK
-        NATIVE_PATTERNS=(
-          "native-linux-x64-*.zip"
-          "native-*.zip"
-          "*native*.zip"
-          "*-native-*.zip"
-        )
-        
-        NATIVE_ZIP=""
-        for pattern in "${NATIVE_PATTERNS[@]}"; do
-          echo "Searching for pattern: $pattern"
-          found=$(find . -name "$pattern" -type f | head -1)
-          if [ -n "$found" ]; then
-            NATIVE_ZIP="$found"
-            echo "✅ Found native SDK: $NATIVE_ZIP"
-            break
-          fi
-        done
-        
-        if [ -z "$NATIVE_ZIP" ]; then
-          echo "❌ No native SDK zip found"
-          echo "Available files:"
-          find . -type f | head -20
-          echo ""
-          echo "Trying to find any clang compiler directly:"
-          find . -name "*clang*" -type f | head -10
-          exit 1
-        fi
-        
-        echo "=== Extracting native SDK ==="
-        echo "Extracting: $NATIVE_ZIP"
-        unzip -q "$NATIVE_ZIP"
-        rm "$NATIVE_ZIP"
-        
-        # 先设置SYSROOT变量，因为后面需要用到
-        echo "=== 设置SYSROOT变量 ==="
-        # 查找native目录
-        NATIVE_DIR=""
-        for pattern in "native-linux-x64-*" "native-*" "*native*"; do
-          found=$(find . -name "$pattern" -type d | head -1)
-          if [ -n "$found" ]; then
-            NATIVE_DIR="$found"
-            echo "✅ Found with pattern '$pattern': $NATIVE_DIR"
-            break
-          fi
-        done
-        
-        if [ -z "$NATIVE_DIR" ]; then
-          NATIVE_DIR=$(find . -type d -name 'native' | head -1)
-          if [ -n "$NATIVE_DIR" ]; then
-            echo "✅ Found generic native directory: $NATIVE_DIR"
-          fi
-        fi
-        
-        if [ -z "$NATIVE_DIR" ]; then
-          echo "❌ No native directory found after extraction"
-          exit 1
-        fi
-        
-        export SYSROOT="$(pwd)/$NATIVE_DIR/sysroot"
-        echo "SYSROOT set to: $SYSROOT"
+        # 找 native 包
+        zip=$(find . -type f -name "*native*linux*x64*.zip" -o -name "*native*linux*.zip" | head -1)
+        [ -n "$zip" ] || { echo "No native SDK zip found"; exit 1; }
+        unzip -q "$zip"
+        rm -f "$zip"
 
-        # 验证华为 SDK 的 musl 头文件系统
-        echo "=== 验证华为 SDK musl 头文件系统 ==="
-        
-        echo "检查华为 SDK 的 musl 头文件结构..."
-        echo "SYSROOT: $SYSROOT"
-        
-        # 检查关键文件是否存在
-        echo "检查关键头文件:"
-        [ -f "$SYSROOT/usr/include/sys/socket.h" ] && echo "✓ sys/socket.h 存在" || echo "✗ sys/socket.h 缺失"
-        [ -f "$SYSROOT/usr/include/aarch64-linux-ohos/bits/alltypes.h" ] && echo "✓ alltypes.h 存在" || echo "✗ alltypes.h 缺失"
-        [ -f "$SYSROOT/usr/include/aarch64-linux-ohos/bits/socket.h" ] && echo "✓ bits/socket.h 存在" || echo "✗ bits/socket.h 缺失"
-        
-        # 检查类型定义
-        echo "检查类型定义:"
-        if grep -q "socklen_t" "$SYSROOT/usr/include/aarch64-linux-ohos/bits/alltypes.h" 2>/dev/null; then
-          echo "✓ socklen_t 已定义"
+        native_dir=$(find . -maxdepth 1 -type d -name "native-*" -o -name "*native*" | head -1)
+        [ -n "$native_dir" ] || { echo "No native dir"; exit 1; }
+
+        llvm_bin="$PWD/$native_dir/llvm/bin"
+        sysroot="$PWD/$native_dir/sysroot"
+
+        # 优先使用带 triple 的编译器
+        if [ -x "$llvm_bin/aarch64-unknown-linux-ohos-clang" ]; then
+          cc="$llvm_bin/aarch64-unknown-linux-ohos-clang"
+          cxx="$llvm_bin/aarch64-unknown-linux-ohos-clang++"
         else
-          echo "✗ socklen_t 未定义"
+          cc="$llvm_bin/clang"
+          cxx="$llvm_bin/clang++"
         fi
-        
-        if grep -q "sa_family_t" "$SYSROOT/usr/include/aarch64-linux-ohos/bits/alltypes.h" 2>/dev/null; then
-          echo "✓ sa_family_t 已定义"
-        else
-          echo "✗ sa_family_t 未定义"
-        fi
-        
-        echo "华为 SDK 使用 musl libc，头文件结构正确，无需额外修复"
-        
-        echo "=== Analyzing extracted content ==="
-        echo "Contents after extraction:"
-        ls -la
-        
-        echo "✅ Final native directory: $NATIVE_DIR"
 
-        echo "=== Analyzing native directory ==="
-        echo "Contents of $NATIVE_DIR:"
-        ls -la "$NATIVE_DIR"
+        echo "OHOS_NDK_HOME=$PWD/$native_dir" >> $GITHUB_ENV
+        echo "SYSROOT=$sysroot" >> $GITHUB_ENV
+        echo "CC=$cc" >> $GITHUB_ENV
+        echo "CXX=$cxx" >> $GITHUB_ENV
+        echo "AR=$llvm_bin/llvm-ar" >> $GITHUB_ENV
+        echo "RANLIB=$llvm_bin/llvm-ranlib" >> $GITHUB_ENV
+        echo "STRIP=$llvm_bin/llvm-strip" >> $GITHUB_ENV
 
-        # Persist native directory path for later steps
-        echo "NATIVE_DIR=$NATIVE_DIR" >> $GITHUB_ENV
-        
-        echo ""
-        echo "Looking for llvm directory:"
-        find "$NATIVE_DIR" -name "llvm" -type d
-        
-        echo ""
-        echo "Looking for build-tools directory:"
-        find "$NATIVE_DIR" -name "build-tools" -type d
-        
-        echo ""
-        echo "Looking for any clang compiler:"
-        find "$NATIVE_DIR" -name "*clang*" -type f
+        echo "ndk_dir=$native_dir" >> $GITHUB_OUTPUT
 
-    - name: Verify sysroot headers
+    - name: Prepare Meson cross file
       run: |
-        echo "=== 验证sysroot头文件状态 ==="
-        echo "SYSROOT: $SYSROOT"
-        echo "Checking sysroot structure:"
-        ls -la "$SYSROOT" || echo "Cannot list SYSROOT"
-        echo ""
-        echo "Checking usr/include:"
-        ls -la "$SYSROOT/usr/include" 2>/dev/null || echo "Cannot list usr/include"
-        echo ""
-        echo "Checking for key header files:"
-        [ -f "$SYSROOT/usr/include/limits.h" ] && echo "✓ limits.h exists" || echo "✗ limits.h missing"
-        [ -d "$SYSROOT/usr/include/bits" ] && echo "✓ bits directory exists" || echo "✗ bits directory missing"
-        [ -f "$SYSROOT/usr/include/bits/limits.h" ] && echo "✓ bits/limits.h exists" || echo "✗ bits/limits.h missing"
+        set -e
+        mkdir -p cross
+        cat > cross/aarch64-ohos.ini <<EOF
+[binaries]
+c = '${CC}'
+cpp = '${CXX}'
+ar = '${AR}'
+strip = '${STRIP}'
+pkgconfig = 'pkg-config'
+ld = '${CC}'
 
-    - name: Check available gnutls packages
+[host_machine]
+system = 'linux'
+cpu_family = 'aarch64'
+cpu = 'armv8'
+endian = 'little'
+
+[paths]
+sys_root = '${SYSROOT}'
+
+[built-in options]
+c_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
+cpp_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
+c_link_args = ['--sysroot=${SYSROOT}']
+cpp_link_args = ['--sysroot=${SYSROOT}']
+EOF
+
+    - name: Provide subprojects (glib/pcre2/libffi/pixman via wraps)
       run: |
-        echo "=== 检查可用的 gnutls 包 ==="
-        echo "Searching for gnutls packages:"
-        apt search gnutls 2>/dev/null | grep -E "^libgnutls.*dev|^gnutls.*dev" | head -10
-        echo ""
-        echo "Trying to install additional gnutls packages:"
-        sudo apt-get install -y libgnutls28-dev libgnutls-openssl-dev || echo "Some packages may not be available"
-        echo ""
-        echo "Installed gnutls packages:"
-        dpkg -l | grep gnutls || echo "No gnutls packages found"
-
-    - name: Find gnutls headers
-      run: |
-        echo "=== 🔍 查找 gnutls 头文件位置 ==="
-        
-        # 进度条函数
-        show_progress() {
-          local current=$1
-          local total=$2
-          local desc=$3
-          local percent=$((current * 100 / total))
-          local filled=$((percent / 2))
-          local empty=$((50 - filled))
-          printf "\r["
-          printf "%*s" $filled | tr ' ' '='
-          printf "%*s" $empty | tr ' ' ' '
-          printf "] %d%% %s" $percent "$desc"
-        }
-        
-        echo "📋 检查标准 gnutls 位置..."
-        show_progress 1 4 "检查 /usr/include/gnutls/"
-        [ -f "/usr/include/gnutls/gnutls.h" ] && echo " ✅" || echo " ❌"
-        
-        show_progress 2 4 "检查 /usr/include/x86_64-linux-gnu/gnutls/"
-        [ -f "/usr/include/x86_64-linux-gnu/gnutls/gnutls.h" ] && echo " ✅" || echo " ❌"
-        
-        show_progress 3 4 "检查 /usr/lib/x86_64-linux-gnu/gnutls/"
-        [ -f "/usr/lib/x86_64-linux-gnu/gnutls/gnutls.h" ] && echo " ✅" || echo " ❌"
-        
-        show_progress 4 4 "分析结果..."
-        echo ""
-        
-        echo "📦 已安装的 gnutls 包:"
-        dpkg -l | grep gnutls | head -5 || echo "   (无 gnutls 包)"
-        echo ""
-        
-        echo "🎯 设置 gnutls 头文件路径..."
-        if [ -f "/usr/include/gnutls/gnutls.h" ]; then
-          echo "GNUTLS_HEADER_PATH=/usr/include/gnutls" >> $GITHUB_ENV
-          echo "✅ 使用 /usr/include/gnutls"
-        elif [ -f "/usr/include/x86_64-linux-gnu/gnutls/gnutls.h" ]; then
-          echo "GNUTLS_HEADER_PATH=/usr/include/x86_64-linux-gnu/gnutls" >> $GITHUB_ENV
-          echo "✅ 使用 /usr/include/x86_64-linux-gnu/gnutls"
-        elif [ -f "/usr/lib/x86_64-linux-gnu/gnutls/gnutls.h" ]; then
-          echo "GNUTLS_HEADER_PATH=/usr/lib/x86_64-linux-gnu/gnutls" >> $GITHUB_ENV
-          echo "✅ 使用 /usr/lib/x86_64-linux-gnu/gnutls"
-        else
-          echo "⚠️  未找到 gnutls 头文件，将禁用 gnutls 支持"
-          echo "GNUTLS_HEADER_PATH=" >> $GITHUB_ENV
-        fi
-        echo ""
-
-    - name: Setup environment and test
-      run: |
-        echo "=== Setting up environment ==="
-        cd ohos-sdk/linux
-        
-        # Set up paths based on what we found
-        export OHOS_NDK_HOME="$(pwd)/$NATIVE_DIR"
-        export SYSROOT="$(pwd)/$NATIVE_DIR/sysroot"
-        
-        # Try to find clang compiler
-        CLANG_CANDIDATES=(
-          "$(pwd)/$NATIVE_DIR/llvm/bin/aarch64-unknown-linux-ohos-clang"
-          "$(pwd)/$NATIVE_DIR/llvm/bin/clang"
-          "$(pwd)/$NATIVE_DIR/bin/aarch64-unknown-linux-ohos-clang"
-          "$(pwd)/$NATIVE_DIR/bin/clang"
-        )
-        
-        CC=""
-        for candidate in "${CLANG_CANDIDATES[@]}"; do
-          if [ -f "$candidate" ]; then
-            CC="$candidate"
-            echo "✅ Found CC: $CC"
-            break
-          fi
-        done
-        
-        if [ -z "$CC" ]; then
-          echo "❌ No clang compiler found"
-          echo "Available files in native directory:"
-          find "$NATIVE_DIR" -type f | head -20
-          LLVM_BIN_DIR="$(pwd)/$NATIVE_DIR/llvm/bin"
-          if [ -d "$LLVM_BIN_DIR" ]; then
-            echo ""
-            echo "Attempting fallback discovery in $LLVM_BIN_DIR"
-            CLANG_AUTO=$(find "$LLVM_BIN_DIR" -maxdepth 1 -name "clang*" -type f | head -1)
-            if [ -n "$CLANG_AUTO" ]; then
-              echo "✅ Auto-detected CC candidate: $CLANG_AUTO"
-              CC="$CLANG_AUTO"
-            fi
-          fi
-        fi
-
-        if [ -z "$CC" ]; then
-          echo "❌ Still no clang compiler found"
-          exit 1
-        fi
-        
-        # Try to find C++ compiler
-        CXX_CANDIDATES=(
-          "$(pwd)/$NATIVE_DIR/llvm/bin/aarch64-unknown-linux-ohos-clang++"
-          "$(pwd)/$NATIVE_DIR/llvm/bin/clang++"
-          "$(pwd)/$NATIVE_DIR/bin/aarch64-unknown-linux-ohos-clang++"
-          "$(pwd)/$NATIVE_DIR/bin/clang++"
-        )
-        
-        CXX=""
-        for candidate in "${CXX_CANDIDATES[@]}"; do
-          if [ -f "$candidate" ]; then
-            CXX="$candidate"
-            echo "✅ Found CXX: $CXX"
-            break
-          fi
-        done
-        
-        if [ -z "$CXX" ]; then
-          echo "⚠️ No C++ compiler found, using CC for CXX"
-          LLVM_BIN_DIR="$(pwd)/$NATIVE_DIR/llvm/bin"
-          if [ -d "$LLVM_BIN_DIR" ]; then
-            CLANGXX_AUTO=$(find "$LLVM_BIN_DIR" -maxdepth 1 -name "clang++*" -type f | head -1)
-            if [ -n "$CLANGXX_AUTO" ]; then
-              echo "✅ Auto-detected clang++ candidate: $CLANGXX_AUTO"
-              CXX="$CLANGXX_AUTO"
-            fi
-          fi
-        fi
-
-        if [ -z "$CXX" ]; then
-          echo "⚠️ Falling back to CC for CXX"
-          CXX="$CC"
-        fi
-        
-        # Try to find CMake
-        CMAKE_CANDIDATES=(
-          "$(pwd)/$NATIVE_DIR/build-tools/cmake/bin/cmake"
-          "$(pwd)/$NATIVE_DIR/cmake/bin/cmake"
-          "$(pwd)/$NATIVE_DIR/bin/cmake"
-          "/usr/bin/cmake"
-        )
-        
-        CMAKE=""
-        for candidate in "${CMAKE_CANDIDATES[@]}"; do
-          if [ -f "$candidate" ]; then
-            CMAKE="$candidate"
-            echo "✅ Found CMake: $CMAKE"
-            break
-          fi
-        done
-        
-        if [ -z "$CMAKE" ]; then
-          echo "❌ No CMake found"
-          exit 1
-        fi
-        
-        echo "=== Final environment ==="
-        echo "OHOS_NDK_HOME: $OHOS_NDK_HOME"
-        echo "SYSROOT: $SYSROOT"
-        echo "CC: $CC"
-        echo "CXX: $CXX"
-        echo "CMAKE: $CMAKE"
-        
-        echo ""
-        echo "=== Testing tools ==="
-        echo "Testing CC:"
-        file "$CC"
-        "$CC" --version 2>&1 | head -3 || echo "CC version check failed"
-        
-        echo ""
-        echo "Testing CMake:"
-        "$CMAKE" --version | head -3 || echo "CMake version check failed"
-        
-        # Save environment for next steps
-        echo "OHOS_NDK_HOME=$OHOS_NDK_HOME" >> $GITHUB_ENV
-        echo "SYSROOT=$SYSROOT" >> $GITHUB_ENV
-        echo "CC=$CC" >> $GITHUB_ENV
-        echo "CXX=$CXX" >> $GITHUB_ENV
-        echo "CMAKE=$CMAKE" >> $GITHUB_ENV
-
-    - name: Build QEMU
-      run: |
-        echo "=== Restoring environment variables ==="
-        # Restore environment variables from previous step
-        export OHOS_NDK_HOME="$OHOS_NDK_HOME"
-        export SYSROOT="$SYSROOT"
-        export CC="$CC"
-        export CXX="$CXX"
-        export CMAKE="$CMAKE"
-
-        echo "=== Building QEMU ==="
+        set -e
         cd third_party/qemu
+        mkdir -p subprojects
+        # 用 wrapdb 安装依赖（交叉编译时 Meson 会按 cross file 构建）
+        meson wrap install glib
+        meson wrap install pcre2
+        meson wrap install libffi
+        meson wrap install pixman
+        # 保险：若网络抖，可重复尝试
+        ls -la subprojects
 
-        mkdir -p build
-        cd build
-
-        echo "Environment check:"
-        echo "CC: $CC"
-        echo "CXX: $CXX"
-        echo "SYSROOT: $SYSROOT"
+    - name: Build QEMU (鸿蒙版 UTM - ARM + X86 多目标)
+      run: |
+        set -e
+        cd third_party/qemu
+        rm -rf build && mkdir build && cd build
         
-        echo ""
-        echo "=== Testing posix_memalign availability ==="
-        # 测试 posix_memalign 是否可用（跳过执行测试，因为交叉编译）
-        cat > test_memalign.c << 'EOF'
-        #include <stdlib.h>
-        #include <stdio.h>
-        int main() {
-            void *ptr;
-            int ret = posix_memalign(&ptr, 16, 1024);
-            if (ret == 0) {
-                printf("posix_memalign available\n");
-                free(ptr);
-                return 0;
-            } else {
-                printf("posix_memalign failed: %d\n", ret);
-                return 1;
-            }
-        }
-        EOF
-        
-        # 只测试编译，不执行（因为交叉编译）
-        if "$CC" -o test_memalign test_memalign.c 2>/dev/null; then
-            echo "✅ posix_memalign compiles successfully"
-            export POSIX_MEMALIGN_AVAILABLE=1
-        else
-            echo "⚠️ posix_memalign compilation failed, will use fallback"
-            export POSIX_MEMALIGN_AVAILABLE=0
-        fi
-        rm -f test_memalign.c test_memalign
-        
-        echo ""
-        echo "=== Testing compiler availability ==="
-        # 测试编译器是否真的可用
-        echo "Testing CC: $CC"
-        if [ -f "$CC" ]; then
-            echo "✅ CC exists: $CC"
-            file "$CC"
-            "$CC" --version 2>&1 | head -3 || echo "CC version check failed"
-        else
-            echo "❌ CC not found: $CC"
-            echo "Available files in llvm/bin:"
-            ls -la "$(dirname "$CC")" || echo "Cannot list llvm/bin"
-            exit 1
-        fi
-        
-        echo ""
-        echo "Testing CXX: $CXX"
-        if [ -f "$CXX" ]; then
-            echo "✅ CXX exists: $CXX"
-            file "$CXX"
-            "$CXX" --version 2>&1 | head -3 || echo "CXX version check failed"
-        else
-            echo "❌ CXX not found: $CXX"
-            exit 1
-        fi
-        
-        echo ""
-        echo "=== Running Configure ==="
-        # 使用华为的编译器包装脚本，让它自动处理 musl 头文件
-        # 添加 gnutls 头文件路径，解决交叉编译问题
-        # 先创建 posix_memalign_fallback.h 文件，供 configure 使用
-        echo "Creating posix_memalign_fallback.h for configure phase"
-        # 确保文件在 build 目录中创建
-        cat > posix_memalign_fallback.h << 'EOF'
-        #ifndef POSIX_MEMALIGN_FALLBACK_H
-        #define POSIX_MEMALIGN_FALLBACK_H
-        
-        #include <stdlib.h>
-        #include <errno.h>
-        #include <stdint.h>
-        
-        // Fallback implementation of posix_memalign for HarmonyOS musl
-        static inline int posix_memalign_fallback(void **memptr, size_t alignment, size_t size) {
-            if (alignment < sizeof(void*) || (alignment & (alignment - 1)) != 0) {
-                return EINVAL;
-            }
-            
-            // Use aligned_alloc if available, otherwise use malloc + manual alignment
-            #ifdef __GLIBC__
-            *memptr = aligned_alloc(alignment, size);
-            return *memptr ? 0 : ENOMEM;
-            #else
-            // Fallback: allocate extra space and align manually
-            void *ptr = malloc(size + alignment - 1);
-            if (!ptr) return ENOMEM;
-            
-            uintptr_t addr = (uintptr_t)ptr;
-            uintptr_t aligned = (addr + alignment - 1) & ~(alignment - 1);
-            *memptr = (void*)aligned;
-            return 0;
-            #endif
-        }
-        
-        // Override posix_memalign if not available
-        #ifndef CONFIG_POSIX_MEMALIGN
-        #define posix_memalign posix_memalign_fallback
-        #endif
-        
-        #endif
-        EOF
-
-        # 获取绝对路径
-        FALLBACK_H_PATH="$(pwd)/posix_memalign_fallback.h"
-        echo "Fallback header path: $FALLBACK_H_PATH"
-        
-        # 使用环境变量中的 gnutls 头文件路径
-        echo "=== 使用 gnutls 头文件路径 ==="
-        echo "GNUTLS_HEADER_PATH from previous step: $GNUTLS_HEADER_PATH"
-        
-        if [ -n "$GNUTLS_HEADER_PATH" ] && [ -f "$GNUTLS_HEADER_PATH/gnutls.h" ]; then
-          GNUTLS_INCLUDE_PATHS="-I$GNUTLS_HEADER_PATH"
-          echo "✓ Using gnutls headers from: $GNUTLS_HEADER_PATH"
-        else
-          echo "❌ No valid gnutls headers found, will disable gnutls support"
-          GNUTLS_INCLUDE_PATHS=""
-        fi
-        
-        echo "Final gnutls include paths: $GNUTLS_INCLUDE_PATHS"
-        
-        export CFLAGS="-march=armv8-a $GNUTLS_INCLUDE_PATHS -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH"
-        export CXXFLAGS="-march=armv8-a $GNUTLS_INCLUDE_PATHS -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH"
-        export CPPFLAGS="$GNUTLS_INCLUDE_PATHS"
-        export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH"
-        export LDFLAGS="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu"
-        
-        # 确保环境变量正确设置
-        export CC="$CC"
-        export CXX="$CXX"
-        export PATH="$(dirname "$CC"):$PATH"
-        
-        echo "Final environment before configure:"
-        echo "CC: $CC"
-        echo "CXX: $CXX"
-        echo "PATH: $PATH"
-        
-        # 测试编译器是否能正常工作
-        echo "Testing compiler with simple test:"
-        echo 'int main() { return 0; }' > test_cc.c
-        if "$CC" -o test_cc test_cc.c 2>&1; then
-            echo "✅ CC test compilation successful"
-        else
-            echo "❌ CC test compilation failed"
-            echo "CC output:"
-            "$CC" -o test_cc test_cc.c 2>&1 || true
-        fi
-        rm -f test_cc.c test_cc
-        
-        # 启用 configure 的详细日志
-        export CONFIGURE_DEBUG=1
-        
-        # 设置 PKG_CONFIG_PATH 作为环境变量（不是 configure 参数）
-        export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH"
-        
-        # 根据 gnutls 头文件可用性决定是否启用 gnutls
-        if [ -n "$GNUTLS_INCLUDE_PATHS" ]; then
-          GNUTLS_OPTION="--enable-gnutls"
-          echo "✓ Enabling gnutls support"
-        else
-          GNUTLS_OPTION="--disable-gnutls"
-          echo "⚠️ Disabling gnutls support (headers not found)"
-        fi
-        
-        # 运行 configure 并捕获退出码
-        if ! ../configure \
-          --target-list=aarch64-softmmu \
-          --cc="$CC" \
-          --cxx="$CXX" \
-          --host-cc="/usr/bin/cc" \
-          --cross-prefix="" \
-          --extra-cflags="-march=armv8-a $GNUTLS_INCLUDE_PATHS -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH -D__aarch64__" \
-          --extra-cxxflags="-march=armv8-a $GNUTLS_INCLUDE_PATHS -DCONFIG_POSIX_MEMALIGN=1 -include $FALLBACK_H_PATH -D__aarch64__" \
-          --extra-ldflags="-L${SYSROOT}/usr/lib -L/usr/lib/x86_64-linux-gnu" \
-          -Db_staticpic=true \
-          -Ddefault_library=static \
+        # 鸿蒙版 UTM 多目标构建：ARM + X86 一次搞定
+        meson setup \
+          --cross-file=../../cross/aarch64-ohos.ini \
+          --default-library=static \
+          -Dtarget_list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
+          -Dcc="${CC}" \
+          -Dcxx="${CXX}" \
+          -Dhost_cc="/usr/bin/cc" \
+          -Dc_args="--sysroot=${SYSROOT} -fPIC -march=armv8-a" \
+          -Dc_link_args="--sysroot=${SYSROOT}" \
+          -Dcpp_args="--sysroot=${SYSROOT} -fPIC -march=armv8-a" \
+          -Dcpp_link_args="--sysroot=${SYSROOT}" \
+          -Dgnutls=disabled \
+          -Dgtk=disabled -Dsdl=disabled -Dcurses=disabled -Dvte=disabled \
+          -Dbrlapi=disabled -Dspice=disabled -Dlibssh=disabled \
+          -Dnettle=disabled -Dgcrypt=disabled \
+          -Dslirp=enabled \
+          -Dvnc=enabled \
+          -Dwrap_mode=forcefallback \
           -Dtools=disabled \
-          --enable-tcg \
-          --disable-kvm \
-          --disable-xen \
-          --disable-werror \
-          --enable-vnc \
-          --enable-slirp \
-          --enable-curl \
-          --enable-fdt \
-          --enable-guest-agent \
-          --enable-vhost-user \
-          --enable-vhost-net \
-          --disable-keyring \
-          --enable-tpm \
-          --disable-gtk \
-          --disable-sdl \
-          --disable-vte \
-          --disable-curses \
-          --disable-brlapi \
-          --disable-spice \
-          --disable-usb-redir \
-          --disable-lzo \
-          --disable-snappy \
-          --disable-bzip2 \
-          --disable-lzfse \
-          --disable-zstd \
-          --disable-libssh \
-          --disable-nettle \
-          --disable-gcrypt \
-          $GNUTLS_OPTION; then
-            echo "❌ Configure failed, showing detailed logs:"
-            echo "=== config.log content ==="
-            if [ -f "config.log" ]; then
-                cat config.log
-            else
-                echo "config.log not found"
-            fi
-            echo "=== End of config.log ==="
-            exit 1
-        fi
-        
-        echo "✅ Configure completed!"
-        
-        echo "=== Fixing posix_memalign detection ==="
-        # 华为 SDK 有 posix_memalign 声明但没有实现，我们需要强制启用
-        echo "Force enabling CONFIG_POSIX_MEMALIGN for HarmonyOS musl compatibility"
-        
-        # posix_memalign_fallback.h 已经在 configure 之前创建了
-        
-        # 查找并修复所有可能的配置文件
-        for config_file in "config.h" "config-host.h" "config-target.h"; do
-            if [ -f "$config_file" ]; then
-                echo "Processing $config_file"
-                # 移除任何现有的 CONFIG_POSIX_MEMALIGN 定义
-                sed -i '/CONFIG_POSIX_MEMALIGN/d' "$config_file"
-                # 添加正确的定义
-                echo "#define CONFIG_POSIX_MEMALIGN 1" >> "$config_file"
-                echo "✓ Added CONFIG_POSIX_MEMALIGN to $config_file"
-            fi
-        done
-        
-        # 如果没有任何配置文件，创建一个
-        if [ ! -f "config.h" ] && [ ! -f "config-host.h" ]; then
-            echo "Creating config.h with CONFIG_POSIX_MEMALIGN"
-            echo "#define CONFIG_POSIX_MEMALIGN 1" > config.h
-        fi
-        
-        # 验证修复结果
-        echo "Verifying CONFIG_POSIX_MEMALIGN definition:"
-        grep -r "CONFIG_POSIX_MEMALIGN" . || echo "No CONFIG_POSIX_MEMALIGN found"
-        
-        echo "=== 🚀 构建 QEMU ==="
-        
-        # 进度条函数
-        show_progress() {
-          local current=$1
-          local total=$2
-          local desc=$3
-          local percent=$((current * 100 / total))
-          local filled=$((percent / 2))
-          local empty=$((50 - filled))
-          printf "\r["
-          printf "%*s" $filled | tr ' ' '='
-          printf "%*s" $empty | tr ' ' ' '
-          printf "] %d%% %s" $percent "$desc"
-        }
-        
-        show_progress 1 5 "设置链接器工具..."
-        # 设置正确的链接器环境变量，使用OHOS NDK的工具
-        export LD="$CC"
-        export AR="$(dirname "$CC")/llvm-ar"
-        export RANLIB="$(dirname "$CC")/llvm-ranlib"
-        export STRIP="$(dirname "$CC")/llvm-strip"
-        
-        # 如果找不到llvm工具，使用系统工具
-        [ ! -f "$AR" ] && export AR="aarch64-linux-gnu-ar"
-        [ ! -f "$RANLIB" ] && export RANLIB="aarch64-linux-gnu-ranlib"
-        [ ! -f "$STRIP" ] && export STRIP="aarch64-linux-gnu-strip"
-        echo " ✅"
-        
-        show_progress 2 5 "验证工具链..."
-        echo "🔧 使用工具:"
-        echo "   LD: $LD"
-        echo "   AR: $AR"
-        echo "   RANLIB: $RANLIB"
-        echo "   STRIP: $STRIP"
-        echo " ✅"
-        
-        show_progress 3 5 "开始编译..."
-        echo "⚙️  使用 $(nproc) 个并行任务编译 QEMU..."
-        echo "📊 编译进度:"
-        
-        # 启动编译并显示进度
-        make -j$(nproc) 2>&1 | while IFS= read -r line; do
-          if [[ $line =~ \[([0-9]+)/([0-9]+)\] ]]; then
-            current="${BASH_REMATCH[1]}"
-            total="${BASH_REMATCH[2]}"
-            show_progress $current $total "编译中..."
-          else
-            echo ""
-            echo "$line"
-          fi
-        done
-        
-        show_progress 5 5 "编译完成!"
-        echo " ✅"
-        
-        echo "✅ QEMU build completed!"
-        
-        echo "=== Checking build results ==="
-        ls -la qemu-system-aarch64 || echo "Main binary not found"
-        find . -name "*.so" -o -name "*.a" | head -10
-        
-        echo "=== Creating libqemu_full.so ==="
-        # 创建 libqemu_full.so 用于鸿蒙 App
-        if [ -f "qemu-system-aarch64" ]; then
-            echo "Creating libqemu_full.so from qemu-system-aarch64..."
-            cp qemu-system-aarch64 libqemu_full.so
-            echo "✓ libqemu_full.so created successfully"
-            ls -la libqemu_full.so
-        else
-            echo "✗ qemu-system-aarch64 not found, cannot create libqemu_full.so"
-        fi
+          -Ddocs=disabled \
+          -Dtests=disabled \
+          -Dfdt=internal \
+          -Dpixman=internal \
+          -Dglib=internal \
+          -Dpcre2=internal \
+          -Dlibffi=internal \
+          ..
 
-    - name: Upload artifacts
+        # 构建所有目标
+        ninja -v -j"$(nproc)"
+
+        # 产物检查 - 鸿蒙版 UTM 多架构支持
+        echo "=== 构建产物检查 ==="
+        file qemu-system-aarch64 || true
+        file qemu-system-x86_64 || true  
+        file qemu-system-i386 || true
+        ls -lh qemu-system-*
+
+        # 创建统一的 libqemu_full.so（优先 ARM，兼容 X86）
+        cp qemu-system-aarch64 libqemu_full.so
+        echo "=== 鸿蒙版 UTM 产物 ==="
+        ls -lh libqemu_full.so
+        file libqemu_full.so
+
+    - name: Upload artifacts (鸿蒙版 UTM 多架构产物)
       uses: actions/upload-artifact@v4
       with:
-        name: qemu-harmonyos-build
+        name: qemu-hmos-utm-multiarch
         path: |
           third_party/qemu/build/qemu-system-aarch64
+          third_party/qemu/build/qemu-system-x86_64
+          third_party/qemu/build/qemu-system-i386
           third_party/qemu/build/libqemu_full.so
-          third_party/qemu/build/*.so
-          third_party/qemu/build/*.a
-        retention-days: 7
+        retention-days: 30
