@@ -151,12 +151,10 @@ jobs:
           ls -la "$HOME/.local/bin" || true
           exit 1
         fi
-        # Export pkg-config sysroot so Meson subprojects resolve headers/libs within OHOS sysroot
+        # Export pkg-config：同时搜索宿主机（GLib/Pixman）和 OHOS sysroot
         export PKG_CONFIG_DIR=
-        export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
-        export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${SYSROOT}/lib/pkgconfig"
-        echo "PKG_CONFIG_SYSROOT_DIR=${PKG_CONFIG_SYSROOT_DIR}"
-        echo "PKG_CONFIG_LIBDIR=${PKG_CONFIG_LIBDIR}"
+        export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig:${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${SYSROOT}/lib/pkgconfig"
+        echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH}"
         CROSS_FILE="$GITHUB_WORKSPACE/cross/aarch64-ohos.ini"
         echo "Using CROSS_FILE=$CROSS_FILE"
         if [ ! -f "$CROSS_FILE" ]; then
