@@ -10,24 +10,24 @@ jobs:
     runs-on: ubuntu-24.04
     
     steps:
-    - name: Checkout (with submodules)
+    - name: 下下来
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    - name: Install minimal deps (host tools only)
+    - name: 安装最小的依赖 (仅主机工具)
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential curl wget unzip python3 \
                                 pkg-config git ca-certificates
 
-    - name: Setup Python (for Meson/Ninja)
+    - name: 设置 Python (用于 Meson/Ninja)
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         cache: 'pip'
 
-    - name: Install Meson>=1.6 & Ninja, and lock PATH
+    - name: 安装 Meson>=1.6 & Ninja, 并锁定 PATH
       run: |
         python -m pip install --upgrade --user 'meson>=1.6.0' 'ninja>=1.11'
         echo "$HOME/.local/bin" >> $GITHUB_PATH
@@ -44,7 +44,7 @@ jobs:
           echo "::error::Meson too old"; exit 1; fi
         type -a meson || true
 
-    - name: Download HarmonyOS/OpenHarmony NDK (linux)
+    - name: 下载鸿蒙的 NDK (linux版)
       run: |
         set -e
         urls=(
@@ -100,7 +100,7 @@ jobs:
 
         echo "ndk_dir=$native_dir" >> $GITHUB_OUTPUT
 
-    - name: Prepare Meson cross file
+    - name: 准备 Meson 要用的交叉编译文件
       run: |
         set -e
         mkdir -p cross
@@ -124,7 +124,7 @@ jobs:
         echo "Preview:"
         sed -n '1,80p' cross/aarch64-ohos.ini
 
-    - name: Provide subprojects (glib/pcre2/libffi/pixman via wraps)
+    - name: 提供子项目 (glib/pcre2/libffi/pixman 通过 wraps)
       run: |
         set -e
         cd third_party/qemu
@@ -135,7 +135,7 @@ jobs:
         "$MESON" wrap install pixman
         ls -la subprojects
 
-    - name: Build QEMU (鸿蒙版 UTM - ARM + X86 多目标)
+    - name: 开始构建QEMU(鸿蒙版 UTM - ARM + X86 多目标)
       run: |
         set -e
         echo "MESON is $MESON"
@@ -177,13 +177,6 @@ jobs:
           --cross-file="$CROSS_FILE" \
           --default-library=static \
           ${TLIST_ARG} \
-          -Dcc="${CC}" \
-          -Dcxx="${CXX}" \
-          -Dhost_cc="/usr/bin/cc" \
-          -Dc_args="--sysroot=${SYSROOT} -fPIC -march=armv8-a" \
-          -Dc_link_args="--sysroot=${SYSROOT}" \
-          -Dcpp_args="--sysroot=${SYSROOT} -fPIC -march=armv8-a" \
-          -Dcpp_link_args="--sysroot=${SYSROOT}" \
           -Dgnutls=disabled \
           -Dgtk=disabled -Dsdl=disabled -Dcurses=disabled -Dvte=disabled \
           -Dbrlapi=disabled -Dspice=disabled -Dlibssh=disabled \
@@ -228,7 +221,7 @@ jobs:
         # 构建所有目标
         "$NINJA" -v -j"$(nproc)"
 
-    - name: Upload artifacts (鸿蒙版 UTM 多架构产物)
+    - name: 上传产物 (鸿蒙版 UTM 多架构产物)
       uses: actions/upload-artifact@v4
       with:
         name: qemu-hmos-utm-multiarch
