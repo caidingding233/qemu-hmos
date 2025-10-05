@@ -250,7 +250,7 @@ static inline TranslationBlock *tb_lookup(CPUState *cpu, TCGTBCPUState s)
     }
 
     jc->array[hash].pc = s.pc;
-    qatomic_set(&jc->array[hash].tb, tb);v
+    qatomic_set(&jc->array[hash].tb, tb);
 
 hit:
     /*
