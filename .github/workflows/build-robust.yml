@@ -182,7 +182,7 @@ jobs:
           --cxx="${CXX}" \
           --host-cc="/usr/bin/cc" \
           --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
-          --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined" \
+          --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined -D_LINUX_VIRTIO_RING_H -D_LINUX_VIRTIO_TYPES_H" \
           --extra-ldflags="--sysroot=${SYSROOT}" \
           --disable-gnutls \
           --disable-gtk --disable-sdl --disable-curses --disable-vte \
