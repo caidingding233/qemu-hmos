@@ -15,19 +15,19 @@ jobs:
       with:
         submodules: recursive
 
-    - name: 安装最小的依赖 (仅主机工具)
+    - name: 然后安装最小的依赖 (仅主机工具)
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential curl wget unzip python3 \
                                 pkg-config git ca-certificates
 
-    - name: 设置 Python (用于 Meson/Ninja)
+    - name: 再呢就是设置 Python (用于 Meson/Ninja)
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         cache: 'pip'
 
-    - name: 安装 Meson>=1.6 & Ninja, 并锁定 PATH
+    - name: 下一步下 Meson>=1.6 & Ninja, 并锁定 PATH
       run: |
         python -m pip install --upgrade --user 'meson>=1.6.0' 'ninja>=1.11'
         echo "$HOME/.local/bin" >> $GITHUB_PATH
@@ -44,7 +44,7 @@ jobs:
           echo "::error::Meson too old"; exit 1; fi
         type -a meson || true
 
-    - name: 下载鸿蒙的 NDK (linux版)
+    - name: 再就是下鸿蒙的 NDK (linux版)
       run: |
         set -e
         urls=(
@@ -64,7 +64,7 @@ jobs:
         rm -rf ohos-sdk/ohos ohos-sdk/windows || true
         ls -la ohos-sdk/linux
 
-    - name: Locate native toolchain (clang & sysroot)
+    - name: 现在来找找到 native 工具链 (clang & sysroot)
       id: ndk
       run: |
         set -e
@@ -100,7 +100,7 @@ jobs:
 
         echo "ndk_dir=$native_dir" >> $GITHUB_OUTPUT
 
-    - name: 准备 Meson 要用的交叉编译文件
+    - name: 在准备 Meson 要用的交叉编译文件(aarch64-ohos.ini)
       run: |
         set -e
         mkdir -p cross
@@ -130,7 +130,7 @@ jobs:
         echo "Preview:"
         sed -n '1,80p' cross/aarch64-ohos.ini
 
-    - name: 提供子项目 (glib/pcre2/libffi/pixman 通过 wraps)
+    - name: 再就是提供子项目 (glib/pcre2/libffi/pixman 通过 wraps包)
       run: |
         set -e
         cd third_party/qemu
@@ -141,7 +141,7 @@ jobs:
         "$MESON" wrap install pixman
         ls -la subprojects
 
-    - name: 开始构建QEMU(鸿蒙版 UTM - ARM + X86 多目标)
+    - name: 最后就是开始构建QEMU(ARM + X86 多目标构建)
       run: |
         set -e
         echo "MESON is $MESON"
@@ -194,7 +194,8 @@ jobs:
           --enable-slirp \
           --enable-vnc \
           -Dwrap_mode=forcefallback \
-          -Ddefault_library=static
+          -Ddefault_library=static \
+          -Db_staticpic=true
 
         # 构建所有目标
         "$NINJA" -v -j"$(nproc)"
@@ -223,7 +224,7 @@ jobs:
           echo "::warning::No qemu-system-* binaries were produced; please inspect meson-logs/meson-log.txt."
         fi
 
-    - name: 上传产物 (鸿蒙版 UTM 多架构产物)
+    - name: OK啊上传产物
       uses: actions/upload-artifact@v4
       with:
         name: qemu-hmos-utm-multiarch
