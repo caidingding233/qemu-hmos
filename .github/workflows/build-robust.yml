@@ -188,6 +188,7 @@ jobs:
           --disable-gtk --disable-sdl --disable-curses --disable-vte \
           --disable-brlapi --disable-spice --disable-libssh \
           --disable-nettle --disable-gcrypt \
+          --enable-tcg \
           --enable-slirp \
           --enable-vnc \
           -Dwrap_mode=forcefallback \
