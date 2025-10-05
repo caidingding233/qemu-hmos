@@ -19,7 +19,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential curl wget unzip python3 \
-                                pkg-config git ca-certificates
+                                pkg-config git ca-certificates \
+                                libglib2.0-dev libpixman-1-dev
 
     - name: 再呢就是设置 Python (用于 Meson/Ninja)
       uses: actions/setup-python@v5
@@ -130,15 +131,13 @@ jobs:
         echo "Preview:"
         sed -n '1,80p' cross/aarch64-ohos.ini
 
-    - name: 再就是提供子项目 (glib/pcre2/libffi/pixman 通过 wraps包)
+    - name: 再就是提供子项目 (pcre2/libffi 通过 wraps包，glib/pixman用系统的)
       run: |
         set -e
         cd third_party/qemu
         mkdir -p subprojects
-        "$MESON" wrap install glib
         "$MESON" wrap install pcre2
         "$MESON" wrap install libffi
-        "$MESON" wrap install pixman
         ls -la subprojects
 
     - name: 最后就是开始构建QEMU(ARM + X86 多目标构建)
