@@ -118,15 +118,6 @@ jobs:
         cpu_family = 'aarch64'
         cpu = 'armv8'
         endian = 'little'
-
-        [paths]
-        sys_root = '${SYSROOT}'
-
-        [built-in options]
-        c_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
-        cpp_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
-        c_link_args = ['--sysroot=${SYSROOT}']
-        cpp_link_args = ['--sysroot=${SYSROOT}']
         EOF
         echo "Cross file written to: $GITHUB_WORKSPACE/cross/aarch64-ohos.ini"
         ls -la cross
@@ -155,6 +146,12 @@ jobs:
           ls -la "$HOME/.local/bin" || true
           exit 1
         fi
+        # Export pkg-config sysroot so Meson subprojects resolve headers/libs within OHOS sysroot
+        export PKG_CONFIG_DIR=
+        export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
+        export PKG_CONFIG_LIBDIR="${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${SYSROOT}/lib/pkgconfig"
+        echo "PKG_CONFIG_SYSROOT_DIR=${PKG_CONFIG_SYSROOT_DIR}"
+        echo "PKG_CONFIG_LIBDIR=${PKG_CONFIG_LIBDIR}"
         CROSS_FILE="$GITHUB_WORKSPACE/cross/aarch64-ohos.ini"
         echo "Using CROSS_FILE=$CROSS_FILE"
         if [ ! -f "$CROSS_FILE" ]; then
