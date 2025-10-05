@@ -198,7 +198,8 @@ jobs:
           -Dlibvduse=disabled \
           -Dvduse_blk_export=disabled \
           -Dvhost_net=disabled \
-          -Dvhost_kernel=disabled
+          -Dvhost_kernel=disabled \
+          -Dkeyring=disabled
 
         # 构建所有目标
         "$NINJA" -v -j"$(nproc)"
