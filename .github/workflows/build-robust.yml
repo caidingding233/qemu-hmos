@@ -194,8 +194,7 @@ jobs:
           --enable-slirp \
           --enable-vnc \
           -Dwrap_mode=forcefallback \
-          -Ddefault_library=static \
-          --meson="$MESON"
+          -Ddefault_library=static
 
         # 构建所有目标
         "$NINJA" -v -j"$(nproc)"
