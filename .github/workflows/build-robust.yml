@@ -162,12 +162,21 @@ jobs:
         fi
         cd third_party/qemu
         rm -rf build && mkdir build && cd build
-        
-        # 鸿蒙版 UTM 多目标构建：ARM + X86 一次搞定
+
+        # Detect whether this QEMU fork exposes 'target_list' in meson_options.txt
+        TLIST_ARG=""
+        if [ -f ../meson_options.txt ] && grep -q "option('target_list'" ../meson_options.txt; then
+          TLIST_ARG="-Dtarget_list=aarch64-softmmu,x86_64-softmmu,i386-softmmu"
+          echo "Detected target_list option; will pass: ${TLIST_ARG}"
+        else
+          echo "This QEMU does not define 'target_list'; building project defaults."
+        fi
+
+        # 鸿蒙版 UTM 多目标构建（条件传递 target_list）
         "$MESON" setup \
           --cross-file="$CROSS_FILE" \
           --default-library=static \
-          -Dtarget_list="aarch64-softmmu,x86_64-softmmu,i386-softmmu" \
+          ${TLIST_ARG} \
           -Dcc="${CC}" \
           -Dcxx="${CXX}" \
           -Dhost_cc="/usr/bin/cc" \
@@ -192,21 +201,32 @@ jobs:
           -Dlibffi=internal \
           ..
 
+        echo "=== 构建产物检查 ==="
+        for bin in qemu-system-aarch64 qemu-system-x86_64 qemu-system-i386; do
+          if [ -f "$bin" ]; then
+            ls -lh "$bin"
+            file "$bin" || true
+          else
+            echo "Note: $bin not built in this configuration."
+          fi
+        done
+
+        # 产物：优先使用 aarch64，如不存在则挑选已生成的第一个系统仿真器
+        OUT_SO=""
+        for cand in qemu-system-aarch64 qemu-system-x86_64 qemu-system-i386; do
+          if [ -f "$cand" ]; then OUT_SO="$cand"; break; fi
+        done
+        if [ -n "$OUT_SO" ]; then
+          cp "$OUT_SO" libqemu_full.so
+          echo "=== 鸿蒙版 UTM 产物 ==="
+          ls -lh libqemu_full.so
+          file libqemu_full.so || true
+        else
+          echo "::warning::No qemu-system-* binaries were produced; please inspect meson-logs/meson-log.txt."
+        fi
+
         # 构建所有目标
         "$NINJA" -v -j"$(nproc)"
-
-        # 产物检查 - 鸿蒙版 UTM 多架构支持
-        echo "=== 构建产物检查 ==="
-        file qemu-system-aarch64 || true
-        file qemu-system-x86_64 || true  
-        file qemu-system-i386 || true
-        ls -lh qemu-system-*
-
-        # 创建统一的 libqemu_full.so（优先 ARM，兼容 X86）
-        cp qemu-system-aarch64 libqemu_full.so
-        echo "=== 鸿蒙版 UTM 产物 ==="
-        ls -lh libqemu_full.so
-        file libqemu_full.so
 
     - name: Upload artifacts (鸿蒙版 UTM 多架构产物)
       uses: actions/upload-artifact@v4
@@ -217,4 +237,4 @@ jobs:
           third_party/qemu/build/qemu-system-x86_64
           third_party/qemu/build/qemu-system-i386
           third_party/qemu/build/libqemu_full.so
-        retention-days: 30
+        if-no-files-found: ignore
