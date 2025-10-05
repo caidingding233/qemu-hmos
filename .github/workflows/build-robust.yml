@@ -122,8 +122,8 @@ jobs:
         endian = 'little'
 
         [built-in options]
-        c_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
-        cpp_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden']
+        c_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden','-nostdinc','-I${SYSROOT}/usr/include','-I/usr/include/glib-2.0','-I/usr/lib/x86_64-linux-gnu/glib-2.0/include']
+        cpp_args = ['--sysroot=${SYSROOT}','-fPIC','-O2','-pipe','-fvisibility=hidden','-nostdinc','-I${SYSROOT}/usr/include','-I/usr/include/glib-2.0','-I/usr/lib/x86_64-linux-gnu/glib-2.0/include']
         c_link_args = ['--sysroot=${SYSROOT}']
         cpp_link_args = ['--sysroot=${SYSROOT}']
         EOF
@@ -152,9 +152,9 @@ jobs:
           ls -la "$HOME/.local/bin" || true
           exit 1
         fi
-        # Export pkg-config：同时搜索宿主机（GLib/Pixman）和 OHOS sysroot
+        # Export pkg-config：只使用 OHOS sysroot，避免主机系统头文件污染
         export PKG_CONFIG_DIR=
-        export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig:${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${SYSROOT}/lib/pkgconfig"
+        export PKG_CONFIG_PATH="${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${SYSROOT}/lib/pkgconfig"
         echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH}"
         CROSS_FILE="$GITHUB_WORKSPACE/cross/aarch64-ohos.ini"
         echo "Using CROSS_FILE=$CROSS_FILE"
