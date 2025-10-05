@@ -1,4 +1,4 @@
-# 鸿蒙版 UTM - 完整路线图
+# QEMU鸿蒙版 - 完整路线图
 
 ## 项目愿景
 **目标：打造"鸿蒙版 UTM"** - 在HarmonyOS设备上提供完整的虚拟机管理体验，实现与鸿蒙系统的"一体化"体验。
@@ -13,8 +13,8 @@
 ## 0) 总体策略（像 UTM 一样分层）
 
 ### Core（QEMU 内核）
-- **aarch64-softmmu**（主力：Win11 ARM）
-- **x86_64-softmmu/i386-softmmu**（补充：Win10/11 x64 纯模拟）
+- **aarch64-softmmu**（主力：Win11/Linux ARM）
+- **x86_64-softmmu/i386-softmmu**（补充：Win10/11、macOS等的 x64 纯模拟）
 
 ### 显示层
 - **安装期**：VNC
@@ -102,17 +102,18 @@ qemu-system-aarch64 \
 - 在 Win11 ARM 内直接安装 OneDrive/Office/Microsoft Store，开机自启
 - App 端做自动化：首启脚本启用 RDP、同步时区/证书、安装 Edge/OneDrive
 
-### 档位 2：Host→Guest 映射（"像原生"体验）
-- 在鸿蒙 App 侧做一个**"OneDrive 缓存目录"**（可选 Graph API 同步；或用户手动拷贝）
-- 通过 RDP 驱动器重定向把该目录映射为来宾的 Z:
-- **体验**：用户把文件放进鸿蒙的 OneDrive 文件夹，来宾里立刻看到；反之亦然（靠 App 后台同步 Graph）
+### 档位 2：Guest→Host 映射（"像原生"体验）
+- 首先呢 就是在Host里面**新建一个文件夹作为OneDrive的映射文件夹** 
+- 然后呢 在客户机里面把**OneDrive映射到一个共享磁盘** 映射到刚刚在鸿蒙侧搞的这个OneDrive的映射文件夹     
+- 然后呢 鸿蒙主机则是把他映射到App沙箱内的**OneDrive 文件夹**   
+- **体验**：用户把文件放进鸿蒙的 OneDrive 文件夹，来宾里立刻看到；反之亦然（靠 App 后台映射和同步）
 
 ### 档位 3：virtiofs/9p/Samba（高阶）
 - 给 Linux 来宾：优先 virtiofs / 9p（真共享）
 - 给 Windows 来宾：可选 Samba 共享（App 内置小型 SMB 服务）或关注 Windows virtiofs 驱动（适配成本较高）
 - **提示**：Samba 要处理权限/来宾帐号、局域网可见性
 
-**建议上线顺序**：先档位 1 → 档位 2（Graph 同步做成可选插件）→ 研究档位 3
+**建议上线顺序**：先档位 1 → 档位 2（同步做成可选插件）→ 研究档位 3
 
 ---
 
@@ -138,10 +139,10 @@ qemu-system-aarch64 \
 ## 6) 和鸿蒙的"像原生"整合
 
 ### StartProgram
-在 App 里给某 EXE 建入口：点击即连接 RDP 并在来宾拉起该 EXE
+安装一个代理App 每次启动这个代理App 这个App则会连接到虚拟机的RemoteApp 来形成完整的映射
 
 ### 桌面/服务卡片
-将"虚拟机/应用"钉到桌面（PC：可写桌面目录时写快捷方式；平板：服务卡片）
+将"虚拟机/应用"钉到桌面（PC和平板：服务卡片）
 
 ### 剪贴板
 RDP 自带；对纯 VNC 提供"复制/粘贴桥"
@@ -168,12 +169,12 @@ VM 休眠/快照/关机，一键完成
 - `ohos.permission.kernel.ALLOW_EXECUTABLE_FORT_MEMORY` 或 `ALLOW_USE_JITFORT_INTERFACE`
 
 #### 浮窗/虚拟屏/输入
-- `ohos.permission.SYSTEM_FLOAT_WINDOW`（PC/2in1）
+- `ohos.permission.SYSTEM_FLOAT_WINDOW`（2in1/平板）
 - `ohos.permission.ACCESS_VIRTUAL_SCREEN`（投屏/多视图）
 - `ohos.permission.INTERCEPT_INPUT_EVENT` / `INPUT_MONITORING`（远程/云桌面类）
 
 #### 文件与桌面
-- `ohos.permission.READ_WRITE_DESKTOP_DIRECTORY`（PC/2in1）
+- `ohos.permission.READ_WRITE_DESKTOP_DIRECTORY`（2in1/平板）
 - `ohos.permission.READ_WRITE_USER_FILE`（IDE/高阶文件操作，白名单制）
 
 #### USB/HID（可选，做 U 盘/手柄直通）
@@ -204,31 +205,43 @@ VM 休眠/快照/关机，一键完成
 
 ```bash
 # 用"原生 QEMU 子命令"创建
-qemu -qemu-core create \
-  --name Win11ARM \
-  --target aarch64 \
-  --disk win11arm.qcow2 --size 64G \
-  --memory 6G --smp 4 \
-  --iso Win11_ARM.iso
+qemu -original qemu-system-aarch64 \
+  -machine virt,gic-version=3,virtualization=on \
+  -cpu max -smp 4 -m 6144 \
+  -accel tcg,thread=multi,tb-size=128 \
+  -bios edk2-aarch64-code.fd \
+  -device virtio-gpu-pci \
+  -device nec-usb-xhci -device usb-kbd -device usb-mouse \
+  -drive if=none,id=nv,file=win11arm.qcow2,format=qcow2,cache=writeback,aio=threads,discard=unmap \
+  -device nvme,drive=nv,serial=nvme0 \
+  -cdrom Win11_ARM.iso \
+  -netdev user,id=n0,hostfwd=tcp:127.0.0.1:3390-:3389 \
+  -device virtio-net-pci,netdev=n0 \
+  -vnc :1
 
 # 启动（暴露 RDP 转发）
-qemu -qemu-core start Win11ARM \
-  --hostfwd 127.0.0.1:3390-:3389 \
-  --vnc :1
+qemu -original qemu-system-x86_64 \
+-m 4096 \
+-smp 4 \
+-hda /path/to/disk_image.img \
+-cdrom /path/to/cd_image.iso \
+-boot d
 
-# 管理器：文件传输 / 执行命令 / 电源
-qemu -manager copy --vm Win11ARM --from host:/data/onedrive/ --to guest:Z:/
+# 管理器：文件传输 / 执行命令 / 电源 / 客户机命令行
+qemu -manager copy --vm Win11ARM --from host:/sandbox/onedrive/ --to guest:Z:/
 qemu -manager exec --vm Win11ARM -- "powershell Start-Process notepad.exe"
 qemu -manager power --vm Win11ARM --suspend
+qemu -manager power --vm Win11ARM --off
+qemu -manager shell --vm Linux -c "whoami"
 ```
 
-**普通用户全部走 UI；CLI 仅 PC/2in1 下发**
+**普通用户全部走 UI；CLI 仅 2in1/平板 下发**
 
 ---
 
 ## 10) 性能与预期
 
-- **Win11 ARM**：在纯 TCG 下也能达到"可办公"的档位（RDP 渲染帮助很大）
+- **Win11/Linux ARM**：在纯 TCG 下也能达到"可办公"的档位（RDP 渲染帮助很大）
 - **x86_64 Guest**：能跑，但较慢；只做兼容备用
 - **RDP 对 HiDPI/柔光屏体验提升显著**；VNC 仅用于安装/紧急救援
 
