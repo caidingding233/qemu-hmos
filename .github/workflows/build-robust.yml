@@ -183,7 +183,7 @@ jobs:
           --cxx="${CXX}" \
           --host-cc="/usr/bin/cc" \
           --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
-          --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined -I/usr/include" \
+          --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined" \
           --extra-ldflags="--sysroot=${SYSROOT}" \
           --disable-gnutls \
           --disable-gtk --disable-sdl --disable-curses --disable-vte \
@@ -201,7 +201,8 @@ jobs:
           -Dvduse_blk_export=disabled \
           -Dvhost_net=disabled \
           -Dvhost_kernel=disabled \
-          -Dkeyring=disabled
+          -Dkeyring=disabled \
+          -Dzstd=disabled
 
         # 构建所有目标
         "$NINJA" -v -j"$(nproc)"
