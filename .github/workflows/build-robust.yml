@@ -21,7 +21,7 @@ jobs:
         sudo apt-get install -y build-essential curl wget unzip python3 \
                                 pkg-config git ca-certificates \
                                 libglib2.0-dev libpixman-1-dev \
-                                libzstd-dev
+                                libzstd-dev zstd
 
     - name: 再呢就是设置 Python (用于 Meson/Ninja)
       uses: actions/setup-python@v5
@@ -183,7 +183,7 @@ jobs:
           --cxx="${CXX}" \
           --host-cc="/usr/bin/cc" \
           --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
-          --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined" \
+          --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined -I/usr/include" \
           --extra-ldflags="--sysroot=${SYSROOT}" \
           --disable-gnutls \
           --disable-gtk --disable-sdl --disable-curses --disable-vte \
