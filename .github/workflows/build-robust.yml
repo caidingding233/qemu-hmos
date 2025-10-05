@@ -192,7 +192,13 @@ jobs:
           --enable-vnc \
           -Dwrap_mode=forcefallback \
           -Ddefault_library=static \
-          -Db_staticpic=true
+          -Db_staticpic=true \
+          -Dvhost_user=disabled \
+          -Dvhost_user_blk_server=disabled \
+          -Dlibvduse=disabled \
+          -Dvduse_blk_export=disabled \
+          -Dvhost_net=disabled \
+          -Dvhost_kernel=disabled
 
         # 构建所有目标
         "$NINJA" -v -j"$(nproc)"
