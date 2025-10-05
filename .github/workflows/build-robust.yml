@@ -20,7 +20,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential curl wget unzip python3 \
                                 pkg-config git ca-certificates \
-                                libglib2.0-dev libpixman-1-dev
+                                libglib2.0-dev libpixman-1-dev \
+                                libzstd-dev
 
     - name: 再呢就是设置 Python (用于 Meson/Ninja)
       uses: actions/setup-python@v5
