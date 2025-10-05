@@ -3126,10 +3126,10 @@ static int virt_kvm_type(MachineState *ms, const char *type_str)
 
     // ARM 增强：监控 KVM IPA 大小，优化鸿蒙 ARM64 VM 内存 (from qemu-code merge)
     if (kvm_enabled()) {
-        qemu_log_mask(LOG_INFO, "ARM KVM IPA size: %d bits (max %d, fixed %s)\n", 
+        qemu_log_mask(LOG_GUEST_ERROR, "ARM KVM IPA size: %d bits (max %d, fixed %s)\n",
                       max_vm_pa_size, 52, fixed_ipa ? "yes" : "no");  // 监控：日志 ARM IPA
         if (max_vm_pa_size < 40) {
-            qemu_log_mask(LOG_WARNING, "ARM KVM IPA size too small for large VM; consider upgrading host\n");  // 错误监控
+            qemu_log_mask(LOG_GUEST_ERROR, "ARM KVM IPA size too small for large VM; consider upgrading host\n");  // 错误监控
         }
     }
 
