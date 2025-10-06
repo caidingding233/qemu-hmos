@@ -34,6 +34,10 @@ jobs:
     - name: Download and setup HarmonyOS SDK
       run: |
         echo "=== Downloading HarmonyOS SDK ==="
+        # 安装必要的工具
+        sudo apt-get update
+        sudo apt-get install -y unzip file
+
         # 使用HarmonyOS Next官方下载链接
         SDK_URLS=(
           "https://repo.huaweicloud.com/harmonyos/os/6.0-Release/ohos-sdk-windows_linux-public.tar.gz"
@@ -76,10 +80,32 @@ jobs:
         echo ""
         echo "Looking for SDK-related directories:"
         find . -maxdepth 2 -name "*ohos*" -o -name "*harmonyos*" -o -name "*sdk*" -o -name "*native*" -type d
+
+        # 检查是否需要解压内部的zip文件
+        if [ -d "linux" ]; then
+          echo "=== Checking for nested zip files ==="
+          cd linux
+          # 找到native相关的zip文件
+          NATIVE_ZIP=$(ls native-linux-x64-*.zip 2>/dev/null | head -1)
+          if [ -n "$NATIVE_ZIP" ]; then
+            echo "Found native zip: $NATIVE_ZIP"
+            echo "=== Extracting native SDK ==="
+            unzip -q "$NATIVE_ZIP"
+            rm "$NATIVE_ZIP"  # 清理zip文件
+            cd ..
+            echo "✅ Native SDK extracted"
+          else
+            echo "No native zip files found in linux directory"
+            cd ..
+          fi
+        fi
         
-        # 查找native目录 - 优先查找SDK相关目录
+        # 查找native目录 - 根据HarmonyOS SDK结构查找
         NATIVE_DIR=""
-        if [ -d "ohos-sdk/linux/native" ]; then
+        if [ -d "linux/native" ]; then
+          NATIVE_DIR="linux/native"
+          echo "Found native directory: $NATIVE_DIR"
+        elif [ -d "ohos-sdk/linux/native" ]; then
           NATIVE_DIR="ohos-sdk/linux/native"
           echo "Found native directory: $NATIVE_DIR"
         elif [ -d "native" ]; then
@@ -90,18 +116,6 @@ jobs:
           else
             echo "⚠️ Found native directory but structure incomplete, continuing search..."
           fi
-        fi
-
-        # 如果还没找到，在解压后的目录中搜索
-        if [ -z "$NATIVE_DIR" ]; then
-          # 只在解压后的文件目录中查找，避免找到源码中的native目录
-          for dir in ohos-sdk linux native-*; do
-            if [ -d "$dir" ] && [ -d "$dir/native" ]; then
-              NATIVE_DIR="$dir/native"
-              echo "Found native directory: $NATIVE_DIR"
-              break
-            fi
-          done
         fi
 
         # 最后的查找，确保不误找源码目录
