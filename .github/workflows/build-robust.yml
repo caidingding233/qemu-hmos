@@ -28,10 +28,14 @@ jobs:
         # 启用多架构支持
         sudo dpkg --add-architecture arm64
         
-        # 添加 arm64 包源
+        # 添加 arm64 包源（只使用 ports.ubuntu.com，因为 security.ubuntu.com 不支持 ARM64）
         echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
         echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
         echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+        
+        # 禁用默认源中的 ARM64 架构，避免 404 错误
+        sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+        sudo sed -i 's/^deb-src /deb-src [arch=amd64] /' /etc/apt/sources.list
         
         # 更新包列表
         sudo apt-get update
