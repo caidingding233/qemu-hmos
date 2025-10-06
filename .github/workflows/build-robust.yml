@@ -273,7 +273,7 @@ jobs:
                 --cc="${CC}" \
                 --cxx="${CXX}" \
                 --host-cc="/usr/bin/cc" \
-                --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
+                $TLIST_ARG \
                 --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined" \
                 --extra-ldflags="--sysroot=${SYSROOT}" \
                 --static \
@@ -307,7 +307,7 @@ jobs:
                 --cc="${CC}" \
                 --cxx="${CXX}" \
                 --host-cc="/usr/bin/cc" \
-                --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
+                $TLIST_ARG \
                 --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined -I/usr/include/aarch64-linux-gnu" \
                 --extra-ldflags="--sysroot=${SYSROOT} -L/usr/lib/aarch64-linux-gnu" \
                 --disable-gnutls \
