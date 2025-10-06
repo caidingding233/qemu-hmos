@@ -1,0 +1,234 @@
+name: Build HarmonyOS HAP Package
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'entry/**'
+      - 'AppScope/**'
+      - 'build-profile.json5'
+      - 'hvigorfile.ts'
+      - '.github/workflows/build-hap-package.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'entry/**'
+      - 'AppScope/**'
+      - 'build-profile.json5'
+      - 'hvigorfile.ts'
+      - '.github/workflows/build-hap-package.yml'
+  workflow_dispatch:
+    inputs:
+      so-artifact-name:
+        description: 'SO libraries artifact name'
+        required: false
+        default: ''
+      firmware-artifact-name:
+        description: 'UEFI firmware artifact name'
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      so-artifact-name:
+        description: 'SO libraries artifact name'
+        required: false
+        type: string
+        default: ''
+      firmware-artifact-name:
+        description: 'UEFI firmware artifact name'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  build-hap-package:
+    runs-on: self-hosted
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: false
+        
+    - name: Download SO libraries
+      if: ${{ github.event.inputs.so-artifact-name != '' }}
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ github.event.inputs.so-artifact-name }}
+        path: so-artifacts/
+        
+    - name: Download UEFI firmware
+      if: ${{ github.event.inputs.firmware-artifact-name != '' }}
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ github.event.inputs.firmware-artifact-name }}
+        path: firmware-artifacts/
+        
+    - name: Download latest SO libraries
+      if: ${{ github.event.inputs.so-artifact-name == '' }}
+      uses: actions/download-artifact@v4
+      with:
+        name: qemu-so-libraries-${{ github.sha }}
+        path: so-artifacts/
+        
+    - name: Download latest UEFI firmware
+      if: ${{ github.event.inputs.firmware-artifact-name == '' }}
+      uses: actions/download-artifact@v4
+      with:
+        name: uefi-firmware-${{ github.sha }}
+        path: firmware-artifacts/
+        
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+        
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Get Release Assets
+      id: get_assets
+      run: |
+        # 获取 release 的信息
+        RELEASE_JSON=$(curl -s -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/harmonyos-dev/hos-sdk/releases/latest)
+        
+        # 从 release 的信息中提取需要的 asset URL
+        ASSET_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[] | select(.name | test("commandline-tools-linux-2.0.0.2.zip")) | .browser_download_url')
+        
+        # 输出 asset URL
+        echo "Asset URL: $ASSET_URL"
+        
+        # 下载 release asset
+        curl -LJO "$ASSET_URL"
+        
+    - name: Unzip Release Assets
+      run: |
+        unzip commandline-tools-linux-2.0.0.2.zip
+        
+    - name: Install HarmonyOS SDK
+      run: |
+        # 设置Java选项处理网络问题
+        export JAVA_TOOL_OPTIONS="$JAVA_TOOL_OPTIONS -Duser.country=CN"
+        
+        chmod +x command-line-tools/sdkmanager/bin/sdkmgr
+        
+        # 安装 HarmonyOS SDK
+        command-line-tools/sdkmanager/bin/sdkmgr install toolchains:9 OpenHarmony/toolchains:9 --accept-license
+        
+        # 设置SDK环境变量
+        export HOS_SDK_HOME=$(pwd)/hwsdk
+        echo "HOS_SDK_HOME=$HOS_SDK_HOME" >> $GITHUB_ENV
+        
+        echo "✅ HarmonyOS SDK installed"
+        echo "SDK_HOME: $HOS_SDK_HOME"
+        
+    - name: Create OHPM package.json file
+      run: |
+        npm init -y
+        npm config set @ohos:registry=https://repo.harmonyos.com/npm/
+        npm install @ohos/hvigor@2.4.2 @ohos/hvigor-ohos-plugin@2.4.2
+        
+        # 验证安装
+        node --version
+        npm --version
+        ./node_modules/.bin/hvigor --version
+        
+    - name: Prepare project files
+      run: |
+        echo "=== Preparing project files ==="
+        
+        # 复制SO库文件
+        if [ -d "so-artifacts/libs/arm64-v8a" ]; then
+          mkdir -p entry/src/main/libs/arm64-v8a
+          cp so-artifacts/libs/arm64-v8a/*.so entry/src/main/libs/arm64-v8a/
+          echo "✅ SO libraries copied"
+        else
+          echo "⚠️ SO libraries not found, using existing ones"
+        fi
+        
+        # 复制UEFI固件
+        if [ -d "firmware-artifacts" ]; then
+          mkdir -p entry/src/main/resources/rawfile
+          cp firmware-artifacts/*.fd entry/src/main/resources/rawfile/
+          echo "✅ UEFI firmware copied"
+        else
+          echo "⚠️ UEFI firmware not found, using existing ones"
+        fi
+        
+        # 列出文件
+        echo "=== Project files ==="
+        find entry/src/main/libs -name "*.so" -exec ls -lh {} \;
+        find entry/src/main/resources/rawfile -name "*.fd" -exec ls -lh {} \;
+        
+    - name: Build HarmonyOS HAP
+      run: |
+        echo "=== Building HarmonyOS HAP ==="
+        
+        # 清理之前的构建
+        ./node_modules/.bin/hvigor clean
+        
+        # 构建HAP
+        ./node_modules/.bin/hvigor --mode module -p product=default assembleHap --no-daemon
+        
+        # 检查构建结果
+        if [ ! -f "entry/build/default/outputs/default/entry-default-unsigned.hap" ]; then
+          echo "❌ HAP build failed"
+          exit 1
+        fi
+        
+        echo "✅ HAP built successfully"
+        
+    - name: Prepare HAP artifacts
+      run: |
+        echo "=== Preparing HAP artifacts ==="
+        mkdir -p artifacts/hap
+        
+        # 复制HAP文件
+        cp entry/build/default/outputs/default/entry-default-unsigned.hap artifacts/hap/
+        
+        # 创建版本信息
+        echo "HarmonyOS HAP Package Build" > artifacts/hap/VERSION.txt
+        echo "Build Date: $(date)" >> artifacts/hap/VERSION.txt
+        echo "Commit: ${{ github.sha }}" >> artifacts/hap/VERSION.txt
+        echo "Branch: ${{ github.ref_name }}" >> artifacts/hap/VERSION.txt
+        
+        # 列出文件
+        echo "=== HAP Artifacts Contents ==="
+        find artifacts/hap -type f -exec ls -lh {} \;
+        
+    - name: Upload HAP artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: harmonyos-hap-${{ github.sha }}
+        path: artifacts/hap/
+        retention-days: 30
+        
+    - name: Create release
+      if: github.ref == 'refs/heads/main'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: hap-${{ github.sha }}
+        release_name: HarmonyOS HAP Package ${{ github.sha }}
+        body: |
+          HarmonyOS HAP Package Build
+          
+          **Build Information:**
+          - Commit: ${{ github.sha }}
+          - Branch: ${{ github.ref_name }}
+          - Build Date: $(date)
+          
+          **Included Components:**
+          - QEMU SO Libraries
+          - UEFI Firmware
+          - HarmonyOS Application Package
+          
+          **Installation:**
+          Use `hdc install -r entry-default-unsigned.hap` to install on HarmonyOS device.
+        draft: false
+        prerelease: false

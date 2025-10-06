@@ -1,0 +1,163 @@
+name: Build UEFI Firmware for HarmonyOS
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'third_party/qemu/roms/edk2/**'
+      - '.github/workflows/build-uefi-firmware.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'third_party/qemu/roms/edk2/**'
+      - '.github/workflows/build-uefi-firmware.yml'
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build-uefi-firmware:
+    runs-on: self-hosted
+    timeout-minutes: 45
+    
+    outputs:
+      firmware-artifact-name: ${{ steps.build.outputs.artifact-name }}
+      firmware-version: ${{ steps.build.outputs.version }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+        
+    - name: Setup build environment
+      run: |
+        echo "=== Setting up UEFI build environment ==="
+        
+        # 安装必要的工具
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          python3 \
+          python3-pip \
+          nasm \
+          iasl \
+          uuid-dev \
+          libssl-dev \
+          libffi-dev \
+          python3-dev \
+          git \
+          wget \
+          curl
+          
+        # 安装Python依赖
+        pip3 install --user --upgrade pip
+        pip3 install --user edk2-basetools
+        
+        echo "✅ Build environment ready"
+        
+    - name: Build ARM64 UEFI firmware
+      id: build
+      run: |
+        echo "=== Building ARM64 UEFI firmware ==="
+        cd third_party/qemu/roms/edk2
+        
+        # 设置环境变量
+        export WORKSPACE="$(pwd)"
+        export PACKAGES_PATH="$WORKSPACE"
+        export EDK_TOOLS_PATH="$WORKSPACE/BaseTools"
+        export CONF_PATH="$WORKSPACE/Conf"
+        
+        # 创建必要的目录
+        mkdir -p "$CONF_PATH"
+        
+        # 设置构建配置
+        cat > "$CONF_PATH/target.txt" << 'EOF'
+ACTIVE_PLATFORM       = ArmVirtPkg/ArmVirtQemu.dsc
+TARGET_ARCH           = AARCH64
+TOOL_CHAIN_TAG        = GCC5
+BUILD_TARGET          = RELEASE
+BUILD_RULE_CONF       = Conf/build_rule.txt
+EOF
+        
+        cat > "$CONF_PATH/build_rule.txt" << 'EOF'
+[BuildRule.Common.SEC]
+    <InputFile>
+        .inf
+    <OutputFile>
+        <OutputDirectory>
+            $(OUTPUT_DIRECTORY)/$(MODULE_NAME)/$(BUILD_ARCH)
+        <Command>
+            "$(CC)" $(CC_FLAGS) $(CC_XIPFLAGS) -c $(SOURCE) $(CC_OUTPUT_FLAG)$(OUTPUT_DIRECTORY)/$(MODULE_NAME)/$(BUILD_ARCH)/$(basename $(SOURCE) .c).o
+EOF
+        
+        # 构建BaseTools
+        echo "=== Building BaseTools ==="
+        cd BaseTools
+        make -j$(nproc)
+        cd ..
+        
+        # 构建UEFI固件
+        echo "=== Building UEFI firmware ==="
+        source edksetup.sh
+        
+        # 构建ARM64固件
+        build -a AARCH64 -t GCC5 -p ArmVirtPkg/ArmVirtQemu.dsc -b RELEASE
+        
+        # 检查构建结果
+        if [ ! -f "Build/ArmVirtQemu-AARCH64/RELEASE_GCC5/FV/QEMU_EFI.fd" ]; then
+          echo "❌ ARM64 UEFI firmware not found"
+          exit 1
+        fi
+        
+        echo "✅ ARM64 UEFI firmware built successfully"
+        
+    - name: Build x86_64 UEFI firmware (OVMF)
+      run: |
+        echo "=== Building x86_64 UEFI firmware (OVMF) ==="
+        cd third_party/qemu/roms/edk2
+        
+        # 构建x86_64固件
+        build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE
+        
+        # 检查构建结果
+        if [ ! -f "Build/OvmfX64/RELEASE_GCC5/FV/OVMF_CODE.fd" ]; then
+          echo "❌ x86_64 UEFI firmware not found"
+          exit 1
+        fi
+        
+        echo "✅ x86_64 UEFI firmware built successfully"
+        
+    - name: Prepare firmware artifacts
+      run: |
+        echo "=== Preparing firmware artifacts ==="
+        mkdir -p artifacts/firmware
+        
+        # 复制ARM64固件
+        cp third_party/qemu/roms/edk2/Build/ArmVirtQemu-AARCH64/RELEASE_GCC5/FV/QEMU_EFI.fd \
+           artifacts/firmware/edk2-aarch64-code.fd
+        
+        # 复制x86_64固件
+        cp third_party/qemu/roms/edk2/Build/OvmfX64/RELEASE_GCC5/FV/OVMF_CODE.fd \
+           artifacts/firmware/OVMF_CODE.fd
+        
+        # 创建版本信息
+        echo "UEFI Firmware Build" > artifacts/firmware/VERSION.txt
+        echo "Build Date: $(date)" >> artifacts/firmware/VERSION.txt
+        echo "Commit: ${{ github.sha }}" >> artifacts/firmware/VERSION.txt
+        echo "Branch: ${{ github.ref_name }}" >> artifacts/firmware/VERSION.txt
+        
+        # 列出文件
+        echo "=== Firmware Artifacts Contents ==="
+        find artifacts/firmware -type f -exec ls -lh {} \;
+        
+    - name: Upload firmware artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: uefi-firmware-${{ github.sha }}
+        path: artifacts/firmware/
+        retention-days: 30
+        
+    - name: Set outputs
+      run: |
+        echo "artifact-name=uefi-firmware-${{ github.sha }}" >> $GITHUB_OUTPUT
+        echo "version=${{ github.sha }}" >> $GITHUB_OUTPUT

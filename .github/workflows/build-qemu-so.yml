@@ -1,0 +1,212 @@
+name: Build QEMU SO Libraries for HarmonyOS
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'third_party/qemu/**'
+      - 'entry/src/main/cpp/**'
+      - '.github/workflows/build-qemu-so.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'third_party/qemu/**'
+      - 'entry/src/main/cpp/**'
+      - '.github/workflows/build-qemu-so.yml'
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build-qemu-so:
+    runs-on: self-hosted
+    timeout-minutes: 60
+    
+    outputs:
+      so-artifact-name: ${{ steps.build.outputs.artifact-name }}
+      so-version: ${{ steps.build.outputs.version }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: false
+        
+    - name: Download and setup HarmonyOS SDK
+      run: |
+        echo "=== Downloading HarmonyOS SDK ==="
+        SDK_URL="https://repo.harmonyos.com/harmonyos/sdk/harmonyos-sdk/4.0.0.0/harmonyos-sdk-linux.tar.gz"
+        curl -L -o harmonyos-sdk.tar.gz "$SDK_URL"
+        
+        echo "=== Extracting SDK ==="
+        tar -xzf harmonyos-sdk.tar.gz
+        
+        # 查找native目录
+        if [ -d "native-*" ]; then
+          NATIVE_DIR=$(find . -name "native-*" -type d | head -1)
+          mv "$NATIVE_DIR" native
+        elif [ -d "native" ]; then
+          echo "Native directory already exists"
+        else
+          echo "❌ No native directory found"
+          exit 1
+        fi
+        
+        export SYSROOT="$(pwd)/native/sysroot"
+        export CC="$(pwd)/native/bin/aarch64-unknown-linux-ohos-clang"
+        export CXX="$(pwd)/native/bin/aarch64-unknown-linux-ohos-clang++"
+        export STRIP="$(pwd)/native/bin/aarch64-unknown-linux-ohos-strip"
+        
+        # 如果找不到特定编译器，使用通用clang
+        if [ ! -f "$CC" ]; then
+          CC="$(pwd)/native/bin/clang"
+          CXX="$(pwd)/native/bin/clang++"
+        fi
+        
+        echo "=== SDK Setup Complete ==="
+        echo "SYSROOT: $SYSROOT"
+        echo "CC: $CC"
+        echo "CXX: $CXX"
+        
+    - name: Build QEMU static library
+      id: build
+      run: |
+        echo "=== Building QEMU ==="
+        cd third_party/qemu
+        
+        # 清理之前的构建
+        rm -rf build
+        mkdir build
+        cd build
+        
+        # Windows虚拟机网络配置 - 支持Microsoft在线服务
+        ../configure \
+          --target-list=aarch64-softmmu \
+          --cross-prefix=aarch64-unknown-linux-ohos- \
+          --cc="$CC" \
+          --host-cc="/usr/bin/cc" \
+          --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=$SYSROOT -Wno-error=typedef-redefinition -Wno-error=macro-redefined" \
+          --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=$SYSROOT" \
+          --enable-tcg \
+          --enable-vnc \
+          --enable-slirp \
+          --enable-curl \
+          --disable-kvm \
+          --disable-xen \
+          --disable-werror \
+          --disable-libssh \
+          --disable-gnutls \
+          --disable-nettle \
+          --disable-gcrypt \
+          --disable-gtk --disable-sdl --disable-curses --disable-vte \
+          --disable-brlapi --disable-spice \
+          --disable-plugins \
+          --disable-pixman \
+          --disable-system \
+          -Dwrap_mode=forcefallback \
+          -Ddefault_library=static \
+          -Db_staticpic=true \
+          -Dvhost_user=disabled \
+          -Dvhost_user_blk_server=disabled \
+          -Dlibvduse=disabled \
+          -Dvduse_blk_export=disabled \
+          -Dvhost_net=disabled \
+          -Dvhost_kernel=disabled \
+          -Dkeyring=disabled \
+          -Dzstd=disabled \
+          -Dguest_agent=disabled \
+          -Dtools=disabled
+        
+        # 构建
+        ninja -j$(nproc)
+        
+        # 验证构建结果
+        if [ ! -f "libqemu-aarch64-softmmu.a" ]; then
+          echo "❌ QEMU aarch64 static library not found"
+          exit 1
+        fi
+        echo "✅ QEMU ARM64 build successful"
+        
+    - name: Create QEMU shared library
+      run: |
+        echo "=== Creating libqemu_full.so ==="
+        cd third_party/qemu/build
+        $CXX -shared -fPIC -Wl,--no-undefined \
+          -target aarch64-unknown-linux-ohos --sysroot=$SYSROOT \
+          -Wl,--whole-archive \
+          libqemu-aarch64-softmmu.a \
+          libqemuutil.a \
+          -Wl,--no-whole-archive \
+          -lpthread -ldl -lm -lcurl -lssl -lcrypto \
+          -o libqemu_full.so
+        if [ ! -f "libqemu_full.so" ]; then
+          echo "❌ Shared library creation failed"
+          exit 1
+        fi
+        $STRIP -S libqemu_full.so
+        echo "✅ libqemu_full.so created (size: $(du -h libqemu_full.so | cut -f1))"
+        
+    - name: Build HarmonyOS NAPI wrapper
+      run: |
+        echo "=== Building HarmonyOS NAPI wrapper ==="
+        cd entry/src/main/cpp
+        
+        # 设置环境变量
+        export SYSROOT="$(pwd)/../../../../native/sysroot"
+        export CC="$(pwd)/../../../../native/bin/aarch64-unknown-linux-ohos-clang"
+        export CXX="$(pwd)/../../../../native/bin/aarch64-unknown-linux-ohos-clang++"
+        
+        if [ ! -f "$CC" ]; then
+          CC="$(pwd)/../../../../native/bin/clang"
+          CXX="$(pwd)/../../../../native/bin/clang++"
+        fi
+        
+        # 创建构建目录
+        mkdir -p build
+        cd build
+        
+        # 配置CMake
+        cmake .. \
+          -DCMAKE_TOOLCHAIN_FILE=../../../../native/cmake/ohos.toolchain.cmake \
+          -DOHOS_ARCH=arm64-v8a \
+          -DOHOS_PLATFORM=OHOS \
+          -DCMAKE_BUILD_TYPE=Release
+        
+        # 构建
+        make -j$(nproc)
+        
+        if [ ! -f "libqemu_hmos.so" ]; then
+          echo "❌ NAPI wrapper build failed"
+          exit 1
+        fi
+        echo "✅ libqemu_hmos.so created (size: $(du -h libqemu_hmos.so | cut -f1))"
+        
+    - name: Prepare SO artifacts
+      run: |
+        echo "=== Preparing SO artifacts ==="
+        mkdir -p artifacts/libs/arm64-v8a
+        
+        # 复制SO文件
+        cp third_party/qemu/build/libqemu_full.so artifacts/libs/arm64-v8a/
+        cp entry/src/main/cpp/build/libqemu_hmos.so artifacts/libs/arm64-v8a/
+        
+        # 创建版本信息
+        echo "QEMU SO Libraries Build" > artifacts/VERSION.txt
+        echo "Build Date: $(date)" >> artifacts/VERSION.txt
+        echo "Commit: ${{ github.sha }}" >> artifacts/VERSION.txt
+        echo "Branch: ${{ github.ref_name }}" >> artifacts/VERSION.txt
+        
+        # 列出文件
+        echo "=== Artifacts Contents ==="
+        find artifacts -type f -exec ls -lh {} \;
+        
+    - name: Upload SO artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: qemu-so-libraries-${{ github.sha }}
+        path: artifacts/
+        retention-days: 30
+        
+    - name: Set outputs
+      run: |
+        echo "artifact-name=qemu-so-libraries-${{ github.sha }}" >> $GITHUB_OUTPUT
+        echo "version=${{ github.sha }}" >> $GITHUB_OUTPUT

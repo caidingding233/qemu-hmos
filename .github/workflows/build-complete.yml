@@ -1,0 +1,35 @@
+name: Complete Build Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-so-libraries:
+    uses: ./.github/workflows/build-qemu-so.yml
+    secrets: inherit
+    
+  build-uefi-firmware:
+    uses: ./.github/workflows/build-uefi-firmware.yml
+    secrets: inherit
+    
+  build-hap-package:
+    needs: [build-so-libraries, build-uefi-firmware]
+    uses: ./.github/workflows/build-hap-package.yml
+    with:
+      so-artifact-name: ${{ needs.build-so-libraries.outputs.so-artifact-name }}
+      firmware-artifact-name: ${{ needs.build-uefi-firmware.outputs.firmware-artifact-name }}
+    secrets: inherit
+    
+  deploy-test:
+    needs: [build-hap-package]
+    runs-on: self-hosted
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Download HAP package
+      uses: actions/download-artifact@v4
+      with:
+        name: harmonyos-hap-${{ github.sha }}
+        path: hap-artifacts/
