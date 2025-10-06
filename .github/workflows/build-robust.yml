@@ -27,6 +27,13 @@ jobs:
       run: |
         # 启用多架构支持
         sudo dpkg --add-architecture aarch64
+        
+        # 添加 aarch64 包源
+        echo "deb [arch=aarch64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/aarch64.list
+        echo "deb [arch=aarch64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/aarch64.list
+        echo "deb [arch=aarch64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/aarch64.list
+        
+        # 更新包列表
         sudo apt-get update
         
         # 安装 aarch64 架构的库
