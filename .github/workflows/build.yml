@@ -63,17 +63,30 @@ jobs:
         rm "$NATIVE_ZIP"
 
         # 设置工具链路径
+        # 先尝试找 native-* 格式目录
         NATIVE_DIR=$(find . -maxdepth 1 -type d -name "native-*" | head -1)
         if [ -z "$NATIVE_DIR" ]; then
-          echo "❌ No native directory found"
-          ls -la
-          exit 1
+          # 如果找不到，尝试找 native 目录
+          NATIVE_DIR=$(find . -maxdepth 1 -type d -name "native" | head -1)
+          if [ -z "$NATIVE_DIR" ]; then
+            echo "❌ No native directory found"
+            ls -la
+            exit 1
+          fi
         fi
 
         export OHOS_NDK_HOME="$PWD/$NATIVE_DIR"
         export SYSROOT="$OHOS_NDK_HOME/sysroot"
-        export CC="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang"
-        export CXX="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang++"
+
+        # 检查工具链路径 - 优先使用带 triple 的编译器
+        if [ -x "$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang" ]; then
+          export CC="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang"
+          export CXX="$OHOS_NDK_HOME/llvm/bin/aarch64-unknown-linux-ohos-clang++"
+        else
+          export CC="$OHOS_NDK_HOME/llvm/bin/clang"
+          export CXX="$OHOS_NDK_HOME/llvm/bin/clang++"
+        fi
+
         export AR="$OHOS_NDK_HOME/llvm/bin/llvm-ar"
         export STRIP="$OHOS_NDK_HOME/llvm/bin/llvm-strip"
 
