@@ -34,8 +34,16 @@ jobs:
         echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
         
         # 禁用默认源中的 ARM64 架构，避免 404 错误
+        # 备份原始 sources.list
+        sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
+        
+        # 修改所有默认源，添加 [arch=amd64] 限制
         sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
         sudo sed -i 's/^deb-src /deb-src [arch=amd64] /' /etc/apt/sources.list
+        
+        # 验证修改结果
+        echo "=== 修改后的 sources.list ==="
+        cat /etc/apt/sources.list | head -10
         
         # 更新包列表
         sudo apt-get update
