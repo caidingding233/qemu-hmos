@@ -204,9 +204,7 @@ jobs:
           -Dkeyring=disabled \
           -Dzstd=disabled \
           -Dguest_agent=disabled \
-          -Dtools=disabled \
-          -Dslirp_spp=disabled \
-          -Dslirp_tests=disabled
+          -Dtools=disabled
 
         # 构建所有目标
         "$NINJA" -v -j"$(nproc)"
