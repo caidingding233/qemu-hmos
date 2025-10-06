@@ -71,24 +71,20 @@ jobs:
         mkdir -p "$CONF_PATH"
         
         # 设置构建配置
-        cat > "$CONF_PATH/target.txt" << 'EOF'
-ACTIVE_PLATFORM       = ArmVirtPkg/ArmVirtQemu.dsc
-TARGET_ARCH           = AARCH64
-TOOL_CHAIN_TAG        = GCC5
-BUILD_TARGET          = RELEASE
-BUILD_RULE_CONF       = Conf/build_rule.txt
-EOF
+        echo "ACTIVE_PLATFORM       = ArmVirtPkg/ArmVirtQemu.dsc" > "$CONF_PATH/target.txt"
+        echo "TARGET_ARCH           = AARCH64" >> "$CONF_PATH/target.txt"
+        echo "TOOL_CHAIN_TAG        = GCC5" >> "$CONF_PATH/target.txt"
+        echo "BUILD_TARGET          = RELEASE" >> "$CONF_PATH/target.txt"
+        echo "BUILD_RULE_CONF       = Conf/build_rule.txt" >> "$CONF_PATH/target.txt"
         
-        cat > "$CONF_PATH/build_rule.txt" << 'EOF'
-[BuildRule.Common.SEC]
-    <InputFile>
-        .inf
-    <OutputFile>
-        <OutputDirectory>
-            $(OUTPUT_DIRECTORY)/$(MODULE_NAME)/$(BUILD_ARCH)
-        <Command>
-            "$(CC)" $(CC_FLAGS) $(CC_XIPFLAGS) -c $(SOURCE) $(CC_OUTPUT_FLAG)$(OUTPUT_DIRECTORY)/$(MODULE_NAME)/$(BUILD_ARCH)/$(basename $(SOURCE) .c).o
-EOF
+        echo "[BuildRule.Common.SEC]" > "$CONF_PATH/build_rule.txt"
+        echo "    <InputFile>" >> "$CONF_PATH/build_rule.txt"
+        echo "        .inf" >> "$CONF_PATH/build_rule.txt"
+        echo "    <OutputFile>" >> "$CONF_PATH/build_rule.txt"
+        echo "        <OutputDirectory>" >> "$CONF_PATH/build_rule.txt"
+        echo "            $(OUTPUT_DIRECTORY)/$(MODULE_NAME)/$(BUILD_ARCH)" >> "$CONF_PATH/build_rule.txt"
+        echo "        <Command>" >> "$CONF_PATH/build_rule.txt"
+        echo '            "$(CC)" $(CC_FLAGS) $(CC_XIPFLAGS) -c $(SOURCE) $(CC_OUTPUT_FLAG)$(OUTPUT_DIRECTORY)/$(MODULE_NAME)/$(BUILD_ARCH)/$(basename $(SOURCE) .c).o' >> "$CONF_PATH/build_rule.txt"
         
         # 构建BaseTools
         echo "=== Building BaseTools ==="
