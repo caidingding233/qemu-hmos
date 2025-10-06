@@ -23,7 +23,7 @@ jobs:
                                 libglib2.0-dev libpixman-1-dev \
                                 libzstd-dev zstd
 
-    - name: 安装 aarch64 架构的开发库
+    - name: 安装 arm64 架构的开发库
       run: |
         # 启用多架构支持
         sudo dpkg --add-architecture arm64
