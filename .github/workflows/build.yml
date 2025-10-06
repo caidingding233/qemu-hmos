@@ -114,55 +114,72 @@ jobs:
         mkdir build
         cd build
 
-        # 简化的QEMU配置 - 静态构建，禁用复杂功能
+        # Windows虚拟机网络配置 - 支持Microsoft在线服务
         ../configure \
-          --target-list=aarch64-softmmu \
+          --target-list=aarch64-softmmu,x86_64-softmmu \
           --cross-prefix=aarch64-unknown-linux-ohos- \
           --cc="$CC" \
           --host-cc="/usr/bin/cc" \
-          --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=$SYSROOT" \
+          --extra-cflags="-target aarch64-unknown-linux-ohos --sysroot=$SYSROOT -Wno-error=typedef-redefinition -Wno-error=macro-redefined" \
           --extra-ldflags="-target aarch64-unknown-linux-ohos --sysroot=$SYSROOT" \
           --enable-tcg \
+          --enable-vnc \
+          --enable-slirp \
+          --enable-curl \
           --disable-kvm \
           --disable-xen \
           --disable-werror \
-          --disable-vnc \
-          --disable-slirp \
-          --disable-curl \
           --disable-libssh \
           --disable-gnutls \
           --disable-nettle \
           --disable-gcrypt \
+          --disable-gtk --disable-sdl --disable-curses --disable-vte \
+          --disable-brlapi --disable-spice \
+          --disable-plugins \
+          --disable-pixman \
+          --disable-system \
           -Dwrap_mode=forcefallback \
           -Ddefault_library=static \
           -Db_staticpic=true \
-          -Dtools=disabled \
           -Dvhost_user=disabled \
-          -Dguest_agent=disabled
+          -Dvhost_user_blk_server=disabled \
+          -Dlibvduse=disabled \
+          -Dvduse_blk_export=disabled \
+          -Dvhost_net=disabled \
+          -Dvhost_kernel=disabled \
+          -Dkeyring=disabled \
+          -Dzstd=disabled \
+          -Dguest_agent=disabled \
+          -Dtools=disabled
 
         # 构建
         ninja -j$(nproc)
 
         # 验证构建结果
         if [ ! -f "libqemu-aarch64-softmmu.a" ]; then
-          echo "❌ QEMU static library not found"
+          echo "❌ QEMU aarch64 static library not found"
           exit 1
         fi
-        echo "✅ QEMU built successfully"
+        if [ ! -f "libqemu-x86_64-softmmu.a" ]; then
+          echo "❌ QEMU x86_64 static library not found"
+          exit 1
+        fi
+        echo "✅ QEMU multi-arch build successful"
 
     - name: Create QEMU shared library
       run: |
         echo "=== Creating libqemu_full.so ==="
         cd third_party/qemu/build
 
-        # 创建共享库 - 简化的链接
+        # 创建共享库 - 支持多架构和网络功能
         $CXX -shared -fPIC -Wl,--no-undefined \
           -target aarch64-unknown-linux-ohos --sysroot=$SYSROOT \
           -Wl,--whole-archive \
           libqemu-aarch64-softmmu.a \
+          libqemu-x86_64-softmmu.a \
           libqemuutil.a \
           -Wl,--no-whole-archive \
-          -lpthread -ldl -lm \
+          -lpthread -ldl -lm -lcurl -lssl -lcrypto \
           -o libqemu_full.so
 
         # 验证共享库
