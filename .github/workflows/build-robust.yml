@@ -36,13 +36,20 @@ jobs:
         # 更新包列表
         sudo apt-get update
         
-        # 安装 aarch64 架构的库
-        sudo apt-get install -y \
-          libglib2.0-dev:aarch64 \
-          libpixman-1-dev:aarch64 \
-          zlib1g-dev:aarch64 \
-          libc6-dev:aarch64 \
-          libffi-dev:aarch64
+        # 先检查可用的包
+        echo "=== 检查可用的 aarch64 包 ==="
+        apt-cache search --names-only "libglib2.0-dev" | grep aarch64 || true
+        apt-cache search --names-only "libpixman-1-dev" | grep aarch64 || true
+        
+        # 尝试安装，如果失败则使用替代方案
+        if ! sudo apt-get install -y libglib2.0-dev:aarch64 libpixman-1-dev:aarch64 zlib1g-dev:aarch64 libc6-dev:aarch64 libffi-dev:aarch64; then
+          echo "::warning::aarch64 包安装失败，将使用静态链接方案"
+          # 设置环境变量指示使用静态链接
+          echo "USE_STATIC_LINKING=true" >> $GITHUB_ENV
+        else
+          echo "::info::aarch64 包安装成功"
+          echo "USE_STATIC_LINKING=false" >> $GITHUB_ENV
+        fi
 
     - name: 再呢就是设置 Python (用于 Meson/Ninja)
       uses: actions/setup-python@v5
@@ -173,11 +180,19 @@ jobs:
           ls -la "$HOME/.local/bin" || true
           exit 1
         fi
-        # Export pkg-config：配置 aarch64 库路径，避免 x86_64 架构冲突
+        # Export pkg-config：根据 aarch64 库安装情况配置路径
         export PKG_CONFIG_DIR=
-        export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig:${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${SYSROOT}/lib/pkgconfig"
-        export LIBRARY_PATH="/usr/lib/aarch64-linux-gnu:${SYSROOT}/usr/lib"
-        export LD_LIBRARY_PATH="/usr/lib/aarch64-linux-gnu:${SYSROOT}/usr/lib"
+        if [ "$USE_STATIC_LINKING" = "true" ]; then
+          echo "::info::使用静态链接模式，避免架构冲突"
+          export PKG_CONFIG_PATH="${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${SYSROOT}/lib/pkgconfig"
+          export LIBRARY_PATH="${SYSROOT}/usr/lib"
+          export LD_LIBRARY_PATH="${SYSROOT}/usr/lib"
+        else
+          echo "::info::使用 aarch64 库模式"
+          export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig:${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${SYSROOT}/lib/pkgconfig"
+          export LIBRARY_PATH="/usr/lib/aarch64-linux-gnu:${SYSROOT}/usr/lib"
+          export LD_LIBRARY_PATH="/usr/lib/aarch64-linux-gnu:${SYSROOT}/usr/lib"
+        fi
         echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH}"
         echo "LIBRARY_PATH=${LIBRARY_PATH}"
         
@@ -215,35 +230,70 @@ jobs:
         fi
 
             # 鸿蒙版 UTM 多目标构建：使用 configure 脚本（它会调用 meson）
-            ../configure \
-              --cross-prefix="" \
-              --cc="${CC}" \
-              --cxx="${CXX}" \
-              --host-cc="/usr/bin/cc" \
-              --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
-              --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined -I/usr/include/aarch64-linux-gnu" \
-              --extra-ldflags="--sysroot=${SYSROOT} -L/usr/lib/aarch64-linux-gnu" \
-              --disable-gnutls \
-              --disable-gtk --disable-sdl --disable-curses --disable-vte \
-              --disable-brlapi --disable-spice --disable-libssh \
-              --disable-nettle --disable-gcrypt \
-              --enable-tcg \
-              --disable-slirp \
-              --enable-vnc \
-              --disable-plugins \
-              -Dwrap_mode=forcefallback \
-              -Ddefault_library=static \
-              -Db_staticpic=true \
-              -Dvhost_user=disabled \
-              -Dvhost_user_blk_server=disabled \
-              -Dlibvduse=disabled \
-              -Dvduse_blk_export=disabled \
-              -Dvhost_net=disabled \
-              -Dvhost_kernel=disabled \
-              -Dkeyring=disabled \
-              -Dzstd=disabled \
-              -Dguest_agent=disabled \
-              -Dtools=disabled
+            if [ "$USE_STATIC_LINKING" = "true" ]; then
+              echo "::info::配置静态链接构建"
+              ../configure \
+                --cross-prefix="" \
+                --cc="${CC}" \
+                --cxx="${CXX}" \
+                --host-cc="/usr/bin/cc" \
+                --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
+                --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined" \
+                --extra-ldflags="--sysroot=${SYSROOT} -static-libgcc -static-libstdc++" \
+                --static \
+                --disable-gnutls \
+                --disable-gtk --disable-sdl --disable-curses --disable-vte \
+                --disable-brlapi --disable-spice --disable-libssh \
+                --disable-nettle --disable-gcrypt \
+                --enable-tcg \
+                --disable-slirp \
+                --enable-vnc \
+                --disable-plugins \
+                -Dwrap_mode=forcefallback \
+                -Ddefault_library=static \
+                -Db_staticpic=true \
+                -Dvhost_user=disabled \
+                -Dvhost_user_blk_server=disabled \
+                -Dlibvduse=disabled \
+                -Dvduse_blk_export=disabled \
+                -Dvhost_net=disabled \
+                -Dvhost_kernel=disabled \
+                -Dkeyring=disabled \
+                -Dzstd=disabled \
+                -Dguest_agent=disabled \
+                -Dtools=disabled
+            else
+              echo "::info::配置 aarch64 库链接构建"
+              ../configure \
+                --cross-prefix="" \
+                --cc="${CC}" \
+                --cxx="${CXX}" \
+                --host-cc="/usr/bin/cc" \
+                --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
+                --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined -I/usr/include/aarch64-linux-gnu" \
+                --extra-ldflags="--sysroot=${SYSROOT} -L/usr/lib/aarch64-linux-gnu" \
+                --disable-gnutls \
+                --disable-gtk --disable-sdl --disable-curses --disable-vte \
+                --disable-brlapi --disable-spice --disable-libssh \
+                --disable-nettle --disable-gcrypt \
+                --enable-tcg \
+                --disable-slirp \
+                --enable-vnc \
+                --disable-plugins \
+                -Dwrap_mode=forcefallback \
+                -Ddefault_library=static \
+                -Db_staticpic=true \
+                -Dvhost_user=disabled \
+                -Dvhost_user_blk_server=disabled \
+                -Dlibvduse=disabled \
+                -Dvduse_blk_export=disabled \
+                -Dvhost_net=disabled \
+                -Dvhost_kernel=disabled \
+                -Dkeyring=disabled \
+                -Dzstd=disabled \
+                -Dguest_agent=disabled \
+                -Dtools=disabled
+            fi
 
         echo "=== 网络功能说明 ==="
         echo "✅ 已禁用 slirp 避免架构冲突"
