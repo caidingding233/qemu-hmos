@@ -38,13 +38,11 @@ jobs:
         sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
         
         # 重写 sources.list，支持多架构
-        sudo tee /etc/apt/sources.list > /dev/null << 'EOF'
-# 默认源 - 支持 AMD64 和 ARM64
-deb http://azure.archive.ubuntu.com/ubuntu/ noble main restricted universe multiverse
-deb http://azure.archive.ubuntu.com/ubuntu/ noble-updates main restricted universe multiverse
-deb http://azure.archive.ubuntu.com/ubuntu/ noble-backports main restricted universe multiverse
-deb http://azure.archive.ubuntu.com/ubuntu/ noble-security main restricted universe multiverse
-EOF
+        sudo bash -c "echo '# 默认源 - 支持 AMD64 和 ARM64' > /etc/apt/sources.list"
+        sudo bash -c "echo 'deb http://azure.archive.ubuntu.com/ubuntu/ noble main restricted universe multiverse' >> /etc/apt/sources.list"
+        sudo bash -c "echo 'deb http://azure.archive.ubuntu.com/ubuntu/ noble-updates main restricted universe multiverse' >> /etc/apt/sources.list"
+        sudo bash -c "echo 'deb http://azure.archive.ubuntu.com/ubuntu/ noble-backports main restricted universe multiverse' >> /etc/apt/sources.list"
+        sudo bash -c "echo 'deb http://azure.archive.ubuntu.com/ubuntu/ noble-security main restricted universe multiverse' >> /etc/apt/sources.list"
         
         # 验证修改结果
         echo "=== 修改后的 sources.list ==="
