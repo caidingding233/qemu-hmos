@@ -48,8 +48,9 @@ jobs:
         # 修改 sources.list.d 中的其他文件，只保留 AMD64（排除我们自己的 arm64.list）
         for file in /etc/apt/sources.list.d/*.list; do
           if [ "$(basename "$file")" != "arm64.list" ]; then
-            sudo sed -i 's/^deb /deb [arch=amd64] /g' "$file" 2>/dev/null || true
-            sudo sed -i 's/^deb-src /deb-src [arch=amd64] /g' "$file" 2>/dev/null || true
+            # 只在没有 [arch=...] 的 deb 行前添加 [arch=amd64]
+            sudo sed -i '/^deb / { /\[arch=/! s/^deb /deb [arch=amd64] /g }' "$file" 2>/dev/null || true
+            sudo sed -i '/^deb-src / { /\[arch=/! s/^deb-src /deb-src [arch=amd64] /g }' "$file" 2>/dev/null || true
           fi
         done
         
