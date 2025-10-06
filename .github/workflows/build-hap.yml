@@ -2,8 +2,10 @@ name: Build HAP for HarmonyOS
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
+  workflow_run:
+    workflows: ["Build QEMU SO for HarmonyOS"]
+    types:
+      - completed
 
 jobs:
   build-hap:
