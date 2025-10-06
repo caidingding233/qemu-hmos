@@ -34,11 +34,11 @@ jobs:
     - name: Download and setup HarmonyOS SDK
       run: |
         echo "=== Downloading HarmonyOS SDK ==="
-        # 使用多个备用下载链接
+        # 使用HarmonyOS Next官方下载链接
         SDK_URLS=(
-          "https://repo.harmonyos.com/harmonyos/sdk/harmonyos-sdk/4.0.0.0/harmonyos-sdk-linux.tar.gz"
-          "https://repo.huaweicloud.com/openharmony/os/4.0.0-Release/ohos-sdk-windows_linux-public.tar.gz"
-          "https://repo.huaweicloud.com/openharmony/os/3.2.0-Release/ohos-sdk-windows_linux-public.tar.gz"
+          "https://repo.huaweicloud.com/harmonyos/os/6.0-Release/ohos-sdk-windows_linux-public.tar.gz"
+          "https://repo.huaweicloud.com/harmonyos/os/5.1.0-Release/ohos-sdk-windows_linux-public.tar.gz"
+          "https://repo.huaweicloud.com/harmonyos/os/5.0.1-Release/ohos-sdk-windows_linux-public.tar.gz"
         )
         
         for url in "${SDK_URLS[@]}"; do
