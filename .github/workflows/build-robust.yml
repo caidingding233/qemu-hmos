@@ -21,7 +21,12 @@ jobs:
         sudo apt-get install -y build-essential curl wget unzip python3 \
                                 pkg-config git ca-certificates \
                                 libglib2.0-dev libpixman-1-dev \
-                                libzstd-dev zstd
+                                libzstd-dev zstd \
+                                # 安装 aarch64 架构的库
+                                libglib2.0-dev:aarch64 \
+                                libpixman-1-dev:aarch64 \
+                                zlib1g-dev:aarch64 \
+                                libc6-dev:aarch64
 
     - name: 再呢就是设置 Python (用于 Meson/Ninja)
       uses: actions/setup-python@v5
@@ -152,10 +157,27 @@ jobs:
           ls -la "$HOME/.local/bin" || true
           exit 1
         fi
-        # Export pkg-config：只使用 OHOS sysroot，避免主机系统头文件污染
+        # Export pkg-config：配置 aarch64 库路径，避免 x86_64 架构冲突
         export PKG_CONFIG_DIR=
-        export PKG_CONFIG_PATH="${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${SYSROOT}/lib/pkgconfig"
+        export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig:${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${SYSROOT}/lib/pkgconfig"
+        export LIBRARY_PATH="/usr/lib/aarch64-linux-gnu:${SYSROOT}/usr/lib"
+        export LD_LIBRARY_PATH="/usr/lib/aarch64-linux-gnu:${SYSROOT}/usr/lib"
         echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH}"
+        echo "LIBRARY_PATH=${LIBRARY_PATH}"
+        
+        # 验证 aarch64 库安装
+        echo "=== 验证 aarch64 库架构 ==="
+        if [ -f "/usr/lib/aarch64-linux-gnu/libglib-2.0.so" ]; then
+          file /usr/lib/aarch64-linux-gnu/libglib-2.0.so
+        else
+          echo "::warning::aarch64 GLib library not found"
+        fi
+        if [ -f "/usr/lib/aarch64-linux-gnu/libpixman-1.so" ]; then
+          file /usr/lib/aarch64-linux-gnu/libpixman-1.so
+        else
+          echo "::warning::aarch64 Pixman library not found"
+        fi
+        
         CROSS_FILE="$GITHUB_WORKSPACE/cross/aarch64-ohos.ini"
         echo "Using CROSS_FILE=$CROSS_FILE"
         if [ ! -f "$CROSS_FILE" ]; then
@@ -183,8 +205,8 @@ jobs:
               --cxx="${CXX}" \
               --host-cc="/usr/bin/cc" \
               --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
-              --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined" \
-              --extra-ldflags="--sysroot=${SYSROOT}" \
+              --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined -I/usr/include/aarch64-linux-gnu" \
+              --extra-ldflags="--sysroot=${SYSROOT} -L/usr/lib/aarch64-linux-gnu" \
               --disable-gnutls \
               --disable-gtk --disable-sdl --disable-curses --disable-vte \
               --disable-brlapi --disable-spice --disable-libssh \
