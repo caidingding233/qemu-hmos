@@ -176,6 +176,21 @@ jobs:
           echo "This QEMU does not define 'target_list'; building project defaults."
         fi
 
+        # 🔧 修复 slirp 测试程序的架构冲突：禁用测试程序构建
+        echo "=== 修补 slirp 子项目，禁用测试程序 ==="
+        if [ -f "../subprojects/slirp/meson.build" ]; then
+          # 备份原始文件
+          cp ../subprojects/slirp/meson.build ../subprojects/slirp/meson.build.bak
+          
+          # 注释掉测试程序构建
+          sed -i "s/^executable('pingtest'/# executable('pingtest'/" ../subprojects/slirp/meson.build || true
+          sed -i "s/^test('pingtest'/# test('pingtest'/" ../subprojects/slirp/meson.build || true
+          
+          echo "✅ slirp 测试程序已禁用"
+        else
+          echo "⚠️  slirp meson.build 未找到，跳过修补"
+        fi
+
         # 鸿蒙版 UTM 多目标构建：使用 configure 脚本（它会调用 meson）
         ../configure \
           --cross-prefix="" \

@@ -219,7 +219,7 @@ qemu -original qemu-system-aarch64 \
   -device virtio-net-pci,netdev=n0 \
   -vnc :1
 
-# 启动（暴露 RDP 转发）
+# 启动   
 qemu -original qemu-system-x86_64 \
 -m 4096 \
 -smp 4 \
@@ -282,4 +282,4 @@ qemu -manager shell --vm Linux -c "whoami"
 
 ---
 
-*这个路线图将 QEMU-HarmonyOS 项目定位为真正的"鸿蒙版 UTM"，提供完整的虚拟机管理体验和与鸿蒙系统的深度集成。*
+*这个路线图将 QEMU-HarmonyOS(QEMU鸿蒙版) 项目定位为真正的"鸿蒙版 UTM"，提供完整的虚拟机管理体验和与鸿蒙系统的深度集成。*
