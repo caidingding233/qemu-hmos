@@ -37,13 +37,18 @@ jobs:
         # 备份原始 sources.list
         sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
         
-        # 修改所有默认源，添加 [arch=amd64] 限制
-        sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
-        sudo sed -i 's/^deb-src /deb-src [arch=amd64] /' /etc/apt/sources.list
+        # 直接重写 sources.list，只保留 AMD64 架构
+        sudo tee /etc/apt/sources.list > /dev/null << 'EOF'
+# 默认源 - 仅 AMD64 架构
+deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu/ noble main restricted universe multiverse
+deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu/ noble-updates main restricted universe multiverse
+deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu/ noble-backports main restricted universe multiverse
+deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu/ noble-security main restricted universe multiverse
+EOF
         
         # 验证修改结果
         echo "=== 修改后的 sources.list ==="
-        cat /etc/apt/sources.list | head -10
+        cat /etc/apt/sources.list
         
         # 更新包列表
         sudo apt-get update
