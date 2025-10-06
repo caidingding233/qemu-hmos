@@ -176,38 +176,40 @@ jobs:
           echo "This QEMU does not define 'target_list'; building project defaults."
         fi
 
-        # 鸿蒙版 UTM 多目标构建：使用 configure 脚本（它会调用 meson）
-        ../configure \
-          --cross-prefix="" \
-          --cc="${CC}" \
-          --cxx="${CXX}" \
-          --host-cc="/usr/bin/cc" \
-          --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
-          --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined" \
-          --extra-ldflags="--sysroot=${SYSROOT}" \
-          --disable-gnutls \
-          --disable-gtk --disable-sdl --disable-curses --disable-vte \
-          --disable-brlapi --disable-spice --disable-libssh \
-          --disable-nettle --disable-gcrypt \
-          --enable-tcg \
-          --disable-slirp \
-          --enable-vnc \
-          -Dwrap_mode=forcefallback \
-          -Ddefault_library=static \
-          -Db_staticpic=true \
-          -Dvhost_user=disabled \
-          -Dvhost_user_blk_server=disabled \
-          -Dlibvduse=disabled \
-          -Dvduse_blk_export=disabled \
-          -Dvhost_net=disabled \
-          -Dvhost_kernel=disabled \
-          -Dkeyring=disabled \
-          -Dzstd=disabled \
-          -Dguest_agent=disabled \
-          -Dtools=disabled
+            # 鸿蒙版 UTM 多目标构建：使用 configure 脚本（它会调用 meson）
+            ../configure \
+              --cross-prefix="" \
+              --cc="${CC}" \
+              --cxx="${CXX}" \
+              --host-cc="/usr/bin/cc" \
+              --target-list=aarch64-softmmu,x86_64-softmmu,i386-softmmu \
+              --extra-cflags="--sysroot=${SYSROOT} -fPIC -march=armv8-a -Wno-error=typedef-redefinition -Wno-error=macro-redefined" \
+              --extra-ldflags="--sysroot=${SYSROOT}" \
+              --disable-gnutls \
+              --disable-gtk --disable-sdl --disable-curses --disable-vte \
+              --disable-brlapi --disable-spice --disable-libssh \
+              --disable-nettle --disable-gcrypt \
+              --enable-tcg \
+              --disable-slirp \
+              --enable-vnc \
+              --disable-plugins \
+              -Dwrap_mode=forcefallback \
+              -Ddefault_library=static \
+              -Db_staticpic=true \
+              -Dvhost_user=disabled \
+              -Dvhost_user_blk_server=disabled \
+              -Dlibvduse=disabled \
+              -Dvduse_blk_export=disabled \
+              -Dvhost_net=disabled \
+              -Dvhost_kernel=disabled \
+              -Dkeyring=disabled \
+              -Dzstd=disabled \
+              -Dguest_agent=disabled \
+              -Dtools=disabled
 
         echo "=== 网络功能说明 ==="
         echo "✅ 已禁用 slirp 避免架构冲突"
+        echo "✅ 已禁用 plugins 避免 GLib 架构冲突"
         echo "✅ 网络功能将通过 user 模式提供（hostfwd 端口转发）"
         echo "✅ 支持 HTTP(S)、DNS、RDP、SSH 等基础网络功能"
         echo "✅ M365/OneDrive 登录不受影响"
