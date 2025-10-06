@@ -1,4 +1,4 @@
-name: Build QEMU SO for HarmonyOS
+name: Build QEMU SO for HarmonyOS(legacy)
 
 on:
   workflow_dispatch:
