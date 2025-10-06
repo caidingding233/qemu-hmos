@@ -1,0 +1,61 @@
+name: Build HAP for HarmonyOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-hap:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js for hvigor
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Install HarmonyOS SDK and hvigor
+      run: |
+        # 下载和安装 HarmonyOS SDK
+        wget -q https://developer.harmonyos.com/resource/ohos/sdk/commandlinetools-linux-5.0.3.100.zip -O sdk.zip
+        unzip -q sdk.zip
+        export OHOS_SDK_HOME=$PWD/commandlinetools-linux
+        echo "OHOS_SDK_HOME=$OHOS_SDK_HOME" >> $GITHUB_ENV
+
+        # 安装 hvigor
+        npm install -g @ohos/hvigor
+
+    - name: Download QEMU SO artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: qemu-hmos-utm-multiarch
+        path: entry/src/main/libs/
+
+    - name: Build HAP
+      run: |
+        cd entry
+        hvigor assembleDebug
+
+    - name: Upload HAP artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: qemu-hmos-hap
+        path: |
+          entry/build/outputs/hap/*.hap
+        retention-days: 7
+
+    - name: Create release if needed
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: |
+        # 这里可以添加创建 GitHub release 的逻辑
+        echo "HAP build completed successfully"
