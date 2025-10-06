@@ -34,32 +34,84 @@ jobs:
     - name: Download and setup HarmonyOS SDK
       run: |
         echo "=== Downloading HarmonyOS SDK ==="
-        SDK_URL="https://repo.harmonyos.com/harmonyos/sdk/harmonyos-sdk/4.0.0.0/harmonyos-sdk-linux.tar.gz"
-        curl -L -o harmonyos-sdk.tar.gz "$SDK_URL"
+        # 使用多个备用下载链接
+        SDK_URLS=(
+          "https://repo.harmonyos.com/harmonyos/sdk/harmonyos-sdk/4.0.0.0/harmonyos-sdk-linux.tar.gz"
+          "https://repo.huaweicloud.com/openharmony/os/4.0.0-Release/ohos-sdk-windows_linux-public.tar.gz"
+          "https://repo.huaweicloud.com/openharmony/os/3.2.0-Release/ohos-sdk-windows_linux-public.tar.gz"
+        )
         
-        echo "=== Extracting SDK ==="
-        tar -xzf harmonyos-sdk.tar.gz
+        for url in "${SDK_URLS[@]}"; do
+          echo "Trying: $url"
+          if curl -L --retry 3 --fail -o harmonyos-sdk.tar.gz "$url"; then
+            echo "✅ SDK downloaded successfully from: $url"
+            break
+          else
+            echo "❌ Failed to download from: $url"
+            rm -f harmonyos-sdk.tar.gz
+          fi
+        done
         
-        # 查找native目录
-        if [ -d "native-*" ]; then
-          NATIVE_DIR=$(find . -name "native-*" -type d | head -1)
-          mv "$NATIVE_DIR" native
-        elif [ -d "native" ]; then
-          echo "Native directory already exists"
-        else
-          echo "❌ No native directory found"
+        if [ ! -f "harmonyos-sdk.tar.gz" ]; then
+          echo "❌ All SDK download attempts failed"
           exit 1
         fi
         
-        export SYSROOT="$(pwd)/native/sysroot"
-        export CC="$(pwd)/native/bin/aarch64-unknown-linux-ohos-clang"
-        export CXX="$(pwd)/native/bin/aarch64-unknown-linux-ohos-clang++"
-        export STRIP="$(pwd)/native/bin/aarch64-unknown-linux-ohos-strip"
+        echo "=== Extracting SDK ==="
+        # 检查文件类型并相应解压
+        file_type=$(file harmonyos-sdk.tar.gz | grep -o "gzip\|tar")
+        if [[ "$file_type" == *"gzip"* ]]; then
+          tar -xzf harmonyos-sdk.tar.gz
+        else
+          tar -xf harmonyos-sdk.tar.gz
+        fi
+        
+        # 查找native目录 - 支持多种SDK结构
+        NATIVE_DIR=""
+        if [ -d "native" ]; then
+          NATIVE_DIR="native"
+          echo "Found native directory: $NATIVE_DIR"
+        elif [ -d "ohos-sdk/linux/native" ]; then
+          NATIVE_DIR="ohos-sdk/linux/native"
+          echo "Found native directory: $NATIVE_DIR"
+        else
+          # 查找包含native的目录
+          NATIVE_DIR=$(find . -name "native" -type d | head -1)
+          if [ -n "$NATIVE_DIR" ]; then
+            echo "Found native directory: $NATIVE_DIR"
+          else
+            echo "❌ No native directory found"
+            echo "Available directories:"
+            find . -maxdepth 2 -type d | head -20
+            exit 1
+          fi
+        fi
+        
+        # 确保native目录存在且包含必要文件
+        if [ ! -d "$NATIVE_DIR/bin" ] || [ ! -d "$NATIVE_DIR/sysroot" ]; then
+          echo "❌ Native directory structure incomplete"
+          echo "Contents of $NATIVE_DIR:"
+          ls -la "$NATIVE_DIR"
+          exit 1
+        fi
+        
+        export SYSROOT="$(pwd)/$NATIVE_DIR/sysroot"
+        export CC="$(pwd)/$NATIVE_DIR/bin/aarch64-unknown-linux-ohos-clang"
+        export CXX="$(pwd)/$NATIVE_DIR/bin/aarch64-unknown-linux-ohos-clang++"
+        export STRIP="$(pwd)/$NATIVE_DIR/bin/aarch64-unknown-linux-ohos-strip"
         
         # 如果找不到特定编译器，使用通用clang
         if [ ! -f "$CC" ]; then
-          CC="$(pwd)/native/bin/clang"
-          CXX="$(pwd)/native/bin/clang++"
+          CC="$(pwd)/$NATIVE_DIR/bin/clang"
+          CXX="$(pwd)/$NATIVE_DIR/bin/clang++"
+        fi
+        
+        # 验证编译器存在
+        if [ ! -f "$CC" ]; then
+          echo "❌ No suitable compiler found in $NATIVE_DIR/bin"
+          echo "Available compilers:"
+          ls -la "$NATIVE_DIR/bin/" | grep -E "(clang|gcc)"
+          exit 1
         fi
         
         echo "=== SDK Setup Complete ==="
@@ -67,10 +119,30 @@ jobs:
         echo "CC: $CC"
         echo "CXX: $CXX"
         
+    - name: Setup Python environment
+      run: |
+        echo "=== Setting up Python environment ==="
+        # 创建虚拟环境避免PEP 668限制
+        python3 -m venv venv
+        source venv/bin/activate
+        
+        # 安装必要的Python包
+        pip install --upgrade pip
+        pip install meson ninja
+        
+        # 验证安装
+        meson --version
+        ninja --version
+        
+        echo "✅ Python environment ready"
+        
     - name: Build QEMU static library
       id: build
       run: |
         echo "=== Building QEMU ==="
+        # 激活Python虚拟环境
+        source venv/bin/activate
+        
         cd third_party/qemu
         
         # 清理之前的构建
@@ -148,16 +220,19 @@ jobs:
     - name: Build HarmonyOS NAPI wrapper
       run: |
         echo "=== Building HarmonyOS NAPI wrapper ==="
+        # 激活Python虚拟环境
+        source venv/bin/activate
+        
         cd entry/src/main/cpp
         
-        # 设置环境变量
-        export SYSROOT="$(pwd)/../../../../native/sysroot"
-        export CC="$(pwd)/../../../../native/bin/aarch64-unknown-linux-ohos-clang"
-        export CXX="$(pwd)/../../../../native/bin/aarch64-unknown-linux-ohos-clang++"
+        # 设置环境变量 - 使用之前确定的NATIVE_DIR
+        export SYSROOT="$(pwd)/../../../../$NATIVE_DIR/sysroot"
+        export CC="$(pwd)/../../../../$NATIVE_DIR/bin/aarch64-unknown-linux-ohos-clang"
+        export CXX="$(pwd)/../../../../$NATIVE_DIR/bin/aarch64-unknown-linux-ohos-clang++"
         
         if [ ! -f "$CC" ]; then
-          CC="$(pwd)/../../../../native/bin/clang"
-          CXX="$(pwd)/../../../../native/bin/clang++"
+          CC="$(pwd)/../../../../$NATIVE_DIR/bin/clang"
+          CXX="$(pwd)/../../../../$NATIVE_DIR/bin/clang++"
         fi
         
         # 创建构建目录
