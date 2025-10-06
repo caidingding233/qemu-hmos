@@ -21,12 +21,21 @@ jobs:
         sudo apt-get install -y build-essential curl wget unzip python3 \
                                 pkg-config git ca-certificates \
                                 libglib2.0-dev libpixman-1-dev \
-                                libzstd-dev zstd \
-                                # 安装 aarch64 架构的库
-                                libglib2.0-dev:aarch64 \
-                                libpixman-1-dev:aarch64 \
-                                zlib1g-dev:aarch64 \
-                                libc6-dev:aarch64
+                                libzstd-dev zstd
+
+    - name: 安装 aarch64 架构的开发库
+      run: |
+        # 启用多架构支持
+        sudo dpkg --add-architecture aarch64
+        sudo apt-get update
+        
+        # 安装 aarch64 架构的库
+        sudo apt-get install -y \
+          libglib2.0-dev:aarch64 \
+          libpixman-1-dev:aarch64 \
+          zlib1g-dev:aarch64 \
+          libc6-dev:aarch64 \
+          libffi-dev:aarch64
 
     - name: 再呢就是设置 Python (用于 Meson/Ninja)
       uses: actions/setup-python@v5
