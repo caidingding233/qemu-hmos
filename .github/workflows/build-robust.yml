@@ -208,14 +208,29 @@ jobs:
 
         # 🔧 修复 slirp 测试程序的架构冲突：configure 后禁用测试程序构建
         echo "=== 修补 slirp 子项目，禁用测试程序 ==="
-        if [ -f "subprojects/slirp/meson.build" ]; then
-          echo "✅ 找到 slirp/meson.build"
-          # 注释掉测试程序构建
-          sed -i "s/executable('pingtest'/# executable('pingtest'/" subprojects/slirp/meson.build || true
-          sed -i "/^test('pingtest'/s/^/# /" subprojects/slirp/meson.build || true
+        SLIRP_MESON="subprojects/slirp/meson.build"
+        if [ -f "$SLIRP_MESON" ]; then
+          echo "✅ 找到 $SLIRP_MESON"
+          echo "原始内容（前20行）："
+          head -20 "$SLIRP_MESON" || true
+          
+          # 备份
+          cp "$SLIRP_MESON" "${SLIRP_MESON}.bak"
+          
+          # 方案：删除所有包含 executable 和 test 的测试相关行
+          # 使用 grep -v 过滤掉测试程序定义
+          grep -v "executable('pingtest" "$SLIRP_MESON" | \
+          grep -v "executable('ncsitest" | \
+          grep -v "test('ping" | \
+          grep -v "test('ncsi" > "${SLIRP_MESON}.tmp" && \
+          mv "${SLIRP_MESON}.tmp" "$SLIRP_MESON"
+          
+          echo "修补后的内容（前20行）："
+          head -20 "$SLIRP_MESON" || true
           echo "✅ slirp 测试程序已禁用"
         else
           echo "⚠️  slirp meson.build 未找到: $(pwd)"
+          ls -la subprojects/ 2>/dev/null || echo "subprojects/ 不存在"
           ls -la subprojects/slirp/ 2>/dev/null || echo "subprojects/slirp/ 不存在"
         fi
 
