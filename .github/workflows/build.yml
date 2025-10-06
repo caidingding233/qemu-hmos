@@ -129,7 +129,7 @@ jobs:
           --disable-vnc \
           --disable-slirp \
           --disable-curl \
-          --disable-ssh \
+          --disable-libssh \
           --disable-gnutls \
           --disable-nettle \
           --disable-gcrypt \
