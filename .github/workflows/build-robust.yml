@@ -251,7 +251,7 @@ jobs:
           echo "::info::使用 aarch64 库 cross 配置"
           # 使用原有的 cross 文件（包含 aarch64 库路径）
         fi
-        cd third_party/qemu
+        cd qemu
         rm -rf build && mkdir build && cd build
 
         # Detect whether this QEMU fork exposes 'target_list' in meson_options.txt
@@ -261,6 +261,8 @@ jobs:
           echo "Detected target_list option; will pass: ${TLIST_ARG}"
         else
           echo "This QEMU does not define 'target_list'; building project defaults."
+          # Try to build with single target first to see if it works
+          TLIST_ARG="--target-list=aarch64-softmmu"
         fi
 
             # 鸿蒙版 UTM 多目标构建：使用 configure 脚本（它会调用 meson）
