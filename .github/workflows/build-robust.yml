@@ -284,7 +284,7 @@ jobs:
                 --enable-vnc \
                 --disable-plugins \
                 --disable-pixman \
-                --disable-glib \
+                --disable-system \
                 -Dwrap_mode=forcefallback \
                 -Ddefault_library=static \
                 -Db_staticpic=true \
