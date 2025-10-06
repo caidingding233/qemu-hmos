@@ -116,7 +116,7 @@ jobs:
 
         # Windows虚拟机网络配置 - 支持Microsoft在线服务
         ../configure \
-          --target-list=aarch64-softmmu,x86_64-softmmu \
+          --target-list=aarch64-softmmu \
           --cross-prefix=aarch64-unknown-linux-ohos- \
           --cc="$CC" \
           --host-cc="/usr/bin/cc" \
@@ -160,23 +160,18 @@ jobs:
           echo "❌ QEMU aarch64 static library not found"
           exit 1
         fi
-        if [ ! -f "libqemu-x86_64-softmmu.a" ]; then
-          echo "❌ QEMU x86_64 static library not found"
-          exit 1
-        fi
-        echo "✅ QEMU multi-arch build successful"
+        echo "✅ QEMU ARM64 build successful"
 
     - name: Create QEMU shared library
       run: |
         echo "=== Creating libqemu_full.so ==="
         cd third_party/qemu/build
 
-        # 创建共享库 - 支持多架构和网络功能
+        # 创建共享库 - 支持ARM64和网络功能
         $CXX -shared -fPIC -Wl,--no-undefined \
           -target aarch64-unknown-linux-ohos --sysroot=$SYSROOT \
           -Wl,--whole-archive \
           libqemu-aarch64-softmmu.a \
-          libqemu-x86_64-softmmu.a \
           libqemuutil.a \
           -Wl,--no-whole-archive \
           -lpthread -ldl -lm -lcurl -lssl -lcrypto \
