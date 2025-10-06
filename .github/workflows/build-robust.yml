@@ -203,7 +203,8 @@ jobs:
           -Dvhost_kernel=disabled \
           -Dkeyring=disabled \
           -Dzstd=disabled \
-          -Dguest_agent=disabled
+          -Dguest_agent=disabled \
+          -Dtools=disabled
 
         # 构建所有目标
         "$NINJA" -v -j"$(nproc)"
