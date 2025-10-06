@@ -1,4 +1,4 @@
-name: Build QEMU for HarmonyOS
+name: Build QEMU So Files for HarmonyOS
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
 
     steps:
     - name: Checkout code
