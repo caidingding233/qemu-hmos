@@ -59,32 +59,60 @@ jobs:
         
         echo "=== Extracting SDK ==="
         # 检查文件类型并相应解压
-        file_type=$(file harmonyos-sdk.tar.gz | grep -o "gzip\|tar")
-        if [[ "$file_type" == *"gzip"* ]]; then
+        echo "File type info:"
+        file harmonyos-sdk.tar.gz
+
+        if [[ "$(file harmonyos-sdk.tar.gz)" == *"gzip"* ]]; then
+          echo "Extracting with gzip support..."
           tar -xzf harmonyos-sdk.tar.gz
         else
+          echo "Extracting as plain tar..."
           tar -xf harmonyos-sdk.tar.gz
         fi
+
+        echo "=== Extraction complete ==="
+        echo "Directory structure after extraction:"
+        ls -la | head -20
+        echo ""
+        echo "Looking for SDK-related directories:"
+        find . -maxdepth 2 -name "*ohos*" -o -name "*harmonyos*" -o -name "*sdk*" -o -name "*native*" -type d
         
-        # 查找native目录 - 支持多种SDK结构
+        # 查找native目录 - 优先查找SDK相关目录
         NATIVE_DIR=""
-        if [ -d "native" ]; then
-          NATIVE_DIR="native"
-          echo "Found native directory: $NATIVE_DIR"
-        elif [ -d "ohos-sdk/linux/native" ]; then
+        if [ -d "ohos-sdk/linux/native" ]; then
           NATIVE_DIR="ohos-sdk/linux/native"
           echo "Found native directory: $NATIVE_DIR"
-        else
-          # 查找包含native的目录
-          NATIVE_DIR=$(find . -name "native" -type d | head -1)
-          if [ -n "$NATIVE_DIR" ]; then
+        elif [ -d "native" ]; then
+          # 检查是否为真正的HarmonyOS SDK native目录
+          if [ -d "native/bin" ] && [ -d "native/sysroot" ]; then
+            NATIVE_DIR="native"
             echo "Found native directory: $NATIVE_DIR"
           else
-            echo "❌ No native directory found"
-            echo "Available directories:"
-            find . -maxdepth 2 -type d | head -20
-            exit 1
+            echo "⚠️ Found native directory but structure incomplete, continuing search..."
           fi
+        fi
+
+        # 如果还没找到，在解压后的目录中搜索
+        if [ -z "$NATIVE_DIR" ]; then
+          # 只在解压后的文件目录中查找，避免找到源码中的native目录
+          for dir in ohos-sdk linux native-*; do
+            if [ -d "$dir" ] && [ -d "$dir/native" ]; then
+              NATIVE_DIR="$dir/native"
+              echo "Found native directory: $NATIVE_DIR"
+              break
+            fi
+          done
+        fi
+
+        # 最后的查找，确保不误找源码目录
+        if [ -z "$NATIVE_DIR" ]; then
+          echo "❌ No valid HarmonyOS SDK native directory found"
+          echo "Available directories after extraction:"
+          ls -la | head -20
+          echo ""
+          echo "Looking for native directories:"
+          find . -maxdepth 3 -name "native" -type d | grep -v -E "(qemu|third_party|\.git)" | head -10
+          exit 1
         fi
         
         # 确保native目录存在且包含必要文件
