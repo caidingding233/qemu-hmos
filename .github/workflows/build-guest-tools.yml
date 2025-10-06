@@ -2,8 +2,6 @@ name: Build Guest Tools
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 jobs:
   build-linux-tools:
