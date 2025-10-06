@@ -33,20 +33,33 @@ jobs:
         echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
         echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
         
-        # 配置多架构支持：AMD64 用于主机工具，ARM64 用于目标包
-        # 备份原始 sources.list
+        # 完全禁用所有源的 ARM64 架构，只允许 AMD64
+        # 备份所有 sources.list 文件
         sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
-        
-        # 重写 sources.list，支持多架构
-        sudo bash -c "echo '# 默认源 - 支持 AMD64 和 ARM64' > /etc/apt/sources.list"
-        sudo bash -c "echo 'deb http://azure.archive.ubuntu.com/ubuntu/ noble main restricted universe multiverse' >> /etc/apt/sources.list"
-        sudo bash -c "echo 'deb http://azure.archive.ubuntu.com/ubuntu/ noble-updates main restricted universe multiverse' >> /etc/apt/sources.list"
-        sudo bash -c "echo 'deb http://azure.archive.ubuntu.com/ubuntu/ noble-backports main restricted universe multiverse' >> /etc/apt/sources.list"
-        sudo bash -c "echo 'deb http://azure.archive.ubuntu.com/ubuntu/ noble-security main restricted universe multiverse' >> /etc/apt/sources.list"
+        sudo find /etc/apt/sources.list.d -name "*.list" -exec cp {} {}.bak \;
+
+        # 重写主 sources.list，只支持 AMD64
+        sudo bash -c "echo '# 默认源 - 仅 AMD64 架构' > /etc/apt/sources.list"
+        sudo bash -c "echo 'deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu/ noble main restricted universe multiverse' >> /etc/apt/sources.list"
+        sudo bash -c "echo 'deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu/ noble-updates main restricted universe multiverse' >> /etc/apt/sources.list"
+        sudo bash -c "echo 'deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu/ noble-backports main restricted universe multiverse' >> /etc/apt/sources.list"
+        sudo bash -c "echo 'deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu/ noble-security main restricted universe multiverse' >> /etc/apt/sources.list"
+
+        # 修改 sources.list.d 中的所有文件，只保留 AMD64
+        sudo sed -i 's/^deb /deb [arch=amd64] /g' /etc/apt/sources.list.d/*.list 2>/dev/null || true
+        sudo sed -i 's/^deb-src /deb-src [arch=amd64] /g' /etc/apt/sources.list.d/*.list 2>/dev/null || true
         
         # 验证修改结果
         echo "=== 修改后的 sources.list ==="
         cat /etc/apt/sources.list
+        echo "=== sources.list.d 中的文件 ==="
+        ls -la /etc/apt/sources.list.d/
+        for file in /etc/apt/sources.list.d/*.list; do
+          if [ -f "$file" ]; then
+            echo "=== $file ==="
+            cat "$file"
+          fi
+        done
         
         # 更新包列表
         sudo apt-get update
