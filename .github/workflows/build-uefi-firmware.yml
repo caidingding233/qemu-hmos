@@ -4,12 +4,12 @@ on:
   push:
     branches: [ main, develop ]
     paths:
-      - 'third_party/qemu/roms/edk2/**'
+      - 'third_party/qemu-code/roms/edk2/**'
       - '.github/workflows/build-uefi-firmware.yml'
   pull_request:
     branches: [ main ]
     paths:
-      - 'third_party/qemu/roms/edk2/**'
+      - 'third_party/qemu-code/roms/edk2/**'
       - '.github/workflows/build-uefi-firmware.yml'
   workflow_dispatch:
   workflow_call:
@@ -64,7 +64,7 @@ jobs:
         # 激活Python虚拟环境
         source venv/bin/activate
 
-        cd third_party/qemu/roms/edk2
+        cd third_party/qemu-code/roms/edk2
         
         # 设置环境变量
         export WORKSPACE="$(pwd)"
@@ -118,7 +118,7 @@ jobs:
         # 激活Python虚拟环境
         source venv/bin/activate
 
-        cd third_party/qemu/roms/edk2
+        cd third_party/qemu-code/roms/edk2
         
         # 构建x86_64固件
         build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE
@@ -137,11 +137,11 @@ jobs:
         mkdir -p artifacts/firmware
         
         # 复制ARM64固件
-        cp third_party/qemu/roms/edk2/Build/ArmVirtQemu-AARCH64/RELEASE_GCC5/FV/QEMU_EFI.fd \
+        cp third_party/qemu-code/roms/edk2/Build/ArmVirtQemu-AARCH64/RELEASE_GCC5/FV/QEMU_EFI.fd \
            artifacts/firmware/edk2-aarch64-code.fd
-        
+
         # 复制x86_64固件
-        cp third_party/qemu/roms/edk2/Build/OvmfX64/RELEASE_GCC5/FV/OVMF_CODE.fd \
+        cp third_party/qemu-code/roms/edk2/Build/OvmfX64/RELEASE_GCC5/FV/OVMF_CODE.fd \
            artifacts/firmware/OVMF_CODE.fd
         
         # 创建版本信息
