@@ -78,7 +78,7 @@ jobs:
         # 设置构建配置
         echo "ACTIVE_PLATFORM       = ArmVirtPkg/ArmVirtQemu.dsc" > "$CONF_PATH/target.txt"
         echo "TARGET_ARCH           = AARCH64" >> "$CONF_PATH/target.txt"
-        echo "TOOL_CHAIN_TAG        = GCC5" >> "$CONF_PATH/target.txt"
+        echo "TOOL_CHAIN_TAG        = GCC" >> "$CONF_PATH/target.txt"
         echo "BUILD_TARGET          = RELEASE" >> "$CONF_PATH/target.txt"
         echo "BUILD_RULE_CONF       = Conf/build_rule.txt" >> "$CONF_PATH/target.txt"
         
@@ -101,11 +101,11 @@ jobs:
         echo "=== Building UEFI firmware ==="
         source edksetup.sh
         
-        # 构建ARM64固件
-        build -a AARCH64 -t GCC5 -p ArmVirtPkg/ArmVirtQemu.dsc -b RELEASE
+        # 构建ARM64固件 (使用新版工具链)
+        build -a AARCH64 -t GCC -p ArmVirtPkg/ArmVirtQemu.dsc -b RELEASE
         
         # 检查构建结果
-        if [ ! -f "Build/ArmVirtQemu-AARCH64/RELEASE_GCC5/FV/QEMU_EFI.fd" ]; then
+        if [ ! -f "Build/ArmVirtQemu-AARCH64/RELEASE_GCC/FV/QEMU_EFI.fd" ]; then
           echo "❌ ARM64 UEFI firmware not found"
           exit 1
         fi
@@ -121,10 +121,10 @@ jobs:
         cd third_party/qemu-code/roms/edk2
         
         # 构建x86_64固件
-        build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE
-        
+        build -a X64 -t GCC -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE
+
         # 检查构建结果
-        if [ ! -f "Build/OvmfX64/RELEASE_GCC5/FV/OVMF_CODE.fd" ]; then
+        if [ ! -f "Build/OvmfX64/RELEASE_GCC/FV/OVMF_CODE.fd" ]; then
           echo "❌ x86_64 UEFI firmware not found"
           exit 1
         fi
@@ -137,11 +137,11 @@ jobs:
         mkdir -p artifacts/firmware
         
         # 复制ARM64固件
-        cp third_party/qemu-code/roms/edk2/Build/ArmVirtQemu-AARCH64/RELEASE_GCC5/FV/QEMU_EFI.fd \
+        cp third_party/qemu-code/roms/edk2/Build/ArmVirtQemu-AARCH64/RELEASE_GCC/FV/QEMU_EFI.fd \
            artifacts/firmware/edk2-aarch64-code.fd
 
         # 复制x86_64固件
-        cp third_party/qemu-code/roms/edk2/Build/OvmfX64/RELEASE_GCC5/FV/OVMF_CODE.fd \
+        cp third_party/qemu-code/roms/edk2/Build/OvmfX64/RELEASE_GCC/FV/OVMF_CODE.fd \
            artifacts/firmware/OVMF_CODE.fd
         
         # 创建版本信息
