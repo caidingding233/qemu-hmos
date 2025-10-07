@@ -1,18 +1,6 @@
 name: Build QEMU SO Libraries for HarmonyOS
 
 on:
-  push:
-    branches: [ main, develop ]
-    paths:
-      - 'third_party/qemu/**'
-      - 'entry/src/main/cpp/**'
-      - '.github/workflows/build-qemu-so.yml'
-  pull_request:
-    branches: [ main ]
-    paths:
-      - 'third_party/qemu/**'
-      - 'entry/src/main/cpp/**'
-      - '.github/workflows/build-qemu-so.yml'
   workflow_dispatch:
   workflow_call:
 
