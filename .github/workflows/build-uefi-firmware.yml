@@ -33,9 +33,9 @@ jobs:
       run: |
         echo "=== Setting up UEFI build environment ==="
         
-        # 安装必要的工具
-        sudo apt-get update
-        sudo apt-get install -y \
+        # 安装必要的工具 (静默更新以避免重复源警告)
+        sudo apt-get update --quiet
+        sudo apt-get install -y --quiet \
           build-essential \
           python3 \
           python3-pip \
@@ -49,9 +49,11 @@ jobs:
           wget \
           curl
           
-        # 安装Python依赖
-        pip3 install --user --upgrade pip
-        pip3 install --user edk2-basetools
+        # 安装Python依赖 (使用虚拟环境避免PEP 668限制)
+        python3 -m venv venv
+        source venv/bin/activate
+        pip install --upgrade pip
+        pip install edk2-basetools
         
         echo "✅ Build environment ready"
         
@@ -59,6 +61,9 @@ jobs:
       id: build
       run: |
         echo "=== Building ARM64 UEFI firmware ==="
+        # 激活Python虚拟环境
+        source venv/bin/activate
+
         cd third_party/qemu/roms/edk2
         
         # 设置环境变量
@@ -110,6 +115,9 @@ jobs:
     - name: Build x86_64 UEFI firmware (OVMF)
       run: |
         echo "=== Building x86_64 UEFI firmware (OVMF) ==="
+        # 激活Python虚拟环境
+        source venv/bin/activate
+
         cd third_party/qemu/roms/edk2
         
         # 构建x86_64固件

@@ -34,9 +34,9 @@ jobs:
     - name: Download and setup HarmonyOS SDK
       run: |
         echo "=== Downloading HarmonyOS SDK ==="
-        # 安装必要的工具
-        sudo apt-get update
-        sudo apt-get install -y unzip file
+        # 安装必要的工具 (静默更新以避免重复源警告)
+        sudo apt-get update --quiet
+        sudo apt-get install -y --quiet unzip file
 
         # 使用HarmonyOS Next官方下载链接
         SDK_URLS=(
