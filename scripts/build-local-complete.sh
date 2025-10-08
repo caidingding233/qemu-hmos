@@ -2,6 +2,7 @@
 
 # Complete local build script for QEMU on HarmonyOS
 # This script downloads SDK and builds everything locally
+# Now includes UEFI firmware compilation
 
 set -e
 
@@ -26,6 +27,7 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
   echo "=== Installing dependencies ==="
   sudo apt-get update
   sudo apt-get install -y build-essential cmake curl wget unzip python3 \
+                        python3-pip python3-venv nasm iasl uuid-dev libssl-dev \
                         libglib2.0-dev libpixman-1-dev libssl-dev \
                         libcurl4-openssl-dev libssh-dev libgnutls28-dev \
                         libsasl2-dev libpam0g-dev libbz2-dev libzstd-dev \
@@ -33,7 +35,7 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
 else
   echo "=== Skipping dependency installation on macOS ==="
   echo "Make sure you have the required tools installed via Homebrew:"
-  echo "brew install cmake curl wget python3 glib pixman openssl pcre2 pkg-config meson tree"
+  echo "brew install cmake curl wget python3 glib pixman openssl pcre2 pkg-config meson tree nasm"
 fi
 
 # Download and setup SDK
@@ -250,5 +252,75 @@ echo "✅ NAPI module build completed!"
 echo "=== Build artifacts ==="
 ls -la *.so || echo "No .so files found"
 find . -name "*.so" -o -name "*.a"
+
+# Build UEFI firmware
+echo "=== Building UEFI Firmware ==="
+cd ../../../third_party/qemu-code/roms/edk2
+
+echo "=== Setting up UEFI build environment ==="
+# Create virtual environment for edk2
+python3 -m venv venv
+source venv/bin/activate
+
+# Install edk2 dependencies
+pip install --upgrade pip
+pip install edk2-basetools
+
+# Set up environment variables
+export WORKSPACE="$(pwd)"
+export PACKAGES_PATH="$WORKSPACE"
+export EDK_TOOLS_PATH="$WORKSPACE/BaseTools"
+export CONF_PATH="$WORKSPACE/Conf"
+
+# Create necessary directories
+mkdir -p "$CONF_PATH"
+
+# Configure build settings
+echo "ACTIVE_PLATFORM       = ArmVirtPkg/ArmVirtQemu.dsc" > "$CONF_PATH/target.txt"
+echo "TARGET_ARCH           = AARCH64" >> "$CONF_PATH/target.txt"
+echo "TOOL_CHAIN_TAG        = GCC" >> "$CONF_PATH/target.txt"
+echo "BUILD_TARGET          = RELEASE" >> "$CONF_PATH/target.txt"
+
+# Build BaseTools
+echo "=== Building BaseTools ==="
+cd BaseTools
+make -j$(nproc)
+cd ..
+
+# Build ARM64 UEFI firmware
+echo "=== Building ARM64 UEFI firmware ==="
+source edksetup.sh
+build -a AARCH64 -t GCC -p ArmVirtPkg/ArmVirtQemu.dsc -b RELEASE
+
+# Build x86_64 UEFI firmware (OVMF)
+echo "=== Building x86_64 UEFI firmware (OVMF) ==="
+build -a X64 -t GCC -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE
+
+# Check build results
+echo "=== Checking UEFI build results ==="
+if [ -f "Build/ArmVirtQemu-AARCH64/RELEASE_GCC/FV/QEMU_EFI.fd" ]; then
+  echo "✅ ARM64 UEFI firmware built successfully"
+  ls -lh "Build/ArmVirtQemu-AARCH64/RELEASE_GCC/FV/QEMU_EFI.fd"
+else
+  echo "❌ ARM64 UEFI firmware not found"
+  exit 1
+fi
+
+if [ -f "Build/OvmfX64/RELEASE_GCC/FV/OVMF_CODE.fd" ]; then
+  echo "✅ x86_64 UEFI firmware built successfully"
+  ls -lh "Build/OvmfX64/RELEASE_GCC/FV/OVMF_CODE.fd"
+else
+  echo "❌ x86_64 UEFI firmware not found"
+  exit 1
+fi
+
+# Copy UEFI firmware to project resources
+echo "=== Copying UEFI firmware to project ==="
+cd ../../../../entry/src/main/resources/rawfile
+cp ../../../third_party/qemu-code/roms/edk2/Build/ArmVirtQemu-AARCH64/RELEASE_GCC/FV/QEMU_EFI.fd edk2-aarch64-code.fd
+cp ../../../third_party/qemu-code/roms/edk2/Build/OvmfX64/RELEASE_GCC/FV/OVMF_CODE.fd OVMF_CODE.fd
+
+echo "UEFI firmware copied to resources:"
+ls -lh edk2-aarch64-code.fd OVMF_CODE.fd
 
 echo "=== Build completed successfully! ==="
