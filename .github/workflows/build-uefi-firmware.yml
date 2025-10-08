@@ -75,23 +75,13 @@ jobs:
         # 创建必要的目录
         mkdir -p "$CONF_PATH"
         
-        # 设置构建配置
+        # 设置构建配置 (使用edk2默认配置)
         echo "ACTIVE_PLATFORM       = ArmVirtPkg/ArmVirtQemu.dsc" > "$CONF_PATH/target.txt"
         echo "TARGET_ARCH           = AARCH64" >> "$CONF_PATH/target.txt"
         echo "TOOL_CHAIN_TAG        = GCC" >> "$CONF_PATH/target.txt"
         echo "BUILD_TARGET          = RELEASE" >> "$CONF_PATH/target.txt"
-        echo "BUILD_RULE_CONF       = Conf/build_rule.txt" >> "$CONF_PATH/target.txt"
         
-        # 创建基本的build_rule.txt文件
-        echo "[BuildOptions.Common.MdePkg]" > "$CONF_PATH/build_rule.txt"
-        echo "[BuildOptions.Common.MdeModulePkg]" >> "$CONF_PATH/build_rule.txt"
-        echo "[BuildOptions.Common.SecurityPkg]" >> "$CONF_PATH/build_rule.txt"
-        echo "[BuildOptions.Common.IntelFrameworkPkg]" >> "$CONF_PATH/build_rule.txt"
-        echo "[BuildOptions.Common.PcAtChipsetPkg]" >> "$CONF_PATH/build_rule.txt"
-        echo "[BuildOptions.Common.IntelFrameworkModulePkg]" >> "$CONF_PATH/build_rule.txt"
-        echo "[BuildOptions.Common.ArmPkg]" >> "$CONF_PATH/build_rule.txt"
-        echo "[BuildOptions.Common.ArmPlatformPkg]" >> "$CONF_PATH/build_rule.txt"
-        echo "[BuildOptions.Common.EmbeddedPkg]" >> "$CONF_PATH/build_rule.txt"
+        # 不创建build_rule.txt，让edk2使用默认构建规则
         
         # 构建BaseTools
         echo "=== Building BaseTools ==="
