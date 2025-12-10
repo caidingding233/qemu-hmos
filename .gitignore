@@ -1,4 +1,5 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 /node_modules
 /local.properties
 /.idea
@@ -91,6 +92,8 @@ third_party/**/*.dll
 .cursor/rules
 WARP.md
 =======
+=======
+>>>>>>> main
 # ============================================
 # QEMU-HMOS 开源项目 .gitignore
 # ============================================
@@ -248,4 +251,7 @@ coverage/
 .env.local
 .env.*.local
 
+<<<<<<< HEAD
+>>>>>>> main
+=======
 >>>>>>> main
