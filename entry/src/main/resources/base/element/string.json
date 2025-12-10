@@ -10,15 +10,51 @@
     },
     {
       "name": "EntryAbility_label",
-      "value": "QEMU鸿蒙版"
+      "value": "Aether Engine"
+    },
+    {
+      "name": "VNCWindowAbility_desc",
+      "value": "VNC远程桌面窗口"
+    },
+    {
+      "name": "VNCWindowAbility_label",
+      "value": "VNC显示"
+    },
+    {
+      "name": "RDPWindowAbility_desc",
+      "value": "RDP远程桌面窗口"
+    },
+    {
+      "name": "RDPWindowAbility_label",
+      "value": "RDP显示"
+    },
+    {
+      "name": "ConsoleWindowAbility_desc",
+      "value": "串口控制台窗口"
+    },
+    {
+      "name": "ConsoleWindowAbility_label",
+      "value": "串口控制台"
     },
     {
       "name": "permission_read_media_reason",
-      "value": "允许应用读取媒体存储，用于访问VM磁盘和固件文件"
+      "value": "不允许导资料都不让导到时候怪我咯"
     },
     {
       "name": "permission_write_media_reason",
-      "value": "允许应用写入媒体存储，用于创建和修改VM磁盘文件"
+      "value": "你不允许怎么改这个东西啊"
+    },
+    {
+      "name": "file_access_reason",
+      "value": "你不允许的话怎么去查看文件啊"
+    },
+    {
+      "name": "permission_jit_reason",
+      "value": "虚拟机需要JIT编译权限才能高效运行，不授权只能使用解释执行（速度极慢）"
+    },
+    {
+      "name": "permission_download_reason",
+      "value": "需要在下载目录创建应用文件夹，用于导出日志和共享文件"
     }
   ]
 }

@@ -1,7 +1,34 @@
 import data_preferences from '@ohos.data.preferences'
 import common from '@ohos.app.ability.common'
 
-export type VMStatus = 'creating' | 'preparing' | 'starting' | 'running' | 'stopping' | 'stopped' | 'failed'
+// paused = QEMU suspend（用户看到的"暂停"）
+// stopped = 已关机
+export type VMStatus = 'creating' | 'preparing' | 'starting' | 'running' | 'stopping' | 'stopped' | 'failed' | 'paused' | 'backup'
+
+// 来宾系统类型
+export type SystemCamp = 'windows' | 'linux' | 'bsd' | 'harmonyos' | 'macos' | 'other'
+
+// 虚拟 CPU 架构
+export type CpuCamp = 'aarch64' | 'x86_64' | 'i386' | 'riscv64' | 'other'
+
+/**
+ * 虚拟机启动模式
+ * - enhanced: 增强启动 - 使用FreeRDP，适用于Windows/支持RDP的Linux（RemoteApp）
+ * - standard: 普通启动 - 使用VNC，适用于macOS/不支持RDP的系统
+ * - debug: 调试模式 - 仅串口TTL，无图形界面
+ */
+export type VMBootMode = 'enhanced' | 'standard' | 'debug'
+
+/** 判断系统是否支持增强启动(RDP) */
+export function supportsEnhancedBoot(systemCamp: SystemCamp): boolean {
+  return systemCamp === 'windows' || systemCamp === 'linux'
+}
+
+/** 获取系统推荐的默认启动模式 */
+export function getDefaultBootMode(systemCamp: SystemCamp): VMBootMode {
+  if (systemCamp === 'windows') return 'enhanced'
+  return 'standard'
+}
 
 export interface VMConfigPersist {
   name: string
@@ -10,6 +37,12 @@ export interface VMConfigPersist {
   memoryMB: number
   cpuCount: number
   isoPath?: string
+  archType?: 'aarch64' | 'x86_64' | 'i386'  // 架构类型
+  // 高级硬件配置（可选）
+  machine?: string
+  displayDevice?: string
+  networkDevice?: string
+  audioDevice?: string
 }
 
 export interface VMMetaPersist {
@@ -19,6 +52,9 @@ export interface VMMetaPersist {
   status: VMStatus
   createdAt: number
   config: VMConfigPersist
+  // 新增字段：来宾系统类型和 CPU 架构
+  systemCamp?: SystemCamp   // Windows / Linux / BSD / HarmonyOS / macOS
+  cpuCamp?: CpuCamp         // aarch64 / x86_64 / i386 / riscv64
 }
 
 const PREFS_NAME = 'vms'

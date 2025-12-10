@@ -208,12 +208,34 @@ sudo mkswap /swapfile
 sudo swapon /swapfile
 ```
 
+## 使用本地 SDK 构建 QEMU
+
+`third_party/qemu/build_harmonyos_full.sh` 现已默认复用本地 OpenHarmony SDK，并在构建完成后自动输出 `libqemu_full.so` 到 ArkTS 侧的 `entry/src/main/libs/arm64-v8a/` 与 `entry/src/oh_modules/`。典型流程如下：
+
+```bash
+# 如果 SDK 不在默认的 E:/HMOS_SDK，显式告知脚本
+export OHOS_SDK_DIR=/your/sdk/linux
+
+cd third_party/qemu
+./build_harmonyos_full.sh
+```
+
+脚本会执行以下动作：
+
+1. 检查/安装 host 依赖，并修复 QEMU 仓库中的 CRLF 脚本；
+2. 以 `cross/aarch64-ohos.ini` 为模板生成 Meson cross-file，统一写入 `--sysroot`、`c_args`、`link_args`；
+3. 运行 `ninja -C build_harmonyos_full`，生成 `libqemu-aarch64-softmmu.a` 等静态归档；
+4. 将这些归档重新链接为 `libqemu_full.so`，复制到 `entry/src/main/libs/arm64-v8a/` 与 `entry/src/oh_modules/`；
+5. 校验 `.so` 体积和 `qemu_main` 符号，最后输出 md5/字节数。
+
+若构建失败，脚本会自动打印 `build_harmonyos_full/meson-logs/meson-log.txt` 的尾部，方便排查。
+
 ## 构建产物
 
 构建成功后，会生成以下文件：
 
-- `third_party/qemu/build/qemu-system-aarch64` - QEMU主程序
-- `third_party/qemu/build/libqemu_full.so` - QEMU共享库
+- `third_party/qemu/build_harmonyos_full/qemu-system-aarch64` - QEMU主程序
+- `entry/src/main/libs/arm64-v8a/libqemu_full.so` - QEMU核心动态库（由脚本自动复制）
 - `entry/src/main/cpp/build/libqemu_hmos.so` - NAPI模块
 
 ## 部署到设备
@@ -221,7 +243,7 @@ sudo swapon /swapfile
 1. **复制库文件**：
 ```bash
 # 复制到正确位置
-cp third_party/qemu/build/libqemu_full.so entry/src/main/cpp/libs/arm64-v8a/
+cp entry/src/main/libs/arm64-v8a/libqemu_full.so entry/src/main/cpp/libs/arm64-v8a/
 cp entry/src/main/cpp/build/libqemu_hmos.so entry/src/main/cpp/libs/arm64-v8a/
 ```
 

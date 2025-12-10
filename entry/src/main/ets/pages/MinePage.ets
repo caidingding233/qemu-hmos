@@ -1,6 +1,7 @@
 import router from '@ohos.router'
 import ThemeManager, { AppTheme } from '../common/ThemeManager'
-import qemu from 'libqemu_hmos.so'
+import qemu from 'qemu_hmos'
+import { Windows11CompatibilityTester } from '../utils/Windows11CompatibilityTester'
 
 interface Capability {
   name: string
@@ -36,9 +37,23 @@ export struct MinePage {
     } catch (e) {
       caps.push({ name: 'JIT', supported: false, tip: 'JIT 不可用，可能影响性能' })
     }
+    // 使用兼容性测试器检测 KVM 支持情况
     try {
-      qemu.kvmSupported()
-      caps.push({ name: 'KVM', supported: true })
+      const compatTester = new Windows11CompatibilityTester()
+      const kvmInfo = compatTester.checkKvmSupport()
+      
+      if (kvmInfo.hardwareSupported && !kvmInfo.hasPermission) {
+        // 设备支持 KVM 但没有许可
+        caps.push({ 
+          name: 'KVM', 
+          supported: false, 
+          tip: `您的设备 ${kvmInfo.deviceModel} 支持 KVM，但我们尚未获得华为的许可来使用。当前使用 TCG 模拟。` 
+        })
+      } else if (kvmInfo.hardwareSupported && kvmInfo.hasPermission) {
+        caps.push({ name: 'KVM', supported: true })
+      } else {
+        caps.push({ name: 'KVM', supported: false, tip: '设备不支持 KVM，使用 TCG 软件模拟' })
+      }
     } catch (e) {
       caps.push({ name: 'KVM', supported: false, tip: '未检测到 KVM，虚拟机将退回软件加速' })
     }

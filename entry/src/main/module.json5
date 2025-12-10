@@ -18,21 +18,80 @@
         "name": "EntryAbility",
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "description": "$string:EntryAbility_desc",
-        "icon": "$media:layered_image",
+        "icon": "$media:app_icon",
         "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:startIcon",
+        "startWindowIcon": "$media:app_icon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
+        "orientation": "landscape",
+        "supportWindowMode": ["fullscreen", "floating", "split"],
+        "maxWindowWidth": 2560,
+        "maxWindowHeight": 1600,
+        "minWindowWidth": 800,
+        "minWindowHeight": 600,
         "skills": [
           {
-            "entities": [
-              "entity.system.home"
-            ],
-            "actions": [
-              "action.system.home"
-            ]
+            "entities": ["entity.system.home"],
+            "actions": ["action.system.home"]
+          }
+        ],
+        "metadata": [
+          {
+            "name": "ohos.ability.shortcuts",
+            "resource": "$profile:shortcuts_config"
           }
         ]
+      },
+      {
+        "name": "VNCWindowAbility",
+        "srcEntry": "./ets/abilities/VNCWindowAbility.ets",
+        "description": "$string:VNCWindowAbility_desc",
+        "icon": "$media:app_icon",
+        "label": "$string:VNCWindowAbility_label",
+        "startWindowIcon": "$media:app_icon",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": false,
+        "orientation": "unspecified",
+        "supportWindowMode": ["fullscreen", "floating", "split"],
+        "maxWindowWidth": 2560,
+        "maxWindowHeight": 1600,
+        "minWindowWidth": 640,
+        "minWindowHeight": 480,
+        "launchType": "multiton"
+      },
+      {
+        "name": "RDPWindowAbility",
+        "srcEntry": "./ets/abilities/RDPWindowAbility.ets",
+        "description": "$string:RDPWindowAbility_desc",
+        "icon": "$media:app_icon",
+        "label": "$string:RDPWindowAbility_label",
+        "startWindowIcon": "$media:app_icon",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": false,
+        "orientation": "unspecified",
+        "supportWindowMode": ["fullscreen", "floating", "split"],
+        "maxWindowWidth": 2560,
+        "maxWindowHeight": 1600,
+        "minWindowWidth": 640,
+        "minWindowHeight": 480,
+        "launchType": "multiton"
+      },
+      {
+        "name": "ConsoleWindowAbility",
+        "srcEntry": "./ets/abilities/ConsoleWindowAbility.ets",
+        "description": "$string:ConsoleWindowAbility_desc",
+        "icon": "$media:app_icon",
+        "label": "$string:ConsoleWindowAbility_label",
+        "startWindowIcon": "$media:app_icon",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": false,
+        "orientation": "unspecified",
+        "supportWindowMode": ["fullscreen", "floating", "split"],
+        "maxWindowWidth": 1200,
+        "maxWindowHeight": 900,
+        "minWindowWidth": 480,
+        "minWindowHeight": 320,
+        "launchType": "multiton"
       }
     ],
     "requestPermissions": [
@@ -43,7 +102,7 @@
         "name": "ohos.permission.READ_MEDIA",
         "reason": "$string:permission_read_media_reason",
         "usedScene": {
-          "when": "always",
+          "when": "inuse",
           "abilities": ["EntryAbility"]
         }
       },
@@ -51,7 +110,15 @@
         "name": "ohos.permission.WRITE_MEDIA",
         "reason": "$string:permission_write_media_reason",
         "usedScene": {
-          "when": "always",
+          "when": "inuse",
+          "abilities": ["EntryAbility"]
+        }
+      },
+      {
+        "name": "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY",
+        "reason": "$string:permission_write_media_reason",
+        "usedScene": {
+          "when": "inuse",
           "abilities": ["EntryAbility"]
         }
       },

@@ -21,9 +21,21 @@ declare module 'qemu_hmos' {
     stopVm(vmName: string): boolean;
     getVmStatus(vmName: string): string;
     getVmLogs(vmName: string, startLine?: number): string[];
+    getDeviceCapabilities?(): {
+      kvmSupported: boolean;
+      jitSupported: boolean;
+      totalMemory: number;
+      cpuCores: number;
+    };
+    pauseVm?(vmName: string): boolean;
+    resumeVm?(vmName: string): boolean;
+    createSnapshot?(vmName: string, snapshotName: string): boolean;
+    restoreSnapshot?(vmName: string, snapshotName: string): boolean;
+    listSnapshots?(vmName: string): string[];
+    deleteSnapshot?(vmName: string, snapshotName: string): boolean;
     
     // 核心库诊断
-    checkCoreLib(): {
+    checkCoreLib?(): {
       loaded: boolean;
       foundLd: boolean;
       foundSelfDir: boolean;

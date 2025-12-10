@@ -26,6 +26,9 @@ interface VmMeta {
   cpuCount: number;
   status: 'creating' | 'preparing' | 'running' | 'stopping' | 'stopped' | 'failed';
   createdAt: number;
+  // 可选：用于显示的系统/架构标签
+  systemCamp?: string;
+  cpuCamp?: string;
 }
 
 @Entry
@@ -35,6 +38,7 @@ struct VMsPage {
   @State showCreateDialog: boolean = false;
   @State loading: boolean = false;
   @State error: string = '';
+  @State searchText: string = '';
   
   private createDialogController: CustomDialogController = new CustomDialogController({
     builder: VMCreateDialog({
@@ -164,8 +168,16 @@ struct VMsPage {
 
   private startVM(vm: VmMeta) {
     try {
+      // 读取存储的配置，缺省时给安全默认值
+      const cpu = vm.cpuCount && vm.cpuCount > 0 ? vm.cpuCount : 2;
+      const mem = vm.memoryMB && vm.memoryMB > 0 ? vm.memoryMB : 2048;
+      const disk = vm.diskSizeGB && vm.diskSizeGB > 0 ? vm.diskSizeGB : 32;
       const success = qemu.startVm({
         name: vm.name,
+        isoPath: vm.isoPath,
+        diskSizeGB: disk,
+        memoryMB: mem,
+        cpuCount: cpu,
         accel: qemu.kvmSupported() ? 'kvm' : 'tcg',
         display: 'vnc=:1,websocket=5701',
         nographic: false
@@ -256,96 +268,255 @@ struct VMsPage {
     }
   }
 
+  private getFilteredVms(): VmMeta[] {
+    const keyword = this.searchText.trim().toLowerCase();
+    if (!keyword) return this.vms;
+    return this.vms.filter(vm => vm.name.toLowerCase().includes(keyword) || vm.osType.toLowerCase().includes(keyword));
+  }
+
+  /**
+   * 获取系统阵营显示名称
+   * 优先使用真实值，没有时从 osType 推导
+   */
+  private getSystemCamp(vm: VmMeta): string {
+    // 真实值映射表
+    const campDisplayMap: Record<string, string> = {
+      'windows': 'Windows',
+      'linux': 'Linux',
+      'bsd': 'BSD',
+      'harmonyos': 'HarmonyOS',
+      'macos': 'macOS',
+      'other': 'Other'
+    };
+    
+    // 优先使用真实值
+    if (vm.systemCamp) {
+      return campDisplayMap[vm.systemCamp] || vm.systemCamp;
+    }
+    
+    // 推导逻辑
+    const os = vm.osType.toLowerCase();
+    if (os.includes('win')) return 'Windows';
+    if (os.includes('mac') || os.includes('darwin')) return 'macOS';
+    if (os.includes('harmony') || os.includes('hmos') || os.includes('ohos')) return 'HarmonyOS';
+    if (os.includes('bsd') || os.includes('freebsd')) return 'BSD';
+    if (os.includes('linux') || os.includes('ubuntu') || os.includes('debian') || 
+        os.includes('fedora') || os.includes('centos') || os.includes('arch') ||
+        os.includes('manjaro') || os.includes('mint')) return 'Linux';
+    return 'Other';
+  }
+
+  /**
+   * 获取 CPU 架构显示名称
+   * 优先使用真实值，没有时从配置推导
+   */
+  private getCpuCamp(vm: VmMeta): string {
+    // 真实值映射表
+    const cpuDisplayMap: Record<string, string> = {
+      'aarch64': 'ARM64',
+      'x86_64': 'x86_64',
+      'i386': 'x86',
+      'riscv64': 'RISC-V',
+      'other': 'Other'
+    };
+    
+    // 优先使用真实值
+    if (vm.cpuCamp) {
+      return cpuDisplayMap[vm.cpuCamp] || vm.cpuCamp;
+    }
+    
+    // 推导逻辑：从 config.archType 获取，或默认 ARM64
+    if (vm.config?.archType) {
+      const arch = vm.config.archType.toLowerCase();
+      if (arch.includes('aarch64') || arch.includes('arm64')) return 'ARM64';
+      if (arch.includes('x86_64') || arch.includes('amd64')) return 'x86_64';
+      if (arch.includes('i386') || arch.includes('x86') || arch.includes('i686')) return 'x86';
+      if (arch.includes('riscv')) return 'RISC-V';
+    }
+    
+    // 默认 ARM64（鸿蒙设备主流架构）
+    return 'ARM64';
+  }
+
   build() {
-    Column() {
-      // 标题栏
-      Row() {
-        Text('虚拟机管理')
-          .fontSize(24)
-          .fontWeight(FontWeight.Bold)
-        Blank()
-        Button('创建VM')
-          .onClick(() => {
-            this.createDialogController.open();
-          })
-      }
-      .width('100%')
-      .padding(16)
-      .backgroundColor(Color.White)
-      .borderRadius(8)
-      .margin({ bottom: 16 })
-
-      // 错误提示
-      if (this.error) {
-        Text(this.error)
+    Row() {
+      // 左侧导航
+      Column() {
+        Row() {
+          Text('≡')
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .padding(12)
+        }
+        .margin({ bottom: 12 })
+        Column() {
+          Text('👤')
+            .fontSize(20)
+            .padding({ top: 8, bottom: 4 })
+          Text('虚拟机')
+            .fontSize(14)
+            .fontColor('#1A73E8')
+            .padding({ bottom: 12 })
+          Text('⚙')
+            .fontSize(18)
+            .padding({ top: 8, bottom: 4 })
+          Text('Apps')
+            .fontSize(14)
+            .fontColor('#888888')
+            .padding({ bottom: 12 })
+          Text('👥')
+            .fontSize(18)
+            .padding({ top: 8, bottom: 4 })
+          Text('我的')
+            .fontSize(14)
+            .fontColor('#888888')
+        }
+        .alignItems(HorizontalAlign.Center)
+        .layoutWeight(1)
+        Text('添加..')
           .fontSize(14)
-          .fontColor(Color.Red)
-          .padding(8)
-          .backgroundColor(Color.Red + '20')
-          .borderRadius(4)
-          .margin({ bottom: 16 })
+          .fontColor('#1A73E8')
+          .padding({ bottom: 20 })
       }
+      .width(92)
+      .height('100%')
+      .backgroundColor('#F7F9FA')
+      .justifyContent(FlexAlign.Start)
+      .alignItems(HorizontalAlign.Center)
 
-      // VM列表
-      List() {
-        ForEach(this.vms, (vm: VmMeta) => {
-          ListItem() {
-            Column() {
-              Row() {
-                Text(vm.name)
-                  .fontSize(18)
-                  .fontWeight(FontWeight.Medium)
-                Blank()
-                Text(this.getStatusText(vm.status))
-                  .fontSize(14)
-                  .fontColor(this.getStatusColor(vm.status))
-              }
-              .width('100%')
-              .margin({ bottom: 8 })
+      // 中间列表区
+      Column() {
+        Row() {
+          TextInput({ placeholder: '搜索虚拟机的名字', text: this.searchText })
+            .border({ color: '#E0E0E0', width: 1 })
+            .borderRadius(24)
+            .height(40)
+            .padding({ left: 12, right: 12 })
+            .width('70%')
+            .onChange((val: string) => this.searchText = val)
+          Blank()
+          Button('＋ 新建')
+            .backgroundColor('#1A73E8')
+            .fontColor(Color.White)
+            .borderRadius(20)
+            .height(36)
+            .padding({ left: 14, right: 14 })
+            .onClick(() => this.createDialogController.open())
+        }
+        .width('100%')
+        .padding({ top: 12, bottom: 12, left: 12, right: 12 })
 
-              Row() {
-                Text(`OS: ${vm.osType}`)
-                  .fontSize(14)
-                  .fontColor(Color.Grey)
-                Blank()
-                Text(`${vm.cpuCount}核 ${vm.memoryMB}MB ${vm.diskSizeGB}GB`)
-                  .fontSize(14)
-                  .fontColor(Color.Grey)
-              }
-              .width('100%')
-              .margin({ bottom: 8 })
-
-              Row() {
-                Button('启动')
-                  .onClick(() => this.startVM(vm))
-                  .enabled(vm.status === 'stopped' || vm.status === 'failed')
-                  .margin({ right: 8 })
-                Button('停止')
-                  .onClick(() => this.stopVM(vm))
-                  .enabled(vm.status === 'running')
-                  .margin({ right: 8 })
-                Button('日志')
-                  .onClick(() => this.showVMLogs(vm))
-                  .margin({ right: 8 })
-                Button('删除')
-                  .onClick(() => this.deleteVM(vm))
-                  .enabled(vm.status === 'stopped' || vm.status === 'failed')
-              }
-              .width('100%')
-            }
-            .padding(16)
-            .backgroundColor(Color.White)
+        if (this.error) {
+          Text(this.error)
+            .fontSize(14)
+            .fontColor(Color.Red)
+            .padding(10)
+            .backgroundColor('#FFEBEE')
             .borderRadius(8)
-            .margin({ bottom: 8 })
+            .margin({ left: 12, right: 12, bottom: 8 })
+        }
+
+        Scroll() {
+          Column() {
+            ForEach(this.getFilteredVms(), (vm: VmMeta) => {
+              Column() {
+                Row() {
+                  Text('★')
+                    .fontSize(18)
+                    .fontColor('#1A73E8')
+                    .margin({ right: 8 })
+                  Column() {
+                    Text(vm.name)
+                      .fontSize(18)
+                      .fontWeight(FontWeight.Medium)
+                    Text(`${vm.osType} · ${vm.cpuCount}核 · ${vm.memoryMB}MB · ${vm.diskSizeGB}GB`)
+                      .fontSize(14)
+                      .fontColor('#7A7A7A')
+                    Row() {
+                      Text(this.getSystemCamp(vm))
+                        .fontSize(12)
+                        .fontColor('#1A73E8')
+                        .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                        .backgroundColor('#E8F1FF')
+                        .borderRadius(10)
+                        .margin({ right: 6 })
+                      Text(this.getCpuCamp(vm))
+                        .fontSize(12)
+                        .fontColor('#00897B')
+                        .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                        .backgroundColor('#E0F2F1')
+                        .borderRadius(10)
+                    }
+                  }
+                  Blank()
+                  Text(this.getStatusText(vm.status))
+                    .fontSize(14)
+                    .fontColor(this.getStatusColor(vm.status))
+                }
+                .width('100%')
+                .padding({ top: 10, bottom: 10, left: 14, right: 14 })
+                .onClick(() => this.startVM(vm))
+              }
+              .backgroundColor('#FFFFFF')
+              .borderRadius(12)
+              .margin({ bottom: 8, left: 8, right: 8 })
+              .shadow({ radius: 6, color: '#00000010' })
+            })
+
+            if (this.getFilteredVms().length === 0) {
+              Column() {
+                Text('暂无虚拟机')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Medium)
+                  .margin({ bottom: 6 })
+                Text('点击右上角 “＋ 新建” 来创建虚拟机')
+                  .fontSize(14)
+                  .fontColor('#7A7A7A')
+              }
+              .width('100%')
+              .height(180)
+              .justifyContent(FlexAlign.Center)
+              .alignItems(HorizontalAlign.Center)
+              .backgroundColor('#FFFFFF')
+              .borderRadius(12)
+              .margin({ top: 12, left: 12, right: 12 })
+              .shadow({ radius: 6, color: '#00000010' })
+            }
           }
-        })
+          .width('100%')
+          .padding({ bottom: 12 })
+        }
+        .width('100%')
+        .layoutWeight(1)
       }
-      .width('100%')
+      .width('30%')
+      .height('100%')
+      .backgroundColor('#F0F2F5')
+
+      // 右侧内容占位
+      Column() {
+        if (this.error === '') {
+          Text('请选择左侧虚拟机开始')
+            .fontSize(16)
+            .fontColor('#7A7A7A')
+        } else {
+          Text(this.error)
+            .fontSize(14)
+            .fontColor(Color.Red)
+            .padding(12)
+            .backgroundColor('#FFEBEE')
+            .borderRadius(8)
+            .margin({ bottom: 12 })
+        }
+        Blank()
+      }
       .layoutWeight(1)
+      .height('100%')
+      .padding(24)
+      .backgroundColor('#FFFFFF')
     }
     .width('100%')
     .height('100%')
-    .padding(16)
-    .backgroundColor('#F5F5F5')
+    .backgroundColor('#ECEFF1')
   }
 }

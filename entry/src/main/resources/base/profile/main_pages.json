@@ -3,6 +3,9 @@
     "pages/Index",
     "pages/VNCViewer",
     "pages/VNCNativeViewer",
-    "pages/RDPViewer"
+    "pages/RDPViewer",
+    "pages/VNCWindow",
+    "pages/RDPWindow",
+    "pages/ConsoleWindow"
   ]
 }

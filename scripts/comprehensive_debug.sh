@@ -16,9 +16,9 @@ echo
 
 # 检查应用进程
 echo "2. 检查应用进程状态..."
-if hdc shell ps -ef | grep -q "com.caidingding233.qemuhmos"; then
+if hdc shell ps -ef | grep -q "com.cloudshin.aetherengine"; then
     echo "✅ 应用进程正在运行"
-    hdc shell ps -ef | grep "com.caidingding233.qemuhmos"
+    hdc shell ps -ef | grep "com.cloudshin.aetherengine"
 else
     echo "❌ 应用进程未运行"
 fi
@@ -26,12 +26,12 @@ echo
 
 # 检查应用包信息
 echo "3. 检查应用包信息..."
-hdc shell pm list packages | grep "com.caidingding233.qemuhmos" || echo "❌ 应用包未找到"
+hdc shell pm list packages | grep "com.cloudshin.aetherengine" || echo "❌ 应用包未找到"
 echo
 
 # 检查应用权限
 echo "4. 检查应用权限..."
-hdc shell dumpsys package com.caidingding233.qemuhmos | grep -A 10 "requested permissions" || echo "❌ 无法获取权限信息"
+hdc shell dumpsys package com.cloudshin.aetherengine | grep -A 10 "requested permissions" || echo "❌ 无法获取权限信息"
 echo
 
 # 检查应用数据目录
@@ -73,7 +73,7 @@ echo
 # 检查应用日志
 echo "10. 检查应用日志..."
 echo "最近的应用日志:"
-hdc shell hilog -x | grep -i "qemu\|vnc\|ing233" | tail -20 || echo "❌ 没有找到相关日志"
+hdc shell hilog -x | grep -i "qemu\|vnc\|aether" | tail -20 || echo "❌ 没有找到相关日志"
 echo
 
 # 检查系统错误
@@ -84,27 +84,27 @@ echo
 
 # 检查应用安装状态
 echo "12. 检查应用安装状态..."
-hdc shell pm list packages -f | grep "com.caidingding233.qemuhmos" || echo "❌ 应用未安装"
+hdc shell pm list packages -f | grep "com.cloudshin.aetherengine" || echo "❌ 应用未安装"
 echo
 
 # 检查应用版本
 echo "13. 检查应用版本..."
-hdc shell dumpsys package com.caidingding233.qemuhmos | grep "versionName\|versionCode" || echo "❌ 无法获取版本信息"
+hdc shell dumpsys package com.cloudshin.aetherengine | grep "versionName\|versionCode" || echo "❌ 无法获取版本信息"
 echo
 
 # 检查应用签名
 echo "14. 检查应用签名..."
-hdc shell dumpsys package com.caidingding233.qemuhmos | grep -A 5 "signatures" || echo "❌ 无法获取签名信息"
+hdc shell dumpsys package com.cloudshin.aetherengine | grep -A 5 "signatures" || echo "❌ 无法获取签名信息"
 echo
 
 # 检查应用权限详情
 echo "15. 检查应用权限详情..."
-hdc shell dumpsys package com.caidingding233.qemuhmos | grep -A 20 "requested permissions" || echo "❌ 无法获取权限详情"
+hdc shell dumpsys package com.cloudshin.aetherengine | grep -A 20 "requested permissions" || echo "❌ 无法获取权限详情"
 echo
 
 # 检查应用数据目录权限
 echo "16. 检查应用数据目录权限..."
-hdc shell ls -la /data/storage/el2/base/ | grep "com.caidingding233.qemuhmos" || echo "❌ 应用数据目录不存在"
+hdc shell ls -la /data/storage/el2/base/ | grep "com.cloudshin.aetherengine" || echo "❌ 应用数据目录不存在"
 echo
 
 # 检查应用缓存目录
@@ -124,7 +124,7 @@ echo
 
 # 检查应用状态
 echo "20. 检查应用状态..."
-hdc shell dumpsys package com.caidingding233.qemuhmos | grep -A 10 "applicationInfo" || echo "❌ 无法获取应用状态"
+hdc shell dumpsys package com.cloudshin.aetherengine | grep -A 10 "applicationInfo" || echo "❌ 无法获取应用状态"
 echo
 
 echo "=== 调试完成 ==="

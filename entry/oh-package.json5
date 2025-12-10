@@ -6,7 +6,7 @@
   "author": "",
   "license": "",
   "dependencies": {
-    "libqemu_hmos.so": "file:./src/main/cpp/types/libqemu_hmos"
+    "qemu_hmos": "file:./src/main/cpp/types/libqemu_hmos"
   }
 }
 
