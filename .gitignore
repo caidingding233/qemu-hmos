@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 /node_modules
 /local.properties
 /.idea
@@ -89,3 +90,162 @@ third_party/**/*.dll
 !third_party/**/*.wrap
 .cursor/rules
 WARP.md
+=======
+# ============================================
+# QEMU-HMOS 开源项目 .gitignore
+# ============================================
+
+# ============================================
+# 构建产物和二进制文件
+# ============================================
+*.so
+*.a
+*.o
+*.d
+*.obj
+*.exe
+*.dll
+*.dylib
+*.abc
+*.map
+*.hap
+*.hsp
+*.app
+
+# HAP 解压/检查目录
+check_hap/
+hap_check/
+*.zip
+
+# 编译输出目录
+build/
+out/
+output/
+dist/
+target/
+cmake-build-*/
+
+# ============================================
+# 第三方依赖构建产物
+# ============================================
+third_party/deps/install-ohos/
+third_party/deps/**/*.o
+third_party/deps/**/*.d
+third_party/deps/**/*.a
+third_party/freerdp/build-ohos/
+third_party/build_qemu.log
+third_party/qemu-code/
+
+# OpenSSL 编译产物
+third_party/deps/openssl/**/*.o
+third_party/deps/openssl/**/*.d
+
+# ============================================
+# 日志文件
+# ============================================
+logs/
+*.log
+nohup.out
+build_rdp_output.txt
+extract_psd_log.txt
+
+# ============================================
+# 临时文件和IDE文件
+# ============================================
+# 配置临时
+config-temp/
+config.log
+
+# 编辑器/IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+cursor_.md
+
+# Windows 特殊文件
+nul
+dir
+
+# 误操作目录
+-p/
+
+# 未定义文件
+undefined
+
+# ============================================
+# 调试和参考文档（不适合开源）
+# ============================================
+kernel_plimits.json
+kernel_plimits.md
+native_child_api.json
+native_child_api.md
+nativechildprocess*.md
+process-model-stage.md
+docs_root.json
+docs_tree.json
+childProcessManager.json
+
+# ============================================
+# HarmonyOS / DevEco Studio
+# ============================================
+# 本地签名配置（绝对不要提交）
+*.p12
+*.cer
+*.pem
+*.key
+signature/
+
+# DevEco 缓存
+.cxx/
+.preview/
+.hvigor/
+oh_modules/
+node_modules/
+
+# 构建缓存
+entry/build/
+entry/.cxx/
+entry/.preview/
+entry/src/main/cpp/build-*/
+entry/src/main/cpp/.ninja_log
+
+# ============================================
+# 包管理锁文件（可选保留）
+# ============================================
+# package-lock.json
+# oh-package-lock.json5
+
+# ============================================
+# 系统文件
+# ============================================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# ============================================
+# 测试和覆盖率
+# ============================================
+coverage/
+.nyc_output/
+*.lcov
+
+# ============================================
+# 其他
+# ============================================
+*.bak
+*.tmp
+*.temp
+.env
+.env.local
+.env.*.local
+
+>>>>>>> main
