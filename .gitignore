@@ -1,91 +1,157 @@
-/node_modules
-/local.properties
-/.idea
-**/build
-/.hvigor
-.cxx
-/.clangd
-/.clang-format
-/.clang-tidy
-**/.test
-/.appanalyzer
-# 排除所有以点开头的文件和文件夹（除了.github）
-.*
-!.github/
-!.github/**
-.DS_Store
-.trae/
-.claude/
-.cursor/
-.cursor/**
+# ============================================
+# QEMU-HMOS 开源项目 .gitignore
+# ============================================
 
-# 排除所有test开头的文件（除了workflow文件）
-test*
-**/test*
-!.github/workflows/test-*
-
-# 排除工具和脚本的临时文件
-/tools
-third_party/novnc/
-third_party/novnc_bundle/
-so_libs/
-# 排除第三方库的构建产物，但保留源代码
-third_party/*/build*/
-third_party/*/build_*/
-third_party/*/contrib/plugins/*.so
-third_party/*/linux-user/*/vdso*.so
-third_party/qemu/build*/
-third_party/qemu/contrib/plugins/*.so
-third_party/qemu/linux-user/*/vdso*.so
-# 排除所有库文件和构建产物
+# ============================================
+# 构建产物和二进制文件
+# ============================================
 *.so
-*.dylib
 *.a
-*.lib
+*.o
+*.d
+*.obj
+*.exe
 *.dll
+*.dylib
+*.abc
+*.map
+*.hap
+*.hsp
+*.app
 
-# 排除特定的大文件
-entry/src/main/resources/rawfile/edk2-aarch64-code.fd
+# HAP 解压/检查目录
+check_hap/
+hap_check/
+*.zip
 
-# 排除所有构建产物中的库文件
-entry/oh_modules/*.so
-entry/src/oh_modules/*.so
-entry/src/main/cpp/*.so
-entry/src/main/cpp/*.dylib
-entry/src/main/cpp/libs/**/*.so
-entry/src/main/cpp/third_party/**/*.a
-entry/src/main/libs/**/*.so
-entry/src/main/libs/**/*.dylib
+# 编译输出目录
+build/
+out/
+output/
+dist/
+target/
+cmake-build-*/
 
-# 排除第三方库的构建产物
-third_party/**/*.so
-third_party/**/*.a
-third_party/**/*.dylib
-third_party/**/*.lib
-third_party/**/*.dll
+# ============================================
+# 第三方依赖构建产物
+# ============================================
+third_party/deps/install-ohos/
+third_party/deps/**/*.o
+third_party/deps/**/*.d
+third_party/deps/**/*.a
+third_party/freerdp/build-ohos/
+third_party/build_qemu.log
+third_party/qemu-code/
 
-# 但保留源代码目录和文件
-!third_party/qemu/
-!third_party/freerdp/
-!third_party/deps/
-!third_party/novnc/
-!third_party/novnc_bundle/
+# OpenSSL 编译产物
+third_party/deps/openssl/**/*.o
+third_party/deps/openssl/**/*.d
 
-# 但保留源代码文件
-!third_party/**/*.h
-!third_party/**/*.c
-!third_party/**/*.cpp
-!third_party/**/*.hpp
-!third_party/**/*.S
-!third_party/**/*.inc
-!third_party/**/*.build
-!third_party/**/*.mak
-!third_party/**/*.json
-!third_party/**/*.txt
-!third_party/**/*.rst
-!third_party/**/*.py
-!third_party/**/*.sh
-!third_party/**/*.toml
-!third_party/**/*.wrap
-.cursor/rules
-WARP.md
+# ============================================
+# 日志文件
+# ============================================
+logs/
+*.log
+nohup.out
+build_rdp_output.txt
+extract_psd_log.txt
+
+# ============================================
+# 临时文件和IDE文件
+# ============================================
+# 配置临时
+config-temp/
+config.log
+
+# 编辑器/IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+cursor_.md
+
+# Windows 特殊文件
+nul
+dir
+
+# 误操作目录
+-p/
+
+# 未定义文件
+undefined
+
+# ============================================
+# 调试和参考文档（不适合开源）
+# ============================================
+kernel_plimits.json
+kernel_plimits.md
+native_child_api.json
+native_child_api.md
+nativechildprocess*.md
+process-model-stage.md
+docs_root.json
+docs_tree.json
+childProcessManager.json
+
+# ============================================
+# HarmonyOS / DevEco Studio
+# ============================================
+# 本地签名配置（绝对不要提交）
+*.p12
+*.cer
+*.pem
+*.key
+signature/
+
+# DevEco 缓存
+.cxx/
+.preview/
+.hvigor/
+oh_modules/
+node_modules/
+
+# 构建缓存
+entry/build/
+entry/.cxx/
+entry/.preview/
+entry/src/main/cpp/build-*/
+entry/src/main/cpp/.ninja_log
+
+# ============================================
+# 包管理锁文件（可选保留）
+# ============================================
+# package-lock.json
+# oh-package-lock.json5
+
+# ============================================
+# 系统文件
+# ============================================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# ============================================
+# 测试和覆盖率
+# ============================================
+coverage/
+.nyc_output/
+*.lcov
+
+# ============================================
+# 其他
+# ============================================
+*.bak
+*.tmp
+*.temp
+.env
+.env.local
+.env.*.local
+

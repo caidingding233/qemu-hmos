@@ -125,6 +125,7 @@ class RDPConnection {
   private callbacks: RDPConnectionCallbacks = {}
   private config: RDPConnectionConfig | null = null
   private frameBuffer: ArrayBuffer | null = null
+  public errorMessage: string = '' // 添加 errorMessage 属性
   
   constructor(callbacks: RDPConnectionCallbacks) {
     this.callbacks = callbacks
@@ -138,21 +139,21 @@ class RDPConnection {
       
       console.log(`尝试连接到RDP服务器 ${config.host}:${config.port}`)
       
-      // 模拟连接过程
-      setTimeout(() => {
+      // 模拟 RDP 连接（实际连接需要在 Native 层实现）
+      await new Promise<void>(resolve => setTimeout(resolve, 500));
+      
         if (config.username && config.password) {
           this.state = RDPConnectionState.AUTHENTICATING
-          this.performAuthentication()
+        await this.performAuthentication()
         } else {
           this.callbacks.onAuthenticationRequired?.()
         }
-      }, 1000)
       
     } catch (error) {
       console.error('RDP连接失败:', error)
-      this.errorMessage = `连接失败: ${JSON.stringify(error)}`
+      this.errorMessage = `连接失败: ${error instanceof Error ? error.message : JSON.stringify(error)}`
       this.state = RDPConnectionState.ERROR
-      this.callbacks.onError?.(error.toString())
+      this.callbacks.onError?.(error instanceof Error ? error.message : error.toString())
     }
   }
   
@@ -163,18 +164,19 @@ class RDPConnection {
       
       console.log('正在进行RDP认证...')
       
-      // 模拟认证过程
-      setTimeout(() => {
+      // 模拟 RDP 认证（实际认证需要在 Native 层实现）
+      await new Promise<void>(resolve => setTimeout(resolve, 300));
+      
+      // 假设认证成功
         this.state = RDPConnectionState.CONNECTED
         this.callbacks.onConnected?.()
         console.log('RDP连接已建立')
-      }, 2000)
       
     } catch (error) {
       console.error('RDP认证失败:', error)
-      this.errorMessage = `认证失败: ${JSON.stringify(error)}`
+      this.errorMessage = `认证失败: ${error instanceof Error ? error.message : JSON.stringify(error)}`
       this.state = RDPConnectionState.ERROR
-      this.callbacks.onError?.(error.toString())
+      this.callbacks.onError?.(error instanceof Error ? error.message : error.toString())
     }
   }
   

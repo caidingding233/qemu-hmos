@@ -1,4 +1,4 @@
-import qemu from 'libqemu_hmos.so';
+import qemu from 'qemu_hmos';
 
 @Component
 export struct MinePage {

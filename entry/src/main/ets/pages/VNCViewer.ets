@@ -2,7 +2,8 @@ import router from '@ohos.router'
 import common from '@ohos.app.ability.common'
 import webview from '@ohos.web.webview'
 import fs from '@ohos.file.fs'
-import { DisplayManager } from '../utils/DisplayManager'
+import { DisplayManager, DisplayConfig } from '../utils/DisplayManager'
+import { VirtualKeyHub, VirtualKeyHubCallbacks, KeySym } from '../components/VirtualKeyHub'
 
 // 简易的 noVNC 加载器：从 rawfile/novnc/ 读取 novnc.min.js 并嵌入到 WebView
 // 若未放置该文件，则显示提示文案。
@@ -16,12 +17,58 @@ struct VNCViewer {
   @State vmName: string = ''
   @State vncPort: number = 5701
   @State statusText: string = '正在加载VNC页面…'
-  @State displayConfig: any = null
+  @State displayConfig: DisplayConfig | null = null
+  @State isConnected: boolean = false
   private webCtrl: webview.WebviewController = new webview.WebviewController()
   private displayManager: DisplayManager = DisplayManager.getInstance()
+  
+  /**
+   * 发送按键到VNC
+   */
+  private sendKey(keysym: number, down: boolean) {
+    if (!this.isConnected) return
+    try {
+      this.webCtrl.runJavaScript(
+        `if(typeof rfb !== "undefined") rfb.sendKey(${keysym}, null, ${down});`
+      )
+    } catch (e) {
+      console.error('[VNCViewer] sendKey error:', e)
+    }
+  }
+  
+  /**
+   * 发送组合键到VNC
+   */
+  private sendKeyCombo(modifiers: number[], key: number) {
+    if (!this.isConnected) return
+    try {
+      // 按下所有修饰键
+      modifiers.forEach(mod => {
+        this.webCtrl.runJavaScript(
+          `if(typeof rfb !== "undefined") rfb.sendKey(${mod}, null, true);`
+        )
+      })
+      
+      // 按下并释放主键
+      this.webCtrl.runJavaScript(
+        `if(typeof rfb !== "undefined") { rfb.sendKey(${key}, null, true); rfb.sendKey(${key}, null, false); }`
+      )
+      
+      // 释放所有修饰键（逆序）
+      const reversed = [...modifiers].reverse()
+      reversed.forEach(mod => {
+        this.webCtrl.runJavaScript(
+          `if(typeof rfb !== "undefined") rfb.sendKey(${mod}, null, false);`
+        )
+      })
+    } catch (e) {
+      console.error('[VNCViewer] sendKeyCombo error:', e)
+    }
+  }
 
   aboutToAppear() {
-    const params = router.getParams()
+    // router.getParams() 不需要参数
+    const params = router.getParams() as VncRouteParams | undefined
     if (params && typeof params === 'object') {
       const p = params as VncRouteParams
       if (p.vmInfo) {
@@ -57,8 +104,8 @@ struct VNCViewer {
       try {
         const jsBytes: Uint8Array = await rm.getRawFileContent('novnc/novnc.min.js')
         const jsFile = await fs.open(filesDir + '/novnc.min.js', fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY)
-        await fs.write(jsFile.fd, jsBytes.buffer.slice())
-        await fs.close(jsFile)
+        await fs.write(jsFile.fd, jsBytes.buffer, { offset: 0, length: jsBytes.length })
+        await fs.close(jsFile.fd)
         hasNoVncMin = true
       } catch (_) {
         hasNoVncMin = false
@@ -67,8 +114,8 @@ struct VNCViewer {
         try {
           const esmBytes: Uint8Array = await rm.getRawFileContent('novnc/novnc.esm.js')
           const esmFile = await fs.open(filesDir + '/novnc.esm.js', fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY)
-          await fs.write(esmFile.fd, esmBytes.buffer.slice())
-          await fs.close(esmFile)
+          await fs.write(esmFile.fd, esmBytes.buffer, { offset: 0, length: esmBytes.length })
+          await fs.close(esmFile.fd)
           hasNoVncEsm = true
         } catch (_) {
           hasNoVncEsm = false
@@ -134,8 +181,8 @@ struct VNCViewer {
       const htmlAll = htmlHead + htmlBody + htmlScript + '</body></html>'
       const htmlBytes = new Uint8Array(htmlAll.split('').map((c: string) => c.charCodeAt(0)))
       const htmlFile = await fs.open(htmlPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY)
-      await fs.write(htmlFile.fd, htmlBytes)
-      await fs.close(htmlFile)
+      await fs.write(htmlFile.fd, htmlBytes.buffer, { offset: 0, length: htmlBytes.length })
+      await fs.close(htmlFile.fd)
 
       const fileUrl = 'file://' + htmlPath
       const internalUrl = 'internal://app/novnc/index.html'
@@ -146,18 +193,21 @@ struct VNCViewer {
         this.webCtrl.loadUrl(internalUrl)
         this.statusText = '已加载本地页面（internal://app）'
       } catch (e0) {
+        const e0Msg = e0 instanceof Error ? e0.message : String(e0)
         try {
           // 再尝试用 file:// 直接加载
           this.webCtrl.loadUrl(fileUrl)
           this.statusText = '已加载本地页面（file://）'
         } catch (e1) {
+          const e1Msg = e1 instanceof Error ? e1.message : String(e1)
           // 失败则回退到 data: URL
-          this.statusText = 'file:// 加载失败，尝试 data: ' + (e1 as Error).message
+          this.statusText = 'file:// 加载失败，尝试 data: ' + e1Msg
           try {
             this.webCtrl.loadUrl(dataUrl)
             this.statusText = '已加载本地页面（data:）'
           } catch (e2) {
-            this.statusText = '加载VNC页面失败: ' + (e2 as Error).message
+            const e2Msg = e2 instanceof Error ? e2.message : String(e2)
+            this.statusText = '加载VNC页面失败: ' + e2Msg
           }
         }
       }
@@ -168,21 +218,85 @@ struct VNCViewer {
 
   build() {
     Column() {
+      // 顶部导航栏
       Row() {
-        Button('返回').onClick(() => this.goBack())
-        Text(this.vmName).fontSize(16).fontWeight(FontWeight.Medium).margin({ left: 8 })
-      }.width('100%').padding(12)
+        Button('返回')
+          .onClick(() => this.goBack())
+          .backgroundColor('#333333')
+          .fontColor(Color.White)
+          .height(32)
+        
+        Text(this.vmName)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Color.White)
+          .margin({ left: 12 })
+        
+        Blank()
+        
+        // 连接状态指示器
+        Row() {
+          Circle()
+            .width(8)
+            .height(8)
+            .fill(this.isConnected ? '#2ECC71' : '#E74C3C')
+          
+          Text(this.isConnected ? '已连接' : '未连接')
+            .fontSize(12)
+            .fontColor(this.isConnected ? '#2ECC71' : '#E74C3C')
+            .margin({ left: 4 })
+        }
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+      .backgroundColor('#1A1A1A')
 
       // 原生状态提示（即使 WebView 渲染失败，也可见）
-      Text(this.statusText).fontSize(14).fontColor(Color.Grey).padding({ left: 12, right: 12, bottom: 8 })
+      if (!this.isConnected) {
+        Text(this.statusText)
+          .fontSize(12)
+          .fontColor('#888888')
+          .padding({ left: 12, right: 12, bottom: 8 })
+          .backgroundColor('#1A1A1A')
+      }
 
+      // VNC 显示区域
       Web({ src: 'about:blank', controller: this.webCtrl })
         .javaScriptAccess(true)
         .fileAccess(true)
         .domStorageAccess(true)
         .layoutWeight(1)
+        .onConsole((event) => {
+          if (event) {
+            const msg = event.message.getMessage()
+            console.info('[VNCViewer] Console:', msg)
+            // 检测连接状态
+            if (msg.includes('已连接') || msg.includes('connect')) {
+              this.isConnected = true
+            } else if (msg.includes('已断开') || msg.includes('disconnect')) {
+              this.isConnected = false
+            }
+          }
+          return false
+        })
+      
+      // 虚拟按键Hub
+      VirtualKeyHub({
+        callbacks: {
+          onKeyDown: (keysym: number) => {
+            this.sendKey(keysym, true)
+          },
+          onKeyUp: (keysym: number) => {
+            this.sendKey(keysym, false)
+          },
+          onCombo: (modifiers: number[], key: number) => {
+            this.sendKeyCombo(modifiers, key)
+          }
+        } as VirtualKeyHubCallbacks
+      })
     }
     .width('100%')
     .height('100%')
+    .backgroundColor('#1A1A1A')
   }
 }

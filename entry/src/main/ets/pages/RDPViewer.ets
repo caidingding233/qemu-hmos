@@ -1,7 +1,7 @@
 // RDP远程桌面查看器页面
 import { RDPDisplay } from '../components/RDPDisplay'
 import router from '@ohos.router'
-import { DisplayManager } from '../utils/DisplayManager'
+import { DisplayManager, DisplayConfig } from '../utils/DisplayManager'
 
 @Entry
 @Component
@@ -16,13 +16,13 @@ struct RDPViewer {
   @State colorDepth: number = 16
   @State enableAudio: boolean = true
   @State enableClipboard: boolean = true
-  @State displayConfig: any = null
+  @State displayConfig: DisplayConfig | null = null
   private displayManager: DisplayManager = DisplayManager.getInstance()
   
   aboutToAppear() {
     // 获取路由参数
     interface RDPRouteParams { vmId?: string; vmName?: string; rdpHost?: string; rdpPort?: number }
-    const params = router.getParams() as RDPRouteParams
+    const params = router.getParams() as RDPRouteParams | undefined
     if (params) {
       if (typeof params.vmId === 'string') this.vmId = params.vmId
       if (typeof params.vmName === 'string') this.vmName = params.vmName

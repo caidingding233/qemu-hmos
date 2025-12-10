@@ -1,7 +1,7 @@
 import router from '@ohos.router'
 import common from '@ohos.app.ability.common'
 import hilog from '@ohos.hilog'
-import qemu from 'libqemu_hmos.so'
+import qemu from 'qemu_hmos'
 import vnc from '../managers/VNCNativeClient'
 
 interface VNCNativeRouteParams { vmName?: string }
@@ -24,7 +24,7 @@ struct VNCNativeViewer {
   @State connected: boolean = false
 
   aboutToAppear() {
-    const params = router.getParams() as VNCNativeRouteParams
+    const params = router.getParams() as VNCNativeRouteParams | undefined
     if (params && typeof params.vmName === 'string') this.vmName = params.vmName
 
     hilog.info(0x0000, 'VNC_NATIVE', `初始化原生VNC页面, VM名称: ${this.vmName}`)
@@ -56,6 +56,11 @@ struct VNCNativeViewer {
       }
 
       // 步骤2: 检查KVM支持
+      if (!qemu) {
+        hilog.error(0x0000, 'VNC_NATIVE', 'qemu对象未加载')
+        this.status = '❌ qemu对象未加载'
+        return
+      }
       const kvmSupported = qemu.kvmSupported()
       hilog.info(0x0000, 'VNC_NATIVE', `KVM支持检查: ${kvmSupported}`)
 
@@ -124,9 +129,10 @@ struct VNCNativeViewer {
       }
 
     } catch (e) {
-      const errorMsg = (e as Error).message
-      this.status = `❌ 异常: ${errorMsg}`
-      hilog.error(0x0000, 'VNC_NATIVE', `异常发生: ${errorMsg}`)
+      const error = e as Error;
+      hilog.error(0x0000, 'VNCNative', '连接错误: %{public}s', error.message);
+      this.status = `❌ 异常: ${error.message}`
+      hilog.error(0x0000, 'VNC_NATIVE', `异常发生: ${error.message}`)
     }
   }
 

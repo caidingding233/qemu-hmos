@@ -1,0 +1,15 @@
+#!/bin/sh
+EXTRA_PKGCFG="/mnt/e/projects/qemu-hmos/third_party/qemu/../deps/install-ohos/lib/pkgconfig"
+SYSROOT_LIBDIR="/mnt/e/HMOS_SDK/linux/native/sysroot/usr/lib/pkgconfig"
+# 强制禁用系统搜索路径，避免回退到宿主 .pc
+export PKG_CONFIG_PATH=""
+if [ -d "$EXTRA_PKGCFG" ]; then
+  export PKG_CONFIG_LIBDIR="$EXTRA_PKGCFG:${SYSROOT_LIBDIR}"
+else
+  export PKG_CONFIG_LIBDIR="${SYSROOT_LIBDIR}"
+fi
+if [ "$#" -eq 0 ]; then
+  exec pkg-config --version
+else
+  exec pkg-config "$@"
+fi

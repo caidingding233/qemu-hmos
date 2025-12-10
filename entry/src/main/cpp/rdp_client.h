@@ -2,6 +2,7 @@
 #define RDP_CLIENT_H
 
 #include <string>
+#include <vector>
 #include <functional>
 #include <memory>
 

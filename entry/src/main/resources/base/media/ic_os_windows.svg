@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- Windows 图标：简化四格窗户 -->
+  <path d="M3 5.5L10 4.5V11.5H3V5.5Z" fill="currentColor"/>
+  <path d="M11 4.3L21 3V11.5H11V4.3Z" fill="currentColor"/>
+  <path d="M3 12.5H10V19.5L3 18.5V12.5Z" fill="currentColor"/>
+  <path d="M11 12.5H21V21L11 19.7V12.5Z" fill="currentColor"/>
+</svg>

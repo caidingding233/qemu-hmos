@@ -1,0 +1,4 @@
+[Test]
+Type=session
+Exec=@test_exec@
+Output=TAP

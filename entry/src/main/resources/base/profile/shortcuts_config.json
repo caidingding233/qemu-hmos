@@ -1,0 +1,65 @@
+{
+  "shortcuts": [
+    {
+      "shortcutId": "shortcut_vm_1",
+      "label": "虚拟机 1",
+      "icon": "$media:app_icon",
+      "wants": [
+        {
+          "bundleName": "com.caidingding233.qemuhmos",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "shortcutId": "shortcut_vm_1"
+          }
+        }
+      ]
+    },
+    {
+      "shortcutId": "shortcut_vm_2",
+      "label": "虚拟机 2",
+      "icon": "$media:app_icon",
+      "wants": [
+        {
+          "bundleName": "com.caidingding233.qemuhmos",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "shortcutId": "shortcut_vm_2"
+          }
+        }
+      ]
+    },
+    {
+      "shortcutId": "shortcut_vm_3",
+      "label": "虚拟机 3",
+      "icon": "$media:app_icon",
+      "wants": [
+        {
+          "bundleName": "com.caidingding233.qemuhmos",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "shortcutId": "shortcut_vm_3"
+          }
+        }
+      ]
+    },
+    {
+      "shortcutId": "shortcut_vm_4",
+      "label": "虚拟机 4",
+      "icon": "$media:app_icon",
+      "wants": [
+        {
+          "bundleName": "com.caidingding233.qemuhmos",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "shortcutId": "shortcut_vm_4"
+          }
+        }
+      ]
+    }
+  ]
+}
+

@@ -1,0 +1,27 @@
+* [33m565bd8d3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mui-change[m[33m)[m chore: 添加未跟踪的文件
+* [33mf9724167[m[33m ([m[1;31morigin/ui-change[m[33m)[m fix: 使用 main 分支的 .gitignore
+* [33m8126e531[m fix: 更新 .gitignore
+* [33m70da567f[m feat: 添加 main 分支的所有文件
+* [33mfd4ff5b5[m fix: 更新 .gitignore 文件
+* [33m3dfb30e6[m fix: 更新 .gitignore 和其他文件
+* [33m6d92cf24[m fix: 修复 .gitmodules 文件冲突
+* [33m317ee734[m feat: UI Big Change And VM Available in TTL Mode!
+* [33m0d108105[m[33m ([m[1;31morigin/main[m[33m)[m Update LICENSE
+[31m|[m * [33mc0fe01ed[m[33m ([m[1;32mmain[m[33m)[m feat: UI Big Change And VM Available in TTL Mode!
+[31m|[m * [33mc88d4462[m feat: UI Big Change And VM Available in TTL Mode!
+[31m|[m *   [33mcea50342[m[33m ([m[1;31morigin/flutter-ui[m[33m)[m Merge pull request #23 from caidingding233/codex/investigate-virtual-machine-creation-issue
+[31m|[m [33m|[m[34m\[m  
+[31m|[m [33m|[m * [33m376b557f[m chore: remove legacy harmony ui module
+[31m|[m * [34m|[m   [33m9a5dc805[m Merge pull request #22 from caidingding233/codex/investigate-virtual-machine-creation-issue-31mwk9
+[31m|[m [35m|[m[36m\[m [34m\[m  
+[31m|[m [35m|[m * [34m|[m [33m3966fa9e[m feat: add roadmap placeholder on Apps screen
+[31m|[m [35m|[m [34m|[m[34m/[m  
+[31m|[m * [34m|[m   [33m7a2642d5[m Merge pull request #21 from caidingding233/codex/investigate-virtual-machine-creation-issue
+[31m|[m [34m|[m[1;32m\[m [34m\[m  
+[31m|[m [34m|[m [1;32m|[m[34m/[m  
+[31m|[m [34m|[m[34m/[m[1;32m|[m   
+[31m|[m [34m|[m * [33m1f48f082[m fix: align startVm channel return type
+[31m|[m [34m|[m[34m/[m  
+[31m|[m * [33me8f52caf[m feat: 完整的响应式胶囊导航栏和Windows 11虚拟机启动
+[31m|[m * [33m192256a3[m feat: 添加胶囊导航栏和三个Tab界面
+[31m|[m * [33m9efb0398[m feat: 完整的Flutter UI集成 - 修复白屏问题

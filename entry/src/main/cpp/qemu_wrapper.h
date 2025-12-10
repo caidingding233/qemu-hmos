@@ -90,10 +90,19 @@ int qemu_start_rdp_server(const char* vm_name, int port);
 
 // RDP客户端管理接口
 rdp_client_handle_t rdp_client_create(void);
-int rdp_client_connect(rdp_client_handle_t handle, const rdp_connection_config_t* config);
-void rdp_client_disconnect(rdp_client_handle_t handle);
+// 注意：函数名添加 qemu_ 前缀以避免与 FreeRDP 库的同名函数冲突
+int qemu_rdp_client_connect(rdp_client_handle_t handle, const rdp_connection_config_t* config);
+void qemu_rdp_client_disconnect(rdp_client_handle_t handle);
 int rdp_client_is_connected(rdp_client_handle_t handle);
 rdp_connection_state_t rdp_client_get_state(rdp_client_handle_t handle);
+
+// RDP 超时检测和强制清理接口
+int rdp_check_timeout(void);           // 检查是否超时，返回超时秒数，0表示未超时
+void rdp_set_timeout(int seconds);     // 设置超时时间（秒）
+void rdp_request_cancel(void);         // 请求取消连接
+int rdp_is_cancel_requested(void);     // 检查是否已请求取消
+void rdp_force_cleanup(void);          // 强制清理（即使线程没退出）
+const char* rdp_get_status_string(void); // 获取状态字符串
 
 // RDP显示控制
 int rdp_client_set_resolution(rdp_client_handle_t handle, int width, int height);
@@ -139,9 +148,88 @@ int qemu_detect_kvm_support(void);
 int qemu_detect_hvf_support(void);
 int qemu_detect_tcg_support(void);
 
+// KVM 权限检测（HarmonyOS 专用）
+const char* qemu_get_kvm_unavailable_reason(int is_release_build);
+int qemu_is_pc_device(void);
+
+// 设备信息设置（从 ArkTS 层调用）
+// device_type: 0=unknown, 1=phone, 2=tablet, 3=2in1, 4=pc
+void qemu_set_device_info(int device_type, const char* model);
+
+// JIT 权限（ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY）
+void qemu_set_jit_permission(int has_permission);
+int qemu_has_jit_permission(void);
+const char* qemu_get_jit_permission_info(int is_release_build);
+
 // 日志管理
 int qemu_get_vm_logs(const char* vm_name, char** logs, int* line_count);
 int qemu_clear_vm_logs(const char* vm_name);
+void qemu_append_log(const char* vm_name, const char* message);
+void qemu_register_log_file(const char* vm_name, const char* log_path);
+
+// Monitor 管理
+void qemu_register_monitor(const char* vm_name, const char* socket_path);
+
+// 共享目录管理
+int qemu_get_shared_dirs(const char* vm_name, char*** dirs, int* count);
+
+// 删除快照
+int qemu_delete_snapshot(const char* vm_name, const char* snapshot_name);
+
+// Windows 11 配置相关 (TPM/UEFI/SecureBoot)
+// TPM 设置结果
+typedef struct {
+    int success;
+    const char* socket_path;
+    const char* state_dir;
+    const char* error_message;
+} tpm_setup_result_t;
+
+// UEFI 设置结果
+typedef struct {
+    int success;
+    const char* code_path;
+    const char* vars_path;
+    const char* error_message;
+} uefi_setup_result_t;
+
+// Windows 11 兼容性检查结果
+typedef struct {
+    int tpm_available;
+    int uefi_available;
+    int secure_boot_available;
+    int overall_compatible;
+    const char* tpm_status;
+    const char* uefi_status;
+    const char* secure_boot_status;
+} win11_compatibility_result_t;
+
+// TPM 管理
+int qemu_setup_tpm(const char* vm_name, tpm_setup_result_t* result);
+int qemu_cleanup_tpm(const char* vm_name);
+int qemu_is_tpm_available(const char* vm_name);
+
+// UEFI 管理
+int qemu_setup_uefi(const char* vm_name, uefi_setup_result_t* result);
+int qemu_cleanup_uefi(const char* vm_name);
+int qemu_is_uefi_available(void);
+const char* qemu_get_uefi_code_path(void);
+const char* qemu_get_uefi_vars_template_path(void);
+
+// Secure Boot 管理
+int qemu_enable_secure_boot(const char* vm_name, int enable);
+int qemu_is_secure_boot_enabled(const char* vm_name);
+
+// Windows 11 兼容性检查
+int qemu_check_win11_compatibility(const char* vm_name, win11_compatibility_result_t* result);
+
+// 生成 Windows 11 优化的 QEMU 命令参数
+const char* qemu_build_win11_args(const char* vm_name, int memory_mb, const char* disk_path, const char* iso_path);
+// QEMU 核心库加载函数
+extern "C" {
+    void EnsureQemuCoreLoaded(const char* log_path);
+    extern int (*g_qemu_core_init)(int argc, char** argv);
+}
 
 #ifdef __cplusplus
 }

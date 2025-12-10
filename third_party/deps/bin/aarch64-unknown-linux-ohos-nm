@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "/mnt/e/HMOS_SDK/linux/native/llvm/bin/llvm-nm" "$@"

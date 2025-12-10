@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- 小艺键：圆形内两道海浪，上长下短（镜像） -->
+  <!-- 外圈圆环 -->
+  <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>
+  <!-- 上面一根海浪 - 长，先⌣后⌢ -->
+  <path d="M4 9 Q8 5, 12 9 Q16 13, 20 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  <!-- 下面一根海浪 - 短，先⌣后⌢，对准圆边 -->
+  <path d="M5 17 Q9 13, 12 17 Q15 21, 19 17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+</svg>
+

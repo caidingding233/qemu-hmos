@@ -18,5 +18,6 @@
   "include": [
     "src/main/ets/**/*",
     "src/main/ets/global.d.ts"
-  ]
+  ],
+  "files": []
 }

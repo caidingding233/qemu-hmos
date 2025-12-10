@@ -1,40 +1,66 @@
 /**
- * OneDrive 集成管理器
- * 实现鸿蒙版 UTM 的 OneDrive 三档集成方案
+ * OneDrive 文件管理器
+ * 管理从 VM 的 OneDrive 到鸿蒙沙箱的文件传输
+ * 
+ * 数据流:
+ * 云端 OneDrive ↔ VM 里的 OneDrive 客户端 ↔ 鸿蒙 App 沙箱
+ * 
+ * 两种传输方式:
+ * 1. RDP 驱动器重定向 - 在 RDP 会话中直接访问鸿蒙沙箱目录
+ * 2. 共享文件夹 - 用户在 VM 里手动复制到 virtio-9p 挂载点
  */
 
-export interface OneDriveConfig {
-  tier: 1 | 2 | 3;
-  enabled: boolean;
-  autoInstall: boolean;
-  cacheDirectory?: string;
-  graphApiKey?: string;
-  tenantId?: string;
+import { RDPDriveManager } from './RDPDriveManager';
+import fs from '@ohos.file.fs';
+
+// OneDrive 同步状态
+export enum OneDriveSyncStatus {
+  IDLE = 'idle',
+  SYNCING = 'syncing',
+  COMPLETED = 'completed',
+  ERROR = 'error'
 }
 
-export interface OfficeApp {
+// OneDrive 文件信息
+export interface OneDriveFile {
   name: string;
-  displayName: string;
-  executable: string;
-  icon: string;
-  category: 'productivity' | 'communication' | 'development' | 'media';
+  path: string;
+  size: number;
+  modifiedTime: Date;
+  isDirectory: boolean;
+  syncStatus: OneDriveSyncStatus;
+}
+
+// 传输模式
+export enum TransferMode {
+  RDP_REDIRECT = 'rdp_redirect',    // 通过 RDP 驱动器重定向
+  SHARED_FOLDER = 'shared_folder'   // 通过 virtio-9p 共享文件夹
+}
+
+// OneDrive 配置
+export interface OneDriveConfig {
+  enabled: boolean;
+  preferredMode: TransferMode;
+  cachePath: string;
+  autoSync: boolean;
+  maxCacheSize: number;  // MB
 }
 
 export class OneDriveManager {
   private static instance: OneDriveManager;
   private config: OneDriveConfig;
-  private officeApps: OfficeApp[];
-  private rdpDriveManager: RDPDriveManager;
+  private driveManager: RDPDriveManager;
+  private cachedFiles: Map<string, OneDriveFile> = new Map();
 
   private constructor() {
+    this.driveManager = RDPDriveManager.getInstance();
     this.config = {
-      tier: 1,
       enabled: true,
-      autoInstall: true
+      preferredMode: TransferMode.SHARED_FOLDER,
+      cachePath: '/data/storage/el2/base/files/onedrive',
+      autoSync: false,
+      maxCacheSize: 1024  // 1GB
     };
-    
-    this.officeApps = this.getDefaultOfficeApps();
-    this.rdpDriveManager = RDPDriveManager.getInstance();
   }
 
   public static getInstance(): OneDriveManager {
@@ -45,53 +71,22 @@ export class OneDriveManager {
   }
 
   /**
-   * 获取默认 Office 应用列表
+   * 初始化 OneDrive 缓存
    */
-  private getDefaultOfficeApps(): OfficeApp[] {
-    return [
-      {
-        name: 'word',
-        displayName: 'Microsoft Word',
-        executable: 'winword.exe',
-        icon: 'word_icon.png',
-        category: 'productivity'
-      },
-      {
-        name: 'excel',
-        displayName: 'Microsoft Excel',
-        executable: 'excel.exe',
-        icon: 'excel_icon.png',
-        category: 'productivity'
-      },
-      {
-        name: 'powerpoint',
-        displayName: 'Microsoft PowerPoint',
-        executable: 'powerpnt.exe',
-        icon: 'powerpoint_icon.png',
-        category: 'productivity'
-      },
-      {
-        name: 'outlook',
-        displayName: 'Microsoft Outlook',
-        executable: 'outlook.exe',
-        icon: 'outlook_icon.png',
-        category: 'communication'
-      },
-      {
-        name: 'teams',
-        displayName: 'Microsoft Teams',
-        executable: 'ms-teams.exe',
-        icon: 'teams_icon.png',
-        category: 'communication'
-      },
-      {
-        name: 'onedrive',
-        displayName: 'OneDrive',
-        executable: 'OneDrive.exe',
-        icon: 'onedrive_icon.png',
-        category: 'productivity'
-      }
-    ];
+  public async initialize(): Promise<boolean> {
+    try {
+      // 初始化缓存目录
+      await this.driveManager.initializeOneDriveCache();
+      
+      // 扫描现有缓存文件
+      await this.scanCacheDirectory();
+      
+      console.info('[OneDriveManager] Initialized successfully');
+      return true;
+    } catch (e) {
+      console.error('[OneDriveManager] Initialization failed:', e);
+      return false;
+    }
   }
 
   /**
@@ -109,260 +104,201 @@ export class OneDriveManager {
   }
 
   /**
-   * 档位1：来宾内直接安装 OneDrive/Office
+   * 获取缓存的 OneDrive 文件列表
    */
-  public async installOfficeInGuest(vmName: string): Promise<boolean> {
-    try {
-      // 这里应该实现通过 RDP 在来宾系统中安装 Office 的逻辑
-      // 目前返回模拟结果
-      console.log(`在虚拟机 ${vmName} 中安装 Office 套件...`);
-      
-      // 模拟安装过程
-      await this.simulateInstallation();
-      
-      return true;
-    } catch (error) {
-      console.error('Office 安装失败:', error);
-      return false;
-    }
+  public getCachedFiles(): OneDriveFile[] {
+    return Array.from(this.cachedFiles.values());
   }
 
   /**
-   * 模拟安装过程
+   * 从 VM 的 OneDrive 导入文件到鸿蒙沙箱
+   * 用户需要先在 VM 里把文件复制到共享文件夹
    */
-  private async simulateInstallation(): Promise<void> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        console.log('Office 安装完成');
-        resolve();
-      }, 3000);
-    });
-  }
-
-  /**
-   * 档位2：Host→Guest RDP驱动器映射
-   */
-  public async setupRDPDriveMapping(vmName: string, hostPath: string): Promise<boolean> {
+  public async importFromVMShared(vmName: string, fileName: string): Promise<boolean> {
     try {
-      // 创建 OneDrive 缓存目录
-      await this.rdpDriveManager.createOneDriveCacheDirectory();
+      console.info(`[OneDriveManager] Importing ${fileName} from VM ${vmName}`);
       
-      // 设置 RDP 驱动器映射
-      const success = this.rdpDriveManager.addDriveMapping({
-        name: 'OneDrive 缓存',
-        hostPath: hostPath,
-        guestDrive: 'Z:',
-        enabled: true,
-        readOnly: false,
-        description: 'OneDrive 文件缓存目录'
-      });
+      // 从 VM 共享目录复制到 OneDrive 缓存
+      const success = await this.driveManager.copyFromVMSharedToOneDrive(vmName, fileName);
       
       if (success) {
-        console.log(`RDP 驱动器映射设置成功: ${hostPath} -> Z:`);
-        return true;
-      } else {
-        console.error('RDP 驱动器映射设置失败');
-        return false;
+        // 更新缓存文件列表
+        await this.scanCacheDirectory();
+        console.info(`[OneDriveManager] Import successful: ${fileName}`);
       }
-    } catch (error) {
-      console.error('RDP 驱动器映射失败:', error);
+      
+      return success;
+    } catch (e) {
+      console.error('[OneDriveManager] Import failed:', e);
       return false;
     }
   }
 
   /**
-   * 模拟驱动器映射
+   * 导出文件到 VM 的共享文件夹
+   * 然后用户可以在 VM 里把文件拖到 OneDrive
    */
-  private async simulateDriveMapping(): Promise<void> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        console.log('RDP 驱动器映射完成');
-        resolve();
-      }, 2000);
-    });
+  public async exportToVMShared(vmName: string, fileName: string): Promise<boolean> {
+    try {
+      console.info(`[OneDriveManager] Exporting ${fileName} to VM ${vmName}`);
+      
+      const sourcePath = `${this.config.cachePath}/${fileName}`;
+      
+      // 复制到 VM 共享目录
+      const success = await this.driveManager.copyToVMShared(vmName, sourcePath, fileName);
+      
+      if (success) {
+        console.info(`[OneDriveManager] Export successful: ${fileName}`);
+      }
+      
+      return success;
+    } catch (e) {
+      console.error('[OneDriveManager] Export failed:', e);
+      return false;
+    }
   }
 
   /**
-   * 档位3：virtiofs/9p/Samba 高阶共享
+   * 获取 RDP 会话中访问 OneDrive 缓存的路径
+   * 当使用 RDP 驱动器重定向时，在 VM 中的路径
    */
-  public async setupAdvancedSharing(vmName: string, sharingType: 'virtiofs' | '9p' | 'samba'): Promise<boolean> {
+  public getRDPDrivePath(): string {
+    // 在 RDP 会话中，重定向的驱动器会显示为 \\tsclient\onedrive
+    return '\\\\tsclient\\onedrive';
+  }
+
+  /**
+   * 获取 Virtio-9p 挂载后在 VM 中的路径
+   */
+  public getVirtio9pMountPoint(): string {
+    // 用户需要在 Windows VM 中执行:
+    // net use O: \\10.0.2.4\onedrive
+    // 或在 Linux VM 中:
+    // mount -t 9p -o trans=virtio onedrive /mnt/onedrive
+    return 'O:';  // 建议的盘符
+  }
+
+  /**
+   * 获取 VM 内访问 OneDrive 缓存的说明
+   */
+  public getAccessInstructions(mode: TransferMode): string[] {
+    if (mode === TransferMode.RDP_REDIRECT) {
+      return [
+        '1. 通过 RDP 连接到虚拟机',
+        '2. 打开文件资源管理器',
+        '3. 在地址栏输入: \\\\tsclient\\onedrive',
+        '4. 即可访问鸿蒙设备上的 OneDrive 缓存目录',
+        '5. 将 OneDrive 中的文件复制到此处，即可在鸿蒙设备上访问'
+      ];
+    } else {
+      return [
+        '1. 在虚拟机中打开命令提示符（管理员）',
+        '2. 执行: net use O: \\\\10.0.2.4\\shared',
+        '3. 打开 O: 盘即可访问共享文件夹',
+        '4. 将 OneDrive 中的文件复制到 O: 盘',
+        '5. 文件将同步到鸿蒙设备的 OneDrive 缓存目录'
+      ];
+    }
+  }
+
+  /**
+   * 删除缓存文件
+   */
+  public async deleteCachedFile(fileName: string): Promise<boolean> {
     try {
-      console.log(`设置 ${sharingType} 共享...`);
-      
-      // 模拟高级共享设置
-      await this.simulateAdvancedSharing(sharingType);
-      
+      const filePath = `${this.config.cachePath}/${fileName}`;
+      fs.unlinkSync(filePath);
+      this.cachedFiles.delete(fileName);
+      console.info(`[OneDriveManager] Deleted cached file: ${fileName}`);
       return true;
-    } catch (error) {
-      console.error(`${sharingType} 共享设置失败:`, error);
+    } catch (e) {
+      console.error('[OneDriveManager] Delete failed:', e);
       return false;
     }
   }
 
   /**
-   * 模拟高级共享设置
+   * 清空缓存
    */
-  private async simulateAdvancedSharing(type: string): Promise<void> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        console.log(`${type} 共享设置完成`);
-        resolve();
-      }, 2500);
-    });
-  }
-
-  /**
-   * 获取 Office 应用列表
-   */
-  public getOfficeApps(): OfficeApp[] {
-    return [...this.officeApps];
-  }
-
-  /**
-   * 启动 Office 应用
-   */
-  public async startOfficeApp(vmName: string, appName: string): Promise<boolean> {
+  public async clearCache(): Promise<boolean> {
     try {
-      const app = this.officeApps.find(a => a.name === appName);
-      if (!app) {
-        throw new Error(`未找到应用: ${appName}`);
+      const files = await this.driveManager.listOneDriveCacheFiles();
+      for (const file of files) {
+        await this.deleteCachedFile(file);
       }
-
-      console.log(`在虚拟机 ${vmName} 中启动 ${app.displayName}...`);
-      
-      // 这里应该实现通过 RDP 启动应用的逻辑
-      await this.simulateAppStart(app);
-      
+      console.info('[OneDriveManager] Cache cleared');
       return true;
-    } catch (error) {
-      console.error('启动 Office 应用失败:', error);
+    } catch (e) {
+      console.error('[OneDriveManager] Clear cache failed:', e);
       return false;
     }
   }
 
   /**
-   * 模拟应用启动
+   * 获取缓存大小 (MB)
    */
-  private async simulateAppStart(app: OfficeApp): Promise<void> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        console.log(`${app.displayName} 启动完成`);
-        resolve();
-      }, 1500);
-    });
-  }
-
-  /**
-   * 检查 OneDrive 连接状态
-   */
-  public async checkOneDriveStatus(vmName: string): Promise<'connected' | 'disconnected' | 'error'> {
-    try {
-      // 这里应该实现实际的 OneDrive 状态检查
-      // 目前返回模拟状态
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          const statuses = ['connected', 'disconnected', 'error'] as const;
-          resolve(statuses[Math.floor(Math.random() * statuses.length)]);
-        }, 1000);
-      });
-    } catch (error) {
-      console.error('检查 OneDrive 状态失败:', error);
-      return 'error';
+  public getCacheSize(): number {
+    let totalSize = 0;
+    for (const file of this.cachedFiles.values()) {
+      totalSize += file.size;
     }
+    return totalSize / (1024 * 1024);
   }
 
   /**
-   * 同步文件到 OneDrive
+   * 检查缓存是否超过限制
    */
-  public async syncFileToOneDrive(vmName: string, filePath: string): Promise<boolean> {
-    try {
-      if (this.config.tier === 2) {
-        // 档位2：使用 RDP 驱动器映射同步
-        return await this.rdpDriveManager.syncFileToOneDrive(filePath);
-      } else {
-        // 档位1：模拟文件同步
-        console.log(`同步文件到 OneDrive: ${filePath}`);
-        await this.simulateFileSync();
-        return true;
-      }
-    } catch (error) {
-      console.error('文件同步失败:', error);
-      return false;
-    }
+  public isCacheFull(): boolean {
+    return this.getCacheSize() >= this.config.maxCacheSize;
   }
 
   /**
-   * 模拟文件同步
+   * 获取诊断信息
    */
-  private async simulateFileSync(): Promise<void> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        console.log('文件同步完成');
-        resolve();
-      }, 2000);
-    });
-  }
-
-  /**
-   * 获取 OneDrive 诊断信息
-   */
-  public getOneDriveDiagnostics(): string[] {
+  public getDiagnostics(): string[] {
     const diagnostics: string[] = [];
     
-    diagnostics.push(`集成档位: ${this.config.tier}`);
-    diagnostics.push(`启用状态: ${this.config.enabled ? '是' : '否'}`);
-    diagnostics.push(`自动安装: ${this.config.autoInstall ? '是' : '否'}`);
-    
-    if (this.config.cacheDirectory) {
-      diagnostics.push(`缓存目录: ${this.config.cacheDirectory}`);
-    }
-    
-    if (this.config.graphApiKey) {
-      diagnostics.push(`Graph API: 已配置`);
-    }
-    
-    diagnostics.push(`Office 应用数量: ${this.officeApps.length}`);
-    
-    // 添加 RDP 驱动器映射诊断信息
-    if (this.config.tier >= 2) {
-      const rdpDiagnostics = this.rdpDriveManager.getDriveMappingDiagnostics();
-      diagnostics.push(...rdpDiagnostics);
-    }
+    diagnostics.push(`OneDrive 集成: ${this.config.enabled ? '启用' : '禁用'}`);
+    diagnostics.push(`首选模式: ${this.config.preferredMode}`);
+    diagnostics.push(`缓存路径: ${this.config.cachePath}`);
+    diagnostics.push(`自动同步: ${this.config.autoSync ? '启用' : '禁用'}`);
+    diagnostics.push(`缓存大小: ${this.getCacheSize().toFixed(2)} MB / ${this.config.maxCacheSize} MB`);
+    diagnostics.push(`缓存文件数: ${this.cachedFiles.size}`);
     
     return diagnostics;
   }
 
+  // === 私有方法 ===
+
   /**
-   * 创建 OneDrive 桌面快捷方式
+   * 扫描缓存目录
    */
-  public async createDesktopShortcut(vmName: string, appName: string): Promise<boolean> {
+  private async scanCacheDirectory(): Promise<void> {
     try {
-      const app = this.officeApps.find(a => a.name === appName);
-      if (!app) {
-        throw new Error(`未找到应用: ${appName}`);
+      this.cachedFiles.clear();
+      
+      const files = await this.driveManager.listOneDriveCacheFiles();
+      for (const fileName of files) {
+        const filePath = `${this.config.cachePath}/${fileName}`;
+        try {
+          const stat = fs.statSync(filePath);
+          const file: OneDriveFile = {
+            name: fileName,
+            path: filePath,
+            size: stat.size,
+            modifiedTime: new Date(stat.mtime),
+            isDirectory: stat.isDirectory(),
+            syncStatus: OneDriveSyncStatus.COMPLETED
+          };
+          this.cachedFiles.set(fileName, file);
+        } catch (e) {
+          console.warn(`[OneDriveManager] Failed to stat file: ${fileName}`);
+        }
       }
-
-      console.log(`为 ${app.displayName} 创建桌面快捷方式...`);
       
-      // 模拟快捷方式创建
-      await this.simulateShortcutCreation(app);
-      
-      return true;
-    } catch (error) {
-      console.error('创建桌面快捷方式失败:', error);
-      return false;
+      console.info(`[OneDriveManager] Scanned ${this.cachedFiles.size} files in cache`);
+    } catch (e) {
+      console.error('[OneDriveManager] Scan failed:', e);
     }
-  }
-
-  /**
-   * 模拟快捷方式创建
-   */
-  private async simulateShortcutCreation(app: OfficeApp): Promise<void> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        console.log(`${app.displayName} 桌面快捷方式创建完成`);
-        resolve();
-      }, 1000);
-    });
   }
 }

@@ -28,12 +28,12 @@ export interface QemuAPI {
   // Diagnostics and testing (optional)
   testFunction?: () => boolean;
   checkCoreLib?: () => CoreDiag;
-  // Native VNC (LibVNCClient)
-  vncAvailable(): boolean;
-  vncCreate(): number;
-  vncConnect(id: number, host: string, port: number): boolean;
-  vncDisconnect(id: number): boolean;
-  vncGetFrame(id: number): VncFrame | null;
+  // Native VNC (LibVNCClient) - optional methods
+  vncAvailable?: () => boolean;
+  vncCreate?: () => number;
+  vncConnect?: (id: number, host: string, port: number) => boolean;
+  vncDisconnect?: (id: number) => void;
+  vncGetFrame?: (id: number) => VncFrame | null;
 }
 
 // VNC frame shape for native client
@@ -44,7 +44,7 @@ export interface VncFrame {
 }
 
 // Module declaration for N-API native addon
-declare module 'libqemu_hmos.so' {
+declare module 'qemu_hmos' {
   const qemu: QemuAPI;
   export default qemu;
 }
