@@ -1,3 +1,15 @@
+[submodule "third_party/qemu"]
+	path = third_party/qemu
+	url = https://github.com/qemu/qemu.git
+
+[submodule "third_party/freerdp"]
+	path = third_party/freerdp
+	url = https://github.com/FreeRDP/FreeRDP.git
+
+[submodule "third_party/novnc"]
+	path = third_party/novnc
+	url = https://github.com/novnc/noVNC.git
+
 [submodule "third_party/deps/glib/src"]
 	path = third_party/deps/glib/src
 	url = https://gitlab.gnome.org/GNOME/glib.git
@@ -13,19 +25,3 @@
 [submodule "third_party/deps/pixman/src"]
 	path = third_party/deps/pixman/src
 	url = https://gitlab.freedesktop.org/pixman/pixman.git
-
-[submodule "third_party/freerdp/src"]
-	path = third_party/freerdp/src
-	url = https://github.com/FreeRDP/FreeRDP.git
-
-[submodule "third_party/novnc"]
-	path = third_party/novnc
-	url = https://github.com/novnc/noVNC.git
-
-[submodule "third_party/qemu"]
-	path = third_party/qemu
-	url = https://gitlab.com/qemu-project/qemu.git
-
-[submodule "third_party/qemu-code"]
-	path = third_party/qemu-code
-	url = https://github.com/caidingding233/qemu-code.git
