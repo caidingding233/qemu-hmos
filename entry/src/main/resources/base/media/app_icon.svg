@@ -1,0 +1,29 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 纯白背景 -->
+  <rect width="1024" height="1024" rx="220" fill="white"/>
+  
+  <!-- 显示器外框 -->
+  <rect x="200" y="160" width="624" height="460" rx="40" stroke="#1a1a1a" stroke-width="28" fill="none"/>
+  
+  <!-- 标题栏分隔线 -->
+  <line x1="200" y1="250" x2="824" y2="250" stroke="#1a1a1a" stroke-width="20"/>
+  
+  <!-- 三个窗口按钮 -->
+  <circle cx="268" cy="205" r="18" fill="#1a1a1a"/>
+  <circle cx="328" cy="205" r="18" fill="#1a1a1a"/>
+  <circle cx="388" cy="205" r="18" fill="#1a1a1a"/>
+  
+  <!-- 内部窗口 -->
+  <rect x="280" y="320" width="464" height="230" rx="20" stroke="#1a1a1a" stroke-width="22" fill="none"/>
+  
+  <!-- 显示器支架 -->
+  <path d="M462 620 L462 700 L562 700 L562 620" stroke="#1a1a1a" stroke-width="24" fill="none"/>
+  
+  <!-- 底座 -->
+  <rect x="350" y="700" width="324" height="50" rx="16" stroke="#1a1a1a" stroke-width="22" fill="none"/>
+  
+  <!-- 底座两侧横线 -->
+  <line x1="280" y1="725" x2="350" y2="725" stroke="#1a1a1a" stroke-width="16" stroke-linecap="round"/>
+  <line x1="674" y1="725" x2="744" y2="725" stroke="#1a1a1a" stroke-width="16" stroke-linecap="round"/>
+</svg>
+

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>noVNC</title>
+    <meta charset="utf-8">
+    <style>
+        body {
+            margin: 0;
+            background-color: #1a1a1a;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        #screen {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        /* Hide scrollbars */
+        ::-webkit-scrollbar {
+            display: none;
+        }
+    </style>
+    <!-- 引入 noVNC 核心库 -->
+    <script type="module" crossorigin="anonymous">
+        import RFB from './novnc.esm.js';
+
+        // UI state
+        let rfb;
+        const desktopName = document.getElementById('desktopName');
+
+        // Connection status
+        function connected(e) {
+            console.log("Connected to " + desktopName);
+            // Notify native
+            if (window.vncBridge) {
+                window.vncBridge.onConnected();
+            }
+        }
+
+        function disconnected(e) {
+            console.log("Disconnected", e.detail.clean, e.detail.reason);
+            if (window.vncBridge) {
+                window.vncBridge.onDisconnected(e.detail.reason || "Unknown error");
+            }
+        }
+
+        function securityFailed(e) {
+            console.log("Security Failed", e.detail.clean, e.detail.reason);
+            if (window.vncBridge) {
+                window.vncBridge.onError("Security Failed: " + e.detail.reason);
+            }
+        }
+
+        // Connect function
+        function connect() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const host = urlParams.get('host') || window.location.hostname;
+            const port = urlParams.get('port') || 5701;
+            const password = urlParams.get('password');
+            const path = urlParams.get('path') || 'websockify';
+
+            // Build WebSocket URL
+            let url;
+            if (window.location.protocol === "https:") {
+                url = 'wss';
+            } else {
+                url = 'ws';
+            }
+            url += '://' + host;
+            if(port) {
+                url += ':' + port;
+            }
+            url += '/' + path;
+
+            // Initialize RFB
+            try {
+                rfb = new RFB(document.getElementById('screen'), url, {
+                    credentials: { password: password }
+                });
+            } catch (exc) {
+                console.error("Unable to create RFB client", exc);
+                return;
+            }
+
+            // Add event listeners
+            rfb.addEventListener("connect",  connected);
+            rfb.addEventListener("disconnect", disconnected);
+            rfb.addEventListener("securityfailure", securityFailed);
+
+            // Set scaling
+            rfb.scaleViewport = true;
+            rfb.resizeSession = false;
+        }
+
+        // Expose rfb globally for native injection
+        window.rfb = rfb;
+        
+        // Start connection
+        window.addEventListener('load', connect);
+    </script>
+</head>
+<body>
+    <div id="screen">
+        <!-- Canvas is created here by RFB -->
+    </div>
+</body>
+</html>
+
