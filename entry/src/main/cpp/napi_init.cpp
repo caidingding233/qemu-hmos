@@ -263,6 +263,7 @@ static std::mutex g_vmMutex;
 static std::atomic<bool> g_qemu_shutdown_requested(false);
 static std::string g_current_vm_name;
 static std::string g_current_log_path;
+static std::string g_current_arch_type;  // 当前 VM 的架构类型 (aarch64, x86_64, i386)
 
 // VM 启动错误码
 enum class VmStartError {
@@ -1283,7 +1284,6 @@ static bool CreateVmPerfenceFile(const VMConfig& config)
 // 更新VM状态
 static bool UpdateVMStatus(const std::string& vmName, const std::string& status) {
     try {
-        HilogPrint("QEMU: [DEBUG] UpdateVMStatus: " + vmName + " -> " + status);
         std::string vmDir = "/data/storage/el2/base/haps/entry/files/vms/" + vmName;
         std::string statusPath = vmDir + "/vm_status.txt";
         
@@ -1294,17 +1294,10 @@ static bool UpdateVMStatus(const std::string& vmName, const std::string& status)
             auto time_t = std::chrono::system_clock::to_time_t(now);
             statusFile << status << " at " << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S") << std::endl;
             statusFile.close();
-            HilogPrint("QEMU: [DEBUG] Status file updated");
-        } else {
-            HilogPrint("QEMU: [DEBUG] Failed to open status file: " + statusPath);
         }
         
         return true;
-    } catch (const std::exception& e) {
-        HilogPrint(std::string("QEMU: [ERROR] UpdateVMStatus exception: ") + e.what());
-        return false;
     } catch (...) {
-        HilogPrint("QEMU: [ERROR] UpdateVMStatus unknown exception");
         return false;
     }
 }
@@ -1404,7 +1397,6 @@ static bool CreateQcow2Disk(const std::string& diskPath, uint64_t sizeBytes) {
 
 static bool CreateVirtualDisk(const std::string& diskPath, int sizeGB) {
     try {
-        HilogPrint("QEMU: [DEBUG] CreateVirtualDisk: " + diskPath);
         std::string dirPath = diskPath.substr(0, diskPath.find_last_of('/'));
         if (!CreateDirectories(dirPath)) {
             return false;
@@ -1663,14 +1655,16 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         HilogPrint(std::string("QEMU: WARNING - Firmware path is empty or inaccessible for ") + config.archType + ", VM may not boot properly");
     }
     
-    // 磁盘配置 - 使用 virtio-blk-pci 通用设备，兼容所有架构
+    // 磁盘配置
+    // 注意：OHOS 版 QEMU 禁用了 linux-aio，简化磁盘参数避免崩溃
     if (FileExists(config.diskPath)) {
+        // 使用最简单的 if=virtio 方式，让 QEMU 自动选择设备
+        // 这比手动指定 -device virtio-blk-pci 更稳定
         args.push_back("-drive");
-        args.push_back("if=none,id=d0,file=" + config.diskPath + ",format=qcow2,cache=writeback,aio=threads,discard=unmap");
-        
-        // 使用 virtio-blk-pci，这是最通用的方案，适用于所有支持 PCI 的机器类型
-            args.push_back("-device");
-        args.push_back("virtio-blk-pci,drive=d0");
+        args.push_back("file=" + config.diskPath + ",if=virtio,format=qcow2,cache=writeback");
+        HilogPrint("QEMU: Disk configured with if=virtio: " + config.diskPath);
+    } else {
+        HilogPrint("QEMU: WARNING - Disk file not found: " + config.diskPath);
     }
     
     // ISO光驱配置
@@ -1760,16 +1754,18 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
     // 从高级配置中读取网卡类型
     std::string netDev = config.networkDevice;
     if (netDev.empty()) {
-        netDev = "virtio-net"; // 默认使用 VirtIO 网卡
+        // 默认使用 e1000 网卡 - 更稳定，兼容性更好
+        // virtio-net-pci 在某些配置下可能有初始化问题
+        netDev = "e1000";
+        HilogPrint("QEMU: [NET] Using default e1000 network device");
     }
     bool netDisabled = (netDev == "none");
 
     // 构建网卡设备参数：直接使用用户选择的设备，不做强制回退
     // 如果设备不兼容，QEMU 会报错，用户可以据此选择其他设备
     auto buildNetDeviceArg = [&](const std::string& dev) -> std::string {
-        if (dev.empty() || dev == "virtio-net") {
-            return "virtio-net-pci,netdev=n0";
-        } else if (dev == "virtio-net-pci") {
+        if (dev == "virtio-net" || dev == "virtio-net-pci") {
+            HilogPrint("QEMU: [NET] Using virtio-net-pci network device");
             return "virtio-net-pci,netdev=n0";
         } else if (dev == "e1000") {
             HilogPrint("QEMU: [NET] Using e1000 network device (user selected)");
@@ -2010,7 +2006,7 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
     // TODO: 在稳定后重新启用
     // std::string sharedPath = config.sharedDir;
     // if (sharedPath.empty()) {
-    //     sharedPath = "/data/storage/el2/base/com.caidingding233.qemuhmos/files/虚拟机磁盘/" + config.name;
+    //     sharedPath = "/data/storage/el2/base/com.cloudshin.aetherengine/files/虚拟机磁盘/" + config.name;
     // }
     // struct stat st;
     // if (stat(sharedPath.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
@@ -2073,14 +2069,10 @@ static void WriteLog(const std::string& logPath, const std::string& message) {
         oss << "[" << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S") << "] " << message;
         std::string formattedMessage = oss.str();
         
-        // 强制输出到 Hilog，确保在 crash 时也能看到最后一条日志
-        HilogPrint(formattedMessage);
-        
         // 写入文件
         std::ofstream log(logPath, std::ios::app);
         if (log) {
             log << formattedMessage << std::endl;
-            log.flush(); // 强制刷新
         }
 
         // 添加到内存缓冲区用于实时回传
@@ -2213,35 +2205,84 @@ static void TryLoadCoreFromSelfDir(const std::string& logPath)
     }
 }
 
+// 当前加载的架构（用于避免重复加载相同架构）
+static std::string g_loaded_arch;
+
+// 根据架构获取 .so 文件名
+static std::string GetQemuLibName(const std::string& archType) {
+    // 支持的架构: aarch64, x86_64, i386
+    if (archType == "x86_64" || archType == "x86-64") {
+        return "libqemu_x86_64.so";
+    } else if (archType == "i386" || archType == "x86" || archType == "i686") {
+        return "libqemu_i386.so";
+    } else {
+        // 默认使用 ARM64
+        return "libqemu_aarch64.so";
+    }
+}
+
 // ============ 诊断：详细追踪 dlopen 过程 ============
-static void EnsureQemuCoreLoaded(const std::string& logPath)
+// 支持多架构加载：根据 archType 加载对应的 libqemu_{arch}.so
+static void EnsureQemuCoreLoaded(const std::string& logPath, const std::string& archType = "aarch64")
 {
+    std::string libName = GetQemuLibName(archType);
+    
+    // 如果已经加载了相同架构的库，直接返回
+    if (g_qemu_core_init && g_loaded_arch == archType) {
+        HilogPrint("QEMU: Library already loaded for arch: " + archType);
+        return;
+    }
+    
+    // 如果加载了不同架构的库，需要先卸载
+    if (g_qemu_core_handle && g_loaded_arch != archType) {
+        HilogPrint("QEMU: Unloading previous library for arch: " + g_loaded_arch);
+        WriteLog(logPath, "[QEMU] Switching architecture from " + g_loaded_arch + " to " + archType);
+        
+        // 清理之前加载的函数指针
+        g_qemu_core_init = nullptr;
+        g_qemu_core_main_loop = nullptr;
+        g_qemu_core_cleanup = nullptr;
+        g_qemu_core_shutdown = nullptr;
+        
+        // 卸载之前的库
+        dlclose(g_qemu_core_handle);
+        g_qemu_core_handle = nullptr;
+        g_loaded_arch.clear();
+    }
+    
     if (g_qemu_core_init) return;
     
-    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_LOAD", "========== 开始加载 libqemu_full.so ==========");
+    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_LOAD", "========== 开始加载 %s ==========", libName.c_str());
+    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_LOAD", "目标架构: %s", archType.c_str());
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_LOAD", "警告: 此操作将执行 ~748 个 constructor 函数");
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_LOAD", "如果下一条日志没出现，说明 dlopen 导致崩溃");
     
-    HilogPrint("QEMU: Starting core library loading process");
-    WriteLog(logPath, "[QEMU] Starting core library loading process");
+    HilogPrint("QEMU: Starting core library loading process for " + archType);
+    WriteLog(logPath, "[QEMU] Loading library: " + libName + " for arch: " + archType);
     
     // 直接按名称加载，前提是 core so 已随 HAP 打包
-    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_LOAD", ">>> 即将调用 dlopen(\"libqemu_full.so\", RTLD_NOW) <<<");
+    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_LOAD", ">>> 即将调用 dlopen(\"%s\", RTLD_NOW) <<<", libName.c_str());
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_LOAD", ">>> 如果没有后续日志，崩溃发生在 dlopen/constructor 中 <<<");
     
-    HilogPrint("QEMU: Attempting dlopen libqemu_full.so");
-    g_qemu_core_handle = dlopen("libqemu_full.so", RTLD_NOW);
+    HilogPrint("QEMU: Attempting dlopen " + libName);
+    g_qemu_core_handle = dlopen(libName.c_str(), RTLD_NOW);
     
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_LOAD", ">>> dlopen 返回: %p <<<", g_qemu_core_handle);
+    
+    // 如果直接加载失败，尝试兼容性名称 libqemu_full.so
+    if (!g_qemu_core_handle && archType == "aarch64") {
+        HilogPrint("QEMU: Trying fallback libqemu_full.so");
+        g_qemu_core_handle = dlopen("libqemu_full.so", RTLD_NOW);
+    }
     
     if (!g_qemu_core_handle) {
         std::string err = SafeDlError();
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_LOAD", "dlopen 失败: %s", err.c_str());
-        WriteLog(logPath, std::string("[QEMU] dlopen libqemu_full.so failed: ") + err);
-        HilogPrint(std::string("QEMU: dlopen libqemu_full.so failed: ") + err);
+        WriteLog(logPath, std::string("[QEMU] dlopen " + libName + " failed: ") + err);
+        HilogPrint(std::string("QEMU: dlopen " + libName + " failed: ") + err);
         
         // ============ 优先从 files 目录加载（ArkTS 层已提取 rawfile 到此处）============
-        std::string filesPath = "/data/storage/el2/base/haps/entry/files/libqemu_full.so";
+        std::string filesPath = "/data/storage/el2/base/haps/entry/files/" + libName;
         HilogPrint("QEMU: Attempting dlopen from files: " + filesPath);
         g_qemu_core_handle = dlopen(filesPath.c_str(), RTLD_NOW);
         if (g_qemu_core_handle) {
@@ -2257,7 +2298,7 @@ static void EnsureQemuCoreLoaded(const std::string& logPath)
             TryLoadCoreFromSelfDir(logPath);
             if (!g_qemu_core_handle) {
                 // 尝试从应用libs目录加载（可能因命名空间被拒绝）
-                std::string libsPath = "/data/app/el2/100/base/com.caidingding233.qemuhmos/haps/entry/libs/arm64-v8a/libqemu_full.so";
+                std::string libsPath = "/data/app/el2/100/base/com.cloudshin.aetherengine/haps/entry/libs/arm64-v8a/" + libName;
                 HilogPrint("QEMU: Attempting dlopen from libs: " + libsPath);
                 g_qemu_core_handle = dlopen(libsPath.c_str(), RTLD_NOW);
                 if (g_qemu_core_handle) {
@@ -2270,7 +2311,7 @@ static void EnsureQemuCoreLoaded(const std::string& logPath)
                     
                     // 所有尝试都失败了
                     WriteLog(logPath, "[QEMU] Core library not loaded. Aborting start.");
-                    WriteLog(logPath, "[QEMU] Please ensure libqemu_full.so is properly installed in the app bundle.");
+                    WriteLog(logPath, "[QEMU] Please ensure " + libName + " is properly installed in the app bundle.");
                     return;
                 }
             } else {
@@ -2278,8 +2319,11 @@ static void EnsureQemuCoreLoaded(const std::string& logPath)
             }
         }
     } else {
-        HilogPrint("QEMU: Successfully loaded libqemu_full.so directly");
+        HilogPrint("QEMU: Successfully loaded " + libName + " directly");
     }
+    
+    // 记录已加载的架构
+    g_loaded_arch = archType;
 
     // ============ 诊断：详细追踪 dlsym 过程 ============
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> 开始 dlsym 查找符号 <<<");
@@ -2350,7 +2394,9 @@ static int QemuCoreMainOrStub(int argc, char** argv)
     }
     if (logPath.empty()) logPath = g_current_log_path;
 
-    EnsureQemuCoreLoaded(logPath);
+    // 使用全局变量中保存的架构类型
+    std::string archType = g_current_arch_type.empty() ? "aarch64" : g_current_arch_type;
+    EnsureQemuCoreLoaded(logPath, archType);
     if (g_qemu_core_init && g_qemu_core_main_loop) {
         WriteLog(logPath, "[QEMU] Core library loaded, initializing QEMU...");
         HilogPrint("QEMU: Core library loaded successfully");
@@ -2591,11 +2637,9 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
         WriteLog(config.logPath, "VM perfence file created for: " + config.name);
     }
     
-    HilogPrint("QEMU: [DEBUG] Updating status to preparing...");
     // 更新VM状态为准备中
     UpdateVMStatus(config.name, "preparing");
     
-    HilogPrint("QEMU: [DEBUG] Checking disk existence...");
     // 创建虚拟磁盘
     if (!FileExists(config.diskPath)) {
         WriteLog(config.logPath, "Creating virtual disk: " + config.diskPath);
@@ -2640,15 +2684,19 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
     // 设置全局变量供QEMU函数使用
     g_current_vm_name = config.name;
     g_current_log_path = config.logPath;
+    g_current_arch_type = config.archType.empty() ? "aarch64" : config.archType;
     
-    // 启动前确保核心库可用（避免Stub导致UI误判）
-    EnsureQemuCoreLoaded(config.logPath);
+    // 启动前确保核心库可用（根据架构加载对应的 .so）
+    std::string archType = config.archType.empty() ? "aarch64" : config.archType;
+    WriteLog(config.logPath, "[QEMU] Loading QEMU core for architecture: " + archType);
+    EnsureQemuCoreLoaded(config.logPath, archType);
     if (!g_qemu_core_init || !g_qemu_core_main_loop) {
         WriteLog(config.logPath, "[QEMU] Core library not loaded. Aborting start.");
-        WriteLog(config.logPath, "[QEMU] Please ensure libqemu_full.so is properly installed in the app bundle.");
+        std::string libName = GetQemuLibName(archType);
+        WriteLog(config.logPath, "[QEMU] Please ensure " + libName + " is properly installed in the app bundle.");
         UpdateVMStatus(config.name, "failed");
         return CreateRejectedPromise(env, VmStartError::CORE_LIB_MISSING, 
-            "libqemu_full.so not found or failed to load. Please check app installation.", config.name);
+            libName + " not found or failed to load. Please check app installation.", config.name);
     }
 
     // 创建 threadsafe function 用于回调
