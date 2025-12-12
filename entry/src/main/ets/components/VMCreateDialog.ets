@@ -1,4 +1,4 @@
-import { VMCreateConfig } from '../pages/VMs';
+import type { VMCreateConfig } from '../types/legacy_vmcreate';
 
 @Component
 export struct VMCreateDialog {

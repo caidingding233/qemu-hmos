@@ -21,7 +21,6 @@ import bundleManager from '@ohos.bundle.bundleManager'
  * │       └── qmp.sock        # QMP 控制 socket
  * ├── isos/                   # ISO 镜像目录
  * ├── firmware/               # 固件文件
- * ├── novnc/                  # noVNC 资源
  * └── logs/                   # 应用日志
  * 
  * 公开目录（应用内，可通过分享功能导出）:
@@ -69,7 +68,6 @@ export class StoragePaths {
   // 内部目录（不暴露给文件管理）
   static readonly VMS_DIR = `${StoragePaths.INTERNAL_BASE}/vms`
   static readonly FIRMWARE_DIR = `${StoragePaths.INTERNAL_BASE}/firmware`
-  static readonly NOVNC_DIR = `${StoragePaths.INTERNAL_BASE}/novnc`
   static readonly LOGS_DIR = `${StoragePaths.INTERNAL_BASE}/logs`
   static readonly ISOS_DIR = `${StoragePaths.INTERNAL_BASE}/isos`
   
@@ -492,7 +490,7 @@ export class StoragePaths {
   }
 
   /**
-   * 导出指定 VM 的 qemu.log 到公共 Download/com.caidingding233.qemuhmos/日志 目录
+   * 导出指定 VM 的 qemu.log 到公共 Download/com.cloudshin.aetherengine/日志 目录
    * 返回导出后的完整路径，失败时返回 null
    */
   static async exportVmLog(context: common.Context, vmName: string): Promise<string | null> {
