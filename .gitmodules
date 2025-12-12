@@ -6,10 +6,6 @@
 	path = third_party/freerdp
 	url = https://github.com/FreeRDP/FreeRDP.git
 
-[submodule "third_party/novnc"]
-	path = third_party/novnc
-	url = https://github.com/novnc/noVNC.git
-
 [submodule "third_party/deps/glib/src"]
 	path = third_party/deps/glib/src
 	url = https://gitlab.gnome.org/GNOME/glib.git

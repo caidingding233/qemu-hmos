@@ -63,6 +63,8 @@ static int prctl(int option, unsigned long arg2) {
 #include <sys/ioctl.h>
 #include <linux/kvm.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <sys/un.h>
 #include <signal.h>
 #endif
@@ -92,6 +94,128 @@ static bool NapiGetStringUtf8(napi_env env, napi_value value, std::string& out)
 
 // 全局控制台回调
 static napi_threadsafe_function g_consoleCallback = nullptr;
+
+// ----------------------------- Serial TCP bridge (QEMU -serial tcp:127.0.0.1:4321,server,nowait) -----------------------------
+// 现状说明：
+// - 我们启动 QEMU 时把串口输出放到 TCP 4321 server 上。
+// - 但 ArkTS 的 ConsoleWindow 只注册了 consoleCallback，并不会自动去连 4321。
+// - 结果就是“串口没有透传到 ArkTS”，看起来像没有输出。
+// 这里在 Native 层自动连接 4321，并把收到的数据通过 g_consoleCallback 推给 ArkTS。
+static std::thread g_serial_thread;
+static std::atomic<bool> g_serial_running(false);
+static int g_serial_fd = -1;
+static std::mutex g_serial_mtx;
+
+static void SerialCloseLocked()
+{
+    if (g_serial_fd != -1) {
+        close(g_serial_fd);
+        g_serial_fd = -1;
+    }
+}
+
+static void SerialEmitToJs(const std::string& s)
+{
+    if (!g_consoleCallback) return;
+    std::string* msg = new std::string(s);
+    napi_call_threadsafe_function(g_consoleCallback, msg, napi_tsfn_nonblocking);
+}
+
+static bool SerialTryConnectLocked()
+{
+    if (g_serial_fd != -1) return true;
+
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+
+    // 超时，避免阻塞线程
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 200 * 1000; // 200ms
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    sockaddr_in addr {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(4321);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    if (connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_DOMAIN, LOG_TAG,
+            "[TTY] connect(127.0.0.1:4321) failed errno=%{public}d (%{public}s)",
+            errno, strerror(errno));
+        close(fd);
+        return false;
+    }
+
+    g_serial_fd = fd;
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_DOMAIN, LOG_TAG, "[TTY] connected to 127.0.0.1:4321");
+    return true;
+}
+
+static void SerialBridgeThread()
+{
+    // 反复尝试连接，直到成功或被停止
+    SerialEmitToJs("[TTY] connecting to 127.0.0.1:4321 ...\n");
+
+    while (g_serial_running.load()) {
+        {
+            std::lock_guard<std::mutex> lk(g_serial_mtx);
+            if (!SerialTryConnectLocked()) {
+                // not ready yet
+            }
+        }
+
+        int fd = -1;
+        {
+            std::lock_guard<std::mutex> lk(g_serial_mtx);
+            fd = g_serial_fd;
+        }
+
+        if (fd == -1) {
+            usleep(300 * 1000);
+            continue;
+        }
+
+        // 已连接：读数据并推给 JS
+        char buf[4096];
+        ssize_t n = recv(fd, buf, sizeof(buf), 0);
+        if (n > 0) {
+            SerialEmitToJs(std::string(buf, (size_t)n));
+            continue;
+        }
+
+        // timeout or disconnected
+        if (n == 0 || (errno != EAGAIN && errno != EINTR)) {
+            std::lock_guard<std::mutex> lk(g_serial_mtx);
+            SerialCloseLocked();
+            SerialEmitToJs("[TTY] disconnected, retrying...\n");
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(g_serial_mtx);
+        SerialCloseLocked();
+    }
+}
+
+static void SerialStart()
+{
+    if (g_serial_running.load()) return;
+    g_serial_running.store(true);
+    g_serial_thread = std::thread(SerialBridgeThread);
+}
+
+static void SerialStop()
+{
+    if (!g_serial_running.load()) return;
+    g_serial_running.store(false);
+    {
+        std::lock_guard<std::mutex> lk(g_serial_mtx);
+        SerialCloseLocked();
+    }
+    if (g_serial_thread.joinable()) g_serial_thread.join();
+}
 
 // JS 回调包装器
 static void ConsoleJsCallback(napi_env env, napi_value js_cb, void* context, void* data) {
@@ -1553,9 +1677,11 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
     
     // UEFI/BIOS 固件配置
     std::string firmwarePath = config.efiFirmware;
+    HilogPrint("QEMU: [FIRMWARE] ArkTS 传入的固件路径: " + (firmwarePath.empty() ? "(空)" : firmwarePath));
     
     // 如果未指定固件路径，尝试自动查找
     if (firmwarePath.empty()) {
+        HilogPrint("QEMU: [FIRMWARE] 固件路径为空，开始自动搜索...");
         std::string firmwareFileName;
     if (config.archType == "x86_64" || config.archType == "i386") {
             firmwareFileName = "OVMF_CODE.fd"; // x86 UEFI 固件
@@ -1639,30 +1765,75 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         }
     }
 
+    HilogPrint("QEMU: [FIRMWARE] 验证结果: " + std::string(firmwareExists ? "成功" : "失败"));
+    HilogPrint("QEMU: [FIRMWARE] 最终固件路径: " + (firmwarePath.empty() ? "(空)" : firmwarePath));
+
     if (firmwareExists) {
         if (config.archType == "aarch64") {
             // ARM64 使用 pflash 方式加载 UEFI
+            // 注意：仅挂 CODE 盘在部分场景会导致 UEFI 无法保存变量/引导异常，因此尽量同时挂 VARS 盘（unit=1，可写）
             args.push_back("-drive");
             args.push_back("file=" + firmwarePath + ",if=pflash,format=raw,unit=0,readonly=on");
-            HilogPrint(std::string("QEMU: Using UEFI firmware (pflash): ") + firmwarePath);
+            HilogPrint(std::string("QEMU: [FIRMWARE] 添加 pflash(CODE) 参数: ") + firmwarePath);
+
+            // 尝试自动定位 VARS
+            auto simple_dirname = [](const std::string& p) -> std::string {
+                size_t pos = p.find_last_of('/');
+                if (pos == std::string::npos) return std::string();
+                return p.substr(0, pos);
+            };
+            std::string fwDir = simple_dirname(firmwarePath);
+            std::vector<std::string> varsCandidates;
+            // 工程 rawfile 里当前是 edk2-arm-vars.fd（不是 edk2-aarch64-vars.fd），两者都兼容尝试
+            if (!fwDir.empty()) {
+                varsCandidates.push_back(fwDir + "/edk2-arm-vars.fd");
+                varsCandidates.push_back(fwDir + "/edk2-aarch64-vars.fd");
+            }
+            varsCandidates.push_back("edk2-arm-vars.fd");
+            varsCandidates.push_back("edk2-aarch64-vars.fd");
+
+            std::string varsPath;
+            for (const auto& cand : varsCandidates) {
+                if (cand.empty()) continue;
+                int fd = open(cand.c_str(), O_RDONLY);
+                if (fd < 0) continue;
+                // 轻量验证：读 0 字节（不移动文件指针），确认句柄可用
+                char tmp[1];
+                ssize_t r = read(fd, tmp, 0);
+                close(fd);
+                if (r < 0) continue;
+                varsPath = cand;
+                break;
+            }
+
+            if (!varsPath.empty()) {
+                args.push_back("-drive");
+                args.push_back("file=" + varsPath + ",if=pflash,format=raw,unit=1");
+                HilogPrint(std::string("QEMU: [FIRMWARE] 添加 pflash(VARS) 参数: ") + varsPath);
+            } else {
+                HilogPrint("QEMU: [FIRMWARE] ⚠️ 未找到 VARS 固件(edk2-arm-vars.fd)，继续仅使用 CODE 盘");
+            }
         } else {
             // x86 使用 -bios 参数
             args.push_back("-bios");
             args.push_back(firmwarePath);
-            HilogPrint(std::string("QEMU: Using BIOS firmware: ") + firmwarePath);
+            HilogPrint(std::string("QEMU: [FIRMWARE] 添加 -bios 参数: ") + firmwarePath);
         }
     } else {
-        HilogPrint(std::string("QEMU: WARNING - Firmware path is empty or inaccessible for ") + config.archType + ", VM may not boot properly");
+        HilogPrint("QEMU: [FIRMWARE] ⚠️ 固件不可用！VM 可能无法启动");
+        HilogPrint("QEMU: [FIRMWARE] archType=" + config.archType);
     }
     
     // 磁盘配置
     // 注意：OHOS 版 QEMU 禁用了 linux-aio，简化磁盘参数避免崩溃
     if (FileExists(config.diskPath)) {
-        // 使用最简单的 if=virtio 方式，让 QEMU 自动选择设备
-        // 这比手动指定 -device virtio-blk-pci 更稳定
+        // 使用 if=none + virtio-blk-device（而不是 virtio-blk-pci）
+        // virtio-blk-device 是 MMIO 版本，在 ARM virt 上更稳定
         args.push_back("-drive");
-        args.push_back("file=" + config.diskPath + ",if=virtio,format=qcow2,cache=writeback");
-        HilogPrint("QEMU: Disk configured with if=virtio: " + config.diskPath);
+        args.push_back("file=" + config.diskPath + ",if=none,id=hd0,format=qcow2,cache=writeback");
+            args.push_back("-device");
+        args.push_back("virtio-blk-device,drive=hd0");
+        HilogPrint("QEMU: Disk configured with virtio-blk-device: " + config.diskPath);
     } else {
         HilogPrint("QEMU: WARNING - Disk file not found: " + config.diskPath);
     }
@@ -1677,39 +1848,47 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         
         // 检查是否是 URI 格式（如 file://docs/storage/...），需要转换
         if (isoPath.find("file://") == 0) {
-            HilogPrint("QEMU: [WARN] ISO path is URI format, may not work: " + isoPath);
+            HilogPrint("QEMU: [ISO] ISO path has file:// prefix, normalizing: " + isoPath);
+            // 常见形式：file:///data/xxx 或 file://data/xxx
+            isoPath = isoPath.substr(std::string("file://").size());
+            // file:/// 开头会变成 /...（OK）；file://data/... 会变成 data/...（可能缺少 /），尽量补齐
+            if (!isoPath.empty() && isoPath[0] != '/' && isoPath.find("data/") == 0) {
+                isoPath = "/" + isoPath;
+            }
+            HilogPrint("QEMU: [ISO] ISO normalized path: " + isoPath);
         }
         
         // 检查是否是公共目录路径（沙箱外）
+        // 仅将 /storage/* 视为公共目录；/data/storage/el2/base/haps/entry/files/* 属于应用沙箱，应视为内部路径
         bool isPublicPath = (isoPath.find("/storage/Users/") != std::string::npos ||
-                            isoPath.find("/storage/media/") != std::string::npos ||
-                            isoPath.find("/data/storage/el1/bundle/") == std::string::npos);
-        
+                            isoPath.find("/storage/media/") != std::string::npos);
         if (isPublicPath) {
             HilogPrint("QEMU: [WARN] ISO is in public directory (sandbox issue possible): " + isoPath);
         }
-        
-        // 多重检查：stat + open + read 测试
-        if (FileExists(isoPath)) {
-            int isoFd = open(isoPath.c_str(), O_RDONLY);
-            if (isoFd >= 0) {
-                // 尝试读取几个字节，确认真的可以访问
-                char testBuf[16];
-                ssize_t readBytes = read(isoFd, testBuf, sizeof(testBuf));
-                close(isoFd);
-                
-                if (readBytes > 0) {
-                    isoAccessible = true;
-                    HilogPrint("QEMU: [ISO] Verified readable: " + isoPath);
-                } else {
-                    HilogPrint("QEMU: [WARN] ISO open succeeded but read failed: " + isoPath + 
-                               " readBytes=" + std::to_string(readBytes) + " errno=" + std::to_string(errno));
-                }
+
+        // 可靠性说明：
+        // - HarmonyOS 环境下，stat(FileExists) 有时会误报（尤其是沙箱路径/命名空间差异）
+        // - 因此这里不以 FileExists 作为前置条件，直接以 open/read 作为最终可访问性判断
+        if (!FileExists(isoPath)) {
+            HilogPrint("QEMU: [WARN] ISO stat failed (FileExists=false): " + isoPath);
+        }
+
+        int isoFd = open(isoPath.c_str(), O_RDONLY);
+        if (isoFd >= 0) {
+            char testBuf[16];
+            ssize_t readBytes = read(isoFd, testBuf, sizeof(testBuf));
+            close(isoFd);
+
+            if (readBytes > 0) {
+                isoAccessible = true;
+                HilogPrint("QEMU: [ISO] Verified readable: " + isoPath);
             } else {
-                HilogPrint("QEMU: [WARN] ISO open failed: " + isoPath + " errno=" + std::to_string(errno));
+                HilogPrint("QEMU: [WARN] ISO open succeeded but read failed: " + isoPath +
+                           " readBytes=" + std::to_string(readBytes) + " errno=" + std::to_string(errno));
             }
         } else {
-            HilogPrint("QEMU: [WARN] ISO stat failed (FileExists=false): " + isoPath);
+            HilogPrint("QEMU: [WARN] ISO open failed: " + isoPath + " errno=" + std::to_string(errno) +
+                       " (" + std::string(strerror(errno)) + ")");
         }
         
         if (isoAccessible) {
@@ -1719,7 +1898,7 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         } else {
             // ISO 不可访问，跳过 CDROM 配置
             // 这样 QEMU 不会因为打开 ISO 失败而 abort
-            HilogPrint("QEMU: [WARN] ISO not accessible, SKIPPING CDROM to prevent crash");
+            HilogPrint("QEMU: [WARN] ISO not accessible, SKIPPING CDROM to prevent crash: " + isoPath);
             HilogPrint("QEMU: [WARN] 提示：请将 ISO 文件复制到应用沙箱目录，或使用应用内文件选择器");
             WriteLog(config.logPath, "[WARNING] ISO file not accessible from QEMU process: " + isoPath);
             WriteLog(config.logPath, "[WARNING] CDROM skipped. Copy ISO to app sandbox or use internal file picker.");
@@ -1754,36 +1933,43 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
     // 从高级配置中读取网卡类型
     std::string netDev = config.networkDevice;
     if (netDev.empty()) {
-        // 默认使用 e1000 网卡 - 更稳定，兼容性更好
-        // virtio-net-pci 在某些配置下可能有初始化问题
-        netDev = "e1000";
-        HilogPrint("QEMU: [NET] Using default e1000 network device");
+        // 默认使用 virtio-net-device (MMIO 版本) - ARM virt 机器的最佳选择
+        netDev = "virtio-net-device";
+        HilogPrint("QEMU: [NET] Using default virtio-net-device (MMIO)");
+    }
+    
+    // 自动转换 PCI 版本到 MMIO 版本（PCI 版本在 ARM virt 上有问题）
+    if (netDev == "virtio-net-pci") {
+        HilogPrint("QEMU: [NET] Converting virtio-net-pci to virtio-net-device (MMIO)");
+        netDev = "virtio-net-device";
     }
     bool netDisabled = (netDev == "none");
 
-    // 构建网卡设备参数：直接使用用户选择的设备，不做强制回退
-    // 如果设备不兼容，QEMU 会报错，用户可以据此选择其他设备
+    // 构建网卡设备参数
+    // 对于 ARM virt 机器，优先使用 MMIO 版本的 virtio 设备（更稳定）
+    // PCI 版本（virtio-*-pci）在某些配置下有初始化问题
     auto buildNetDeviceArg = [&](const std::string& dev) -> std::string {
-        if (dev == "virtio-net" || dev == "virtio-net-pci") {
-            HilogPrint("QEMU: [NET] Using virtio-net-pci network device");
-            return "virtio-net-pci,netdev=n0";
+        if (dev == "virtio-net" || dev == "virtio-net-pci" || dev == "virtio-net-device") {
+            // 使用 MMIO 版本而不是 PCI 版本
+            HilogPrint("QEMU: [NET] Using virtio-net-device (MMIO) for ARM virt");
+            return "virtio-net-device,netdev=n0";
         } else if (dev == "e1000") {
-            HilogPrint("QEMU: [NET] Using e1000 network device (user selected)");
+            HilogPrint("QEMU: [NET] Using e1000 network device");
             return "e1000,netdev=n0";
         } else if (dev == "e1000e") {
-            HilogPrint("QEMU: [NET] Using e1000e network device (user selected)");
+            HilogPrint("QEMU: [NET] Using e1000e network device");
             return "e1000e,netdev=n0";
         } else if (dev == "rtl8139") {
-            HilogPrint("QEMU: [NET] Using rtl8139 network device (user selected)");
+            HilogPrint("QEMU: [NET] Using rtl8139 network device");
             return "rtl8139,netdev=n0";
         } else if (dev == "ne2k_pci") {
-            HilogPrint("QEMU: [NET] Using ne2k_pci network device (user selected)");
+            HilogPrint("QEMU: [NET] Using ne2k_pci network device");
             return "ne2k_pci,netdev=n0";
         } else if (dev == "vmxnet3") {
-            HilogPrint("QEMU: [NET] Using vmxnet3 network device (user selected)");
+            HilogPrint("QEMU: [NET] Using vmxnet3 network device");
             return "vmxnet3,netdev=n0";
         } else if (dev == "usb-net") {
-            HilogPrint("QEMU: [NET] Using usb-net network device (user selected)");
+            HilogPrint("QEMU: [NET] Using usb-net network device");
             return "usb-net,netdev=n0";
         }
         // 未知设备：直接使用用户输入的值
@@ -1846,25 +2032,34 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         bool vncAvailable = false;
         std::string displayConfig = config.display;
         if (displayConfig.empty()) {
-            displayConfig = "vnc=127.0.0.1:1";  // 默认 VNC 监听在 5901 端口
+            displayConfig = "vnc=0.0.0.0:1";  // 默认 VNC 监听在 5901 端口（0.0.0.0 允许其他应用连接）
         }
 
         // keymaps 存在才认为 VNC 可用
-        // ArkTS 会传入 keymapsAvailable 标记；否则再尝试本地路径检查
-        if (config.keymapsAvailable) {
-            vncAvailable = true;
+        // 必须在 C++ 层实际验证文件存在
+        if (!qemuDataDir.empty()) {
             std::string keymapPath = qemuDataDir + "/keymaps/en-us";
-            HilogPrint("QEMU: [VNC_DEBUG] ArkTS confirmed keymaps at: " + keymapPath);
-        } else if (!qemuDataDir.empty()) {
-            std::string keymapPath = qemuDataDir + "/keymaps/en-us";
-            if (FileExists(keymapPath)) {
+            
+            // 用 fopen 验证文件存在且可读
+            FILE* f = fopen(keymapPath.c_str(), "r");
+            if (f) {
+                // 检查文件大小
+                fseek(f, 0, SEEK_END);
+                long size = ftell(f);
+                fclose(f);
+                
+                if (size > 1000) {  // en-us 应该 > 1KB
                 vncAvailable = true;
-                HilogPrint("QEMU: [VNC_DEBUG] C++ stat() found keymaps: " + keymapPath);
+                    HilogPrint("QEMU: [VNC_DEBUG] keymaps VERIFIED: " + keymapPath + " (" + std::to_string(size) + " bytes)");
             } else {
-                HilogPrint("QEMU: [VNC_DEBUG] keymaps missing at: " + keymapPath + ", VNC disabled");
+                    HilogPrint("QEMU: [VNC_DEBUG] keymaps file too small: " + std::to_string(size) + " bytes");
             }
         } else {
-            HilogPrint("QEMU: [VNC_DEBUG] qemuDataDir empty (ArkTS did not provide), VNC disabled");
+                HilogPrint("QEMU: [VNC_DEBUG] keymaps NOT FOUND: " + keymapPath);
+                HilogPrint("QEMU: [VNC_DEBUG] errno=" + std::to_string(errno) + " (" + std::string(strerror(errno)) + ")");
+            }
+        } else {
+            HilogPrint("QEMU: [VNC_DEBUG] qemuDataDir empty, VNC disabled");
         }
         
         if (vncAvailable) {
@@ -1877,20 +2072,25 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
             if (displayConfig.find("vnc") != std::string::npos) {
                 // 使用 -vnc 参数
                 // 格式：-vnc <host>:<display>,websocket=<port>
-                // noVNC 使用 WebSocket 协议，所以需要启用 websocket 支持
+                // (noVNC 已移除) 仅保留原生 VNC (RFB)
                 std::string vncArg = displayConfig;
                 if (vncArg.substr(0, 4) == "vnc=") {
                     vncArg = vncArg.substr(4);  // 移除 "vnc=" 前缀
                 }
                 
-                // 检查是否已经有 websocket 参数，避免重复添加
-                // config.display 可能已经包含 websocket=5701
-                if (vncArg.find("websocket=") == std::string::npos) {
-                    // 没有 websocket 参数，添加默认的
-                    vncArg = vncArg + ",websocket=5700";
-                    HilogPrint(std::string("QEMU: [DEBUG] VNC display: ") + vncArg + " (added WebSocket on port 5700)");
+                // (noVNC 已移除) 不再支持 websocket 方式，若包含则移除，强制使用 RFB
+                const std::string wsKey = "websocket=";
+                size_t wsPos = vncArg.find(wsKey);
+                if (wsPos != std::string::npos) {
+                    // 删除 ",websocket=xxxx" 或 "websocket=xxxx" 片段（尽量宽容）
+                    size_t start = wsPos;
+                    if (start > 0 && vncArg[start - 1] == ',') start -= 1;
+                    size_t end = vncArg.find(',', wsPos);
+                    if (end == std::string::npos) end = vncArg.size();
+                    vncArg.erase(start, end - start);
+                    HilogPrint(std::string("QEMU: [WARN] websocket parameter removed (noVNC removed), vncArg=") + vncArg);
                 } else {
-                    HilogPrint(std::string("QEMU: [DEBUG] VNC display: ") + vncArg + " (websocket already configured)");
+                    HilogPrint(std::string("QEMU: [DEBUG] VNC display (RFB): ") + vncArg);
                 }
                 
                 args.push_back("-vnc");
@@ -1911,38 +2111,95 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
             displayConfig = "none";  // 标记为无显示模式
         }
        
+        // ============================================================
+        // 显卡设备选择（关键修复点）
+        // ARM64 virt 机器如果没有提供可被 UEFI/来宾识别的图形设备(GOP/framebuffer)，
+        // VNC 看到的往往是黑底白字的文本控制台（例如 “Parallel Console”）。
+        // 因此：当启用 VNC 且用户未指定时，为 aarch64 默认添加 virtio-gpu-device(MMIO)，
+        // 这是 virt 机器上最常见/最兼容的图形设备路径之一。
+        // ============================================================
+        std::string effectiveDisplayDev = config.displayDevice;
+        if (displayConfig != "none") {
+            // 注意：UI 侧历史上默认会传 'none'，但这会导致 VNC 只能看到串口控制台（Parallel Console）。
+            // 对于 aarch64 + VNC，我们把 'none' 也当作“未指定”，自动选择可用的图形设备。
+            if (effectiveDisplayDev.empty() || effectiveDisplayDev == "auto" ||
+                (config.archType == "aarch64" && effectiveDisplayDev == "none")) {
+                if (config.archType == "aarch64") {
+                    effectiveDisplayDev = "virtio-gpu";
+                    HilogPrint("QEMU: [HW] aarch64 VNC default display device = virtio-gpu-device (via virtio-gpu)");
+                }
+            }
+        }
+
         // 根据高级设置选择显卡设备（仅在启用图形时）
         // 直接使用用户选择的设备，不做强制回退
         // 如果设备不兼容，QEMU 会报错，用户可以据此选择其他设备
-        if (displayConfig != "none" && !config.displayDevice.empty() && config.displayDevice != "none") {
-            args.push_back("-device");
-            std::string displayDev = config.displayDevice;
-            
+        if (displayConfig != "none" && !effectiveDisplayDev.empty() && effectiveDisplayDev != "none") {
+            std::string displayDev = effectiveDisplayDev;
+            std::string qemuDisplayDev;
+
             if (displayDev == "virtio-gpu" || displayDev == "virtio-gpu-pci") {
-                args.push_back("virtio-gpu-pci");
-                HilogPrint("QEMU: [HW] Using virtio-gpu-pci as display device");
+                if (config.archType == "aarch64") {
+                    qemuDisplayDev = "virtio-gpu-device";
+                    HilogPrint("QEMU: [HW] Using virtio-gpu-device (MMIO) as display device (aarch64)");
+                } else {
+                    qemuDisplayDev = "virtio-gpu-pci";
+                    HilogPrint("QEMU: [HW] Using virtio-gpu-pci as display device");
+                }
             } else if (displayDev == "virtio-gpu-gl" || displayDev == "virtio-gpu-gl-pci") {
-                args.push_back("virtio-gpu-gl-pci");
-                HilogPrint("QEMU: [HW] Using virtio-gpu-gl-pci as display device");
+                if (config.archType == "aarch64") {
+                    qemuDisplayDev = "ramfb";
+                    HilogPrint("QEMU: [HW] WARNING: virtio-gpu-gl not recommended on aarch64, fallback to ramfb");
+                } else {
+                    qemuDisplayDev = "virtio-gpu-gl-pci";
+                    HilogPrint("QEMU: [HW] Using virtio-gpu-gl-pci as display device");
+                }
             } else if (displayDev == "ramfb") {
-                args.push_back("ramfb");
+                qemuDisplayDev = "ramfb";
                 HilogPrint("QEMU: [HW] Using ramfb as display device");
             } else if (displayDev == "virtio-vga") {
-                args.push_back("virtio-vga");
-                HilogPrint("QEMU: [HW] Using virtio-vga as display device (user selected)");
+                if (config.archType == "aarch64") {
+                    qemuDisplayDev = "ramfb";
+                    HilogPrint("QEMU: [HW] WARNING: virtio-vga is PCI/x86 oriented, fallback to ramfb on aarch64");
+                } else {
+                    qemuDisplayDev = "virtio-vga";
+                    HilogPrint("QEMU: [HW] Using virtio-vga as display device (user selected)");
+                }
             } else if (displayDev == "qxl-vga") {
-                args.push_back("qxl-vga");
-                HilogPrint("QEMU: [HW] Using qxl-vga as display device (user selected)");
+                if (config.archType == "aarch64") {
+                    qemuDisplayDev = "ramfb";
+                    HilogPrint("QEMU: [HW] WARNING: qxl-vga is PCI/x86 oriented, fallback to ramfb on aarch64");
+                } else {
+                    qemuDisplayDev = "qxl-vga";
+                    HilogPrint("QEMU: [HW] Using qxl-vga as display device (user selected)");
+                }
             } else if (displayDev == "cirrus-vga") {
-                args.push_back("cirrus-vga");
-                HilogPrint("QEMU: [HW] Using cirrus-vga as display device (user selected)");
+                if (config.archType == "aarch64") {
+                    qemuDisplayDev = "ramfb";
+                    HilogPrint("QEMU: [HW] WARNING: cirrus-vga is PCI/x86 oriented, fallback to ramfb on aarch64");
+                } else {
+                    qemuDisplayDev = "cirrus-vga";
+                    HilogPrint("QEMU: [HW] Using cirrus-vga as display device (user selected)");
+                }
             } else if (displayDev == "VGA") {
-                args.push_back("VGA");
-                HilogPrint("QEMU: [HW] Using VGA as display device (user selected)");
+                if (config.archType == "aarch64") {
+                    qemuDisplayDev = "ramfb";
+                    HilogPrint("QEMU: [HW] WARNING: VGA is PCI/x86 oriented, fallback to ramfb on aarch64");
+                } else {
+                    qemuDisplayDev = "VGA";
+                    HilogPrint("QEMU: [HW] Using VGA as display device (user selected)");
+                }
             } else {
                 // 未知设备：直接使用用户输入的值
-                args.push_back(displayDev);
+                qemuDisplayDev = displayDev;
                 HilogPrint(std::string("QEMU: [HW] Using custom display device: ") + displayDev);
+            }
+
+            if (!qemuDisplayDev.empty()) {
+                args.push_back("-device");
+                args.push_back(qemuDisplayDev);
+                HilogPrint(std::string("QEMU: [HW] Final display device: ") + qemuDisplayDev + " (requested=" +
+                           (config.displayDevice.empty() ? "(empty)" : config.displayDevice) + ")");
             }
         } else {
             HilogPrint("QEMU: [HW] No extra display device configured");
@@ -3504,7 +3761,9 @@ struct VncSession {
     std::atomic<bool> running;  // 在构造函数中初始化
     int width = 0;
     int height = 0;
-    std::vector<uint8_t> frame; // RGBA8888
+    std::vector<uint8_t> frame; // RGBA8888 (ArkTS 可直接 createPixelMap，无需再做 BGRA->RGBA 转换)
+    uint32_t seq = 0;           // frame 序号（每次更新递增）
+    bool dirty = false;         // 是否有新帧
     std::mutex mtx;
     
     VncSession() : running(false) {}
@@ -3578,11 +3837,27 @@ static void VncGotUpdate(rfbClient* cl, int x, int y, int w, int h)
             if (s->width != cl->width || s->height != cl->height) {
                 s->width = cl->width; s->height = cl->height; s->frame.resize((size_t)s->width * s->height * 4);
             }
-            // Copy entire framebuffer for simplicity
-            size_t bytes = (size_t)cl->width * cl->height * 4;
+            // cl->frameBuffer 为 little-endian 32bpp，按照 format shifts 通常是 BGRA(byte order: B,G,R,X)。
+            // ArkTS 侧渲染希望是 RGBA，因此在 C++ 侧转换一次，避免 ArkTS 每帧做大数组转换造成卡顿/GC 抖动。
+            const int ww = cl->width;
+            const int hh = cl->height;
+            const size_t bytes = (size_t)ww * (size_t)hh * 4;
             if (s->frame.size() >= bytes) {
-                std::memcpy(s->frame.data(), cl->frameBuffer, bytes);
+                const uint8_t* src = reinterpret_cast<const uint8_t*>(cl->frameBuffer);
+                uint8_t* dst = s->frame.data();
+                for (size_t i = 0; i < bytes; i += 4) {
+                    // BGRA -> RGBA
+                    dst[i + 0] = src[i + 2];
+                    dst[i + 1] = src[i + 1];
+                    dst[i + 2] = src[i + 0];
+                    dst[i + 3] = 255;
+                }
+                s->seq++;
+                s->dirty = true;
             }
+            // 关键：继续请求下一帧（增量更新）。否则很多 VNC 服务端不会主动推送后续帧，
+            // Viewer 会一直停在 "Display Output Is Not Active"。
+            SendFramebufferUpdateRequest(cl, 0, 0, cl->width, cl->height, TRUE);
             break;
         }
     }
@@ -3643,6 +3918,9 @@ static napi_value VncConnect(napi_env env, napi_callback_info info) {
         return out;
     }
 
+    // 关键：连接完成后先请求一次全量帧，触发服务端开始发送画面。
+    SendFramebufferUpdateRequest(cl, 0, 0, cl->width, cl->height, FALSE);
+
     {
         std::lock_guard<std::mutex> lock(g_vnc_mutex);
         s->client = cl;
@@ -3691,11 +3969,16 @@ static napi_value VncGetFrame(napi_env env, napi_callback_info info) {
     auto& s = it->second;
     std::lock_guard<std::mutex> lk(s->mtx);
     if (s->width <= 0 || s->height <= 0 || s->frame.empty()) return outNull;
+    // 没有新帧就返回 null，避免 ArkTS 侧空转渲染
+    if (!s->dirty) return outNull;
+    s->dirty = false;
 
     napi_value obj; napi_create_object(env, &obj);
     napi_value w, h; napi_create_int32(env, s->width, &w); napi_create_int32(env, s->height, &h);
     napi_set_named_property(env, obj, "width", w);
     napi_set_named_property(env, obj, "height", h);
+    napi_value seq; napi_create_uint32(env, s->seq, &seq);
+    napi_set_named_property(env, obj, "seq", seq);
 
     void* data = nullptr; size_t len = s->frame.size();
     napi_value ab;
@@ -3705,6 +3988,53 @@ static napi_value VncGetFrame(napi_env env, napi_callback_info info) {
     return obj;
 }
 // --------------------------------------------------------------------------------------------
+
+static napi_value VncSendPointer(napi_env env, napi_callback_info info) {
+    size_t argc = 4; napi_value argv[4];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    napi_value out; napi_get_boolean(env, false, &out);
+    if (argc < 4) return out;
+    int32_t id = 0; napi_get_value_int32(env, argv[0], &id);
+    int32_t x = 0; napi_get_value_int32(env, argv[1], &x);
+    int32_t y = 0; napi_get_value_int32(env, argv[2], &y);
+    int32_t mask = 0; napi_get_value_int32(env, argv[3], &mask);
+
+#ifdef LIBVNC_HAVE_CLIENT
+    std::lock_guard<std::mutex> lock(g_vnc_mutex);
+    auto it = g_vnc_sessions.find(id);
+    if (it == g_vnc_sessions.end()) return out;
+    auto& s = it->second;
+    if (!s->client) return out;
+    SendPointerEvent(s->client, x, y, mask);
+    napi_get_boolean(env, true, &out);
+#else
+    (void)x; (void)y; (void)mask;
+#endif
+    return out;
+}
+
+static napi_value VncSendKey(napi_env env, napi_callback_info info) {
+    size_t argc = 3; napi_value argv[3];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    napi_value out; napi_get_boolean(env, false, &out);
+    if (argc < 3) return out;
+    int32_t id = 0; napi_get_value_int32(env, argv[0], &id);
+    int32_t keysym = 0; napi_get_value_int32(env, argv[1], &keysym);
+    bool down = false; napi_get_value_bool(env, argv[2], &down);
+
+#ifdef LIBVNC_HAVE_CLIENT
+    std::lock_guard<std::mutex> lock(g_vnc_mutex);
+    auto it = g_vnc_sessions.find(id);
+    if (it == g_vnc_sessions.end()) return out;
+    auto& s = it->second;
+    if (!s->client) return out;
+    SendKeyEvent(s->client, (rfbKeySym)keysym, down ? TRUE : FALSE);
+    napi_get_boolean(env, true, &out);
+#else
+    (void)keysym; (void)down;
+#endif
+    return out;
+}
 
 // ============================================================================
 // Windows 11 配置相关 NAPI 函数
@@ -3919,7 +4249,19 @@ static napi_value WriteToVmConsole(napi_env env, napi_callback_info info) {
     if (g_logCapture) {
         // 添加换行符如果需要
         std::string data(buffer, len);
-        g_logCapture->WriteToStdin(data);
+        // 优先写入 TCP 串口（-serial tcp:...），否则回退到 stdin pipe
+        bool sent = false;
+        {
+            std::lock_guard<std::mutex> lk(g_serial_mtx);
+            if (g_serial_fd != -1) {
+                ssize_t n = send(g_serial_fd, data.c_str(), data.size(), 0);
+                if (n > 0) sent = true;
+                if (n <= 0) SerialCloseLocked();
+            }
+        }
+        if (!sent) {
+            g_logCapture->WriteToStdin(data);
+        }
     }
 
     return nullptr;
@@ -3938,10 +4280,14 @@ static napi_value SetConsoleCallback(napi_env env, napi_callback_info info) {
     
     // 如果已有回调，先释放
     if (g_consoleCallback) {
+        // 停掉串口桥接（避免旧回调继续收数据）
+        SerialStop();
         napi_release_threadsafe_function(g_consoleCallback, napi_tsfn_abort);
     }
     
     napi_create_threadsafe_function(env, args[0], nullptr, resourceName, 0, 1, nullptr, nullptr, nullptr, ConsoleJsCallback, &g_consoleCallback);
+    // 启动串口桥接：自动连接 tcp:127.0.0.1:4321 并把数据推到 JS
+    SerialStart();
     
     return nullptr;
 }
@@ -4093,6 +4439,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "vncConnect", 0, VncConnect, 0, 0, 0, napi_default, 0 },
         { "vncDisconnect", 0, VncDisconnect, 0, 0, 0, napi_default, 0 },
         { "vncGetFrame", 0, VncGetFrame, 0, 0, 0, napi_default, 0 },
+        { "vncSendPointer", 0, VncSendPointer, 0, 0, 0, napi_default, 0 },
+        { "vncSendKey", 0, VncSendKey, 0, 0, 0, napi_default, 0 },
         // Windows 11 配置相关
         { "setupTpm", 0, SetupTpm, 0, 0, 0, napi_default, 0 },
         { "setupUefi", 0, SetupUefi, 0, 0, 0, napi_default, 0 },
@@ -4135,6 +4483,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "vncConnect", VncConnect, 0 },
         { "vncDisconnect", VncDisconnect, 0 },
         { "vncGetFrame", VncGetFrame, 0 },
+        { "vncSendPointer", VncSendPointer, 0 },
+        { "vncSendKey", VncSendKey, 0 },
         // Windows 11 配置相关
         { "setupTpm", SetupTpm, 0 },
         { "setupUefi", SetupUefi, 0 },

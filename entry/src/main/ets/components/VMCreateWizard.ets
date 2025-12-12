@@ -100,7 +100,8 @@ export struct VMCreateWizard {
   // 配置值
   @State selectedArch: string = 'aarch64'
   @State selectedMachine: string = 'virt'
-  @State selectedDisplay: string = 'none'
+  // 默认不要用 none，否则 VNC 只会看到 “Parallel Console”
+  @State selectedDisplay: string = 'virtio-gpu-pci'
   @State selectedNetwork: string = 'virtio-net'
   @State selectedAudio: string = 'none'
   @State selectedOS: string = 'Windows'

@@ -697,6 +697,26 @@ else()
     message(WARNING "Prebuilt core not found at ${QEMU_FULL_SRC}; libqemu_full.so will not be packaged. You can still place it under src/main/libs/arm64-v8a/ manually or push to files/ at runtime.")
 endif()
 
+# ============ 复制架构特定的 QEMU 库（用于多架构支持）============
+# libqemu_aarch64.so, libqemu_x86_64.so, libqemu_i386.so
+set(QEMU_ARCH_LIBS "libqemu_aarch64.so" "libqemu_x86_64.so" "libqemu_i386.so")
+foreach(ARCH_LIB ${QEMU_ARCH_LIBS})
+    set(ARCH_LIB_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a/${ARCH_LIB}")
+    set(ARCH_LIB_DST "${QEMU_FULL_DST_DIR}/${ARCH_LIB}")
+    if(EXISTS ${ARCH_LIB_SRC})
+        add_custom_command(
+            OUTPUT ${ARCH_LIB_DST}
+            COMMAND ${CMAKE_COMMAND} -E copy ${ARCH_LIB_SRC} ${ARCH_LIB_DST}
+            DEPENDS ${ARCH_LIB_SRC}
+            COMMENT "Copying ${ARCH_LIB} to intermediates for HAP packaging"
+        )
+        add_custom_target(copy_${ARCH_LIB} ALL DEPENDS ${ARCH_LIB_DST})
+        message(STATUS "✅ Will copy ${ARCH_LIB} to HAP")
+    else()
+        message(STATUS "⚠️  ${ARCH_LIB} not found at ${ARCH_LIB_SRC}")
+    endif()
+endforeach()
+
 # 添加自定义目标用于调试
 add_custom_target(debug_info
     COMMAND ${CMAKE_COMMAND} -E echo "OHOS_NDK_HOME: ${OHOS_NDK_HOME}"
