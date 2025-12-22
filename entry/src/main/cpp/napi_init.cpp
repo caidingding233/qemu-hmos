@@ -2000,7 +2000,8 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
             HilogPrint("QEMU: [HW] RNG enabled: rng-random(id=" + rngId + ") + virtio-rng-device (MMIO)");
 
             // TPM2 (Windows 11 / UEFI TCG2)
-            // - HarmonyOS 构建里我们提供了“内置最小 TPM2”实现：-tpmdev emulator 不指定 chardev 时走内置后端
+            // - HarmonyOS 构建：QEMU 侧提供“内置最小 TPM2”兜底（见 QEMU tpm_emulator.c 的 OHOS patch）
+            //   这样即使没有 swtpm 外部进程，也不会因为缺少 chardev 导致 QEMU 直接 exit(1) 把 App 带崩。
             // - 设备模型选择（重要：避免 QEMU/ACPI 崩溃）：
             //   - aarch64 + virt + acpi=on：必须使用 tpm-tis-device（SysBusDevice）
             //     * QEMU 的 ARM virt ACPI 代码会把 tpm_find() 强转为 SysBusDevice 并走 platform-bus 分配 MMIO
@@ -2009,12 +2010,20 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
             //       memory_region_is_mapped(NULL) <- platform_bus_get_mmio_addr()
             //   - 其他机器/平台：才考虑 tpm-crb（更贴近 PC/Win11 常见 CRB 接口）
             // - backend 使用 type=emulator；在 HarmonyOS 构建里我们提供了“内置最小 TPM2”实现（无需 swtpm 进程）
-            // 重要：当前某些构建的 QEMU 可能未启用 TPM（表现为 “-tpmdev: invalid option”），
-            // 在 HarmonyOS 上这会触发 QEMU 内部 exit(1) -> 进程被 appspawn 判定异常直接崩溃。
-            //
-            // 为了避免“启动即崩”，这里默认不强制开启 TPM 参数；后续可做更完善的能力探测后再启用。
-            // （Windows 11 安装确实需要 TPM 时，请确保你使用的 QEMU 构建启用了 TPM 支持。）
-            HilogPrint("QEMU: [HW] TPM2 skipped: current build may not support -tpmdev (avoid exit(1) crash)");
+            // 启用 TPM 后端（HarmonyOS：缺省不传 chardev，会走内置 minimal TPM2）
+            args.push_back("-tpmdev");
+            args.push_back("emulator,id=tpm0");
+            args.push_back("-device");
+
+            // aarch64 virt + ACPI：使用 tpm-tis-device（sysbus）更稳，避免 CRB 在 ARM virt 下的映射/类型问题
+            if (machine == "virt") {
+                args.push_back("tpm-tis-device,tpmdev=tpm0");
+                HilogPrint("QEMU: [HW] TPM2 enabled: tpm-tis-device (virt/acpi safe, builtin backend on OHOS)");
+            } else {
+                // 其他机器：保守同样使用 TIS
+                args.push_back("tpm-tis-device,tpmdev=tpm0");
+                HilogPrint("QEMU: [HW] TPM2 enabled: tpm-tis-device (tpmdev=emulator,id=tpm0)");
+            }
         }
 
         // CPU 选择优先级：用户指定(cpuModel) > 默认策略
