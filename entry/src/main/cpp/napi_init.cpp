@@ -6,11 +6,14 @@
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <condition_variable>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <poll.h>
 #include <fstream>
 #include <sstream>
+#include <setjmp.h>
 #include <map>
 #include <mutex>
 #include <chrono>
@@ -22,6 +25,9 @@
 
 #if defined(__OHOS__)
 #include <hilog/log.h>
+// NativeWindow / NativeBuffer: XComponent surface 直绘
+#include <native_window/external_window.h>
+#include <native_buffer/native_buffer.h>
 // 定义日志 domain 和 tag
 #undef LOG_DOMAIN
 #undef LOG_TAG
@@ -34,6 +40,109 @@
 // }
 #endif
 #include <vector>
+
+// ======================================================================================
+// HarmonyOS 重要约束：
+// - QEMU 作为 in-process shared library 运行时，如果内部调用 exit(1)/_exit/_Exit，会被 appspawn 判定为
+//   非法退出（Unexpected call: exit(1)）从而 SIGABRT 杀死整个应用进程。
+//
+// 处理策略：
+// - 在 VM 线程进入 QEMU 前，启用 thread_local 的 setjmp/longjmp 兜底。
+// - 通过符号劫持拦截 exit/_exit/_Exit，把“进程退出”转换成“VM 线程失败返回码”。
+// ======================================================================================
+static thread_local bool g_tls_in_qemu = false;
+static thread_local jmp_buf g_tls_exit_jmp;
+static thread_local int g_tls_exit_code = 0;
+// 用于生成运行期唯一的设备ID（例如 rng、tpm），防止多次启动在同一进程内发生 ID 冲突
+static std::atomic<uint32_t> g_id_suffix_counter {0};
+
+static void CallRealExit(int status)
+{
+    // 仅在非 QEMU 线程兜底调用，正常情况下我们不应触发真实 exit。
+    using ExitFn = void (*)(int);
+    static ExitFn realExit = nullptr;
+    if (!realExit) {
+        realExit = reinterpret_cast<ExitFn>(dlsym(RTLD_NEXT, "exit"));
+    }
+    if (realExit) {
+        realExit(status);
+    }
+    // 如果获取不到真实 exit，则卡死避免继续执行未知状态
+    for (;;) {
+        pause();
+    }
+}
+
+extern "C" __attribute__((noreturn)) void exit(int status)
+{
+    if (g_tls_in_qemu) {
+        g_tls_exit_code = status;
+        longjmp(g_tls_exit_jmp, 1);
+    }
+    CallRealExit(status);
+}
+
+extern "C" __attribute__((noreturn)) void _exit(int status)
+{
+    if (g_tls_in_qemu) {
+        g_tls_exit_code = status;
+        longjmp(g_tls_exit_jmp, 1);
+    }
+    // 尝试调用真实 _exit
+    using ExitFn = void (*)(int);
+    static ExitFn realExit = nullptr;
+    if (!realExit) {
+        realExit = reinterpret_cast<ExitFn>(dlsym(RTLD_NEXT, "_exit"));
+    }
+    if (realExit) {
+        realExit(status);
+    }
+    for (;;) {
+        pause();
+    }
+}
+
+extern "C" __attribute__((noreturn)) void _Exit(int status)
+{
+    if (g_tls_in_qemu) {
+        g_tls_exit_code = status;
+        longjmp(g_tls_exit_jmp, 1);
+    }
+    // 尝试调用真实 _Exit
+    using ExitFn = void (*)(int);
+    static ExitFn realExit = nullptr;
+    if (!realExit) {
+        realExit = reinterpret_cast<ExitFn>(dlsym(RTLD_NEXT, "_Exit"));
+    }
+    if (realExit) {
+        realExit(status);
+    }
+    for (;;) {
+        pause();
+    }
+}
+
+extern "C" __attribute__((noreturn)) void abort(void)
+{
+    // QEMU 内部（或其依赖）可能通过 abort() 终止进程；在 QEMU 线程内将其转换为 longjmp，
+    // 避免被 appspawn 视为异常退出而杀掉整个应用。
+    if (g_tls_in_qemu) {
+        // 134 是常见的 “Aborted” 退出码（SIGABRT）
+        g_tls_exit_code = 134;
+        longjmp(g_tls_exit_jmp, 1);
+    }
+    using AbortFn = void (*)(void);
+    static AbortFn realAbort = nullptr;
+    if (!realAbort) {
+        realAbort = reinterpret_cast<AbortFn>(dlsym(RTLD_NEXT, "abort"));
+    }
+    if (realAbort) {
+        realAbort();
+    }
+    for (;;) {
+        pause();
+    }
+}
 
 // 前向声明：qemu_wrapper.cpp 中定义的 C 函数
 extern "C" {
@@ -48,16 +157,6 @@ extern "C" {
 // macOS兼容性处理
 #ifdef __APPLE__
 #include <sys/sysctl.h>
-#define PRCTL_JIT_ENABLE 0x6a6974
-static int prctl(int option, unsigned long arg2) {
-    (void)arg2; // 避免未使用参数警告
-    if (option == PRCTL_JIT_ENABLE) {
-        // 在macOS上，JIT通常默认启用，返回成功
-        return 0;
-    }
-    errno = ENOSYS;
-    return -1;
-}
 #else
 #include <sys/prctl.h>
 #include <sys/ioctl.h>
@@ -94,6 +193,9 @@ static bool NapiGetStringUtf8(napi_env env, napi_value value, std::string& out)
 
 // 全局控制台回调
 static napi_threadsafe_function g_consoleCallback = nullptr;
+
+// 前向声明：CaptureQemuOutput 里需要用它把 QEMU 的 stdout/stderr 打进同一套 QEMU_CORE 日志里
+static void HilogPrint(const std::string& message);
 
 // ----------------------------- Serial TCP bridge (QEMU -serial tcp:127.0.0.1:4321,server,nowait) -----------------------------
 // 现状说明：
@@ -233,7 +335,7 @@ static void ConsoleJsCallback(napi_env env, napi_value js_cb, void* context, voi
 // 捕获 stdout/stderr 并重定向到 hilog
 class CaptureQemuOutput {
 public:
-    CaptureQemuOutput() {
+    explicit CaptureQemuOutput(const std::string& vmDir) : stdout_log_fd(-1), stderr_log_fd(-1) {
         // 创建管道
         if (pipe(stdout_pipe) == -1 || pipe(stderr_pipe) == -1 || pipe(stdin_pipe) == -1) {
             OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, LOG_TAG, "Failed to create pipes");
@@ -257,10 +359,24 @@ public:
             return;
         }
 
+        // 额外：把 QEMU 的 stdout/stderr 同步落盘到 VM 目录（用于诊断导出）
+        // 注意：不要写到 qemu.log（该文件会被 QEMU -D 打开并可能清空），我们单独写 stdout/stderr 文件。
+        if (!vmDir.empty()) {
+            const std::string outPath = vmDir + "/qemu_stdout.log";
+            const std::string errPath = vmDir + "/qemu_stderr.log";
+            stdout_log_fd = open(outPath.c_str(), O_CREAT | O_WRONLY | O_APPEND, 0644);
+            stderr_log_fd = open(errPath.c_str(), O_CREAT | O_WRONLY | O_APPEND, 0644);
+            if (stdout_log_fd == -1 || stderr_log_fd == -1) {
+                OH_LOG_Print(LOG_APP, LOG_WARN, LOG_DOMAIN, LOG_TAG,
+                             "Failed to open stdout/stderr log files in vmDir (errno=%{public}d)",
+                             errno);
+            }
+        }
+
         // 启动读取线程
         running = true;
-        stdout_thread = std::thread(&CaptureQemuOutput::ReadThread, this, stdout_pipe[0], "QEMU_STDOUT");
-        stderr_thread = std::thread(&CaptureQemuOutput::ReadThread, this, stderr_pipe[0], "QEMU_STDERR");
+        stdout_thread = std::thread(&CaptureQemuOutput::ReadThread, this, stdout_pipe[0], stdout_log_fd, "QEMU_STDOUT");
+        stderr_thread = std::thread(&CaptureQemuOutput::ReadThread, this, stderr_pipe[0], stderr_log_fd, "QEMU_STDERR");
         
         OH_LOG_Print(LOG_APP, LOG_INFO, LOG_DOMAIN, LOG_TAG, "QEMU output capture started");
     }
@@ -287,6 +403,15 @@ public:
         
         close(stdout_pipe[0]);
         close(stderr_pipe[0]);
+
+        if (stdout_log_fd != -1) {
+            close(stdout_log_fd);
+            stdout_log_fd = -1;
+        }
+        if (stderr_log_fd != -1) {
+            close(stderr_log_fd);
+            stderr_log_fd = -1;
+        }
         
         // 释放回调
         if (g_consoleCallback) {
@@ -312,13 +437,19 @@ private:
     std::thread stdout_thread;
     std::thread stderr_thread;
     std::atomic<bool> running;
+    int stdout_log_fd;
+    int stderr_log_fd;
 
-    void ReadThread(int fd, const char* tag) {
+    void ReadThread(int fd, int logFd, const char* tag) {
         char buffer[1024];
         ssize_t n;
         while (running) {
             n = read(fd, buffer, sizeof(buffer) - 1);
             if (n > 0) {
+                // 先把原始输出落盘（保留换行符/原始内容）
+                if (logFd != -1) {
+                    (void)write(logFd, buffer, static_cast<size_t>(n));
+                }
                 buffer[n] = '\0';
                 
                 // 发送给 JS (需要在 hilog 之前，保留换行符)
@@ -327,9 +458,10 @@ private:
                     napi_call_threadsafe_function(g_consoleCallback, msg, napi_tsfn_nonblocking);
                 }
                 
-                // 移除换行符，hilog 会自动添加
-                if (buffer[n-1] == '\n') buffer[n-1] = '\0';
-                OH_LOG_Print(LOG_APP, LOG_INFO, LOG_DOMAIN, LOG_TAG, "[%s] %s", tag, buffer);
+                // 移除换行符，HilogPrint 会自动按行处理
+                if (buffer[n - 1] == '\n') buffer[n - 1] = '\0';
+                // 关键修复：用 QEMU_CORE 统一日志出口，确保你抓的 hilog.log 一定能看到
+                HilogPrint(std::string("QEMU: [") + tag + "] " + buffer);
             } else if (n == 0) {
                 break; // EOF
             } else {
@@ -353,11 +485,13 @@ constexpr size_t MAX_LOG_BUFFER_SIZE = 1000;
 // VM配置结构
 struct VMConfig {
     std::string name;
+    std::string osType;          // 来宾系统类型：Windows / Linux / ...
     std::string archType;        // 架构类型：aarch64, x86_64, i386
     std::string isoPath;
     int diskSizeGB;
     int memoryMB;
     int cpuCount;
+    std::string cpuModel;        // CPU 型号（可选，不填则使用默认策略）
     std::string diskPath;
     std::string logPath;
     std::string accel;
@@ -368,6 +502,7 @@ struct VMConfig {
     std::string efiFirmware;     // UEFI 固件路径
     std::string qemuDataDir;     // QEMU数据目录（包含keymaps，由ArkTS KeymapsManager提供）
     bool keymapsAvailable;       // ArkTS 是否已确认 keymaps 存在
+    bool installMode;            // ArkTS 启动上下文：安装模式（aarch64 固件阶段更保守的硬件兜底）
     // 高级硬件配置（由 ArkTS 创建向导传入）
     std::string machine;         // 机器类型（如 virt、raspi3b）
     std::string displayDevice;   // 显卡设备（virtio-gpu、ramfb、none）
@@ -457,26 +592,12 @@ static bool kvmSupported() {
     return true;
 }
 
-// 启用JIT权限
+// JIT 探测/启用：
+// 旧实现曾尝试通过 prctl(PRCTL_JIT_ENABLE) 走 syscall 探测/启用。
+// 现在改为 ArkTS 侧通过权限系统探测：
+// `ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY`
+// 因此 Native 侧不再做 syscall 探测，避免“开发阶段无意义”的绕路与兼容性风险。
 static bool enableJit() {
-    // 检查是否已经启用JIT
-    int current_jit = 0;
-    if (prctl(PRCTL_JIT_ENABLE, 0, &current_jit) == 0 && current_jit == 1) {
-        return true;
-    }
-    
-    // 尝试启用JIT
-    int r = prctl(PRCTL_JIT_ENABLE, 1);
-    if (r != 0) {
-        return false;
-    }
-    
-    // 验证JIT是否成功启用
-    int verify_jit = 0;
-    if (prctl(PRCTL_JIT_ENABLE, 0, &verify_jit) == 0 && verify_jit == 1) {
-        return true;
-    }
-    
     return false;
 }
 
@@ -492,7 +613,8 @@ static napi_value GetDeviceCapabilities(napi_env env, napi_callback_info info) {
     napi_set_named_property(env, result, "kvmSupported", kvm_value);
 
     // JIT 支持
-    bool jit_supported = enableJit();
+    // JIT 权限/可用性由 ArkTS 侧通过权限系统探测（ALLOW_WRITABLE_CODE_MEMORY）
+    bool jit_supported = false;
     napi_value jit_value;
     napi_get_boolean(env, jit_supported, &jit_value);
     napi_set_named_property(env, result, "jitSupported", jit_value);
@@ -1125,6 +1247,16 @@ static VMConfig ParseVMConfig(napi_env env, napi_value config, bool &ok) {
     
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_PARSE", ">>> name = %{public}s <<<", vmConfig.name.c_str());
     HilogPrint("QEMU: ParseVMConfig got name: " + vmConfig.name);
+
+    // 获取来宾系统类型（可选，ArkTS 侧传入 osType）
+    napi_value osTypeValue;
+    if (napi_get_named_property(env, config, "osType", &osTypeValue) == napi_ok) {
+        std::string osType;
+        if (NapiGetStringUtf8(env, osTypeValue, osType)) {
+            vmConfig.osType = osType;
+            HilogPrint("QEMU: ParseVMConfig got osType: " + osType);
+        }
+    }
     
     // 获取架构类型（可选，默认为 aarch64）
     napi_value archValue;
@@ -1184,6 +1316,16 @@ static VMConfig ParseVMConfig(napi_env env, napi_value config, bool &ok) {
             HilogPrint("QEMU: Warning - cpuCount invalid, using 2 cores default");
         }
     }
+
+    // CPU 型号（可选）
+    napi_value cpuModelValue;
+    if (napi_get_named_property(env, config, "cpuModel", &cpuModelValue) == napi_ok) {
+        std::string cpuModel;
+        if (NapiGetStringUtf8(env, cpuModelValue, cpuModel)) {
+            vmConfig.cpuModel = cpuModel;
+            HilogPrint("QEMU: ParseVMConfig got cpuModel: " + cpuModel);
+        }
+    }
     
     // 打印最终使用的配置值
     HilogPrint("QEMU: VM config - CPU=" + std::to_string(vmConfig.cpuCount) + 
@@ -1222,6 +1364,17 @@ static VMConfig ParseVMConfig(napi_env env, napi_value config, bool &ok) {
         }
     } else {
         vmConfig.nographic = false;
+    }
+
+    // 获取安装模式标志（可选，默认 false）
+    vmConfig.installMode = false;
+    napi_value installModeValue;
+    if (napi_get_named_property(env, config, "installMode", &installModeValue) == napi_ok) {
+        bool installMode = false;
+        if (napi_get_value_bool(env, installModeValue, &installMode) == napi_ok) {
+            vmConfig.installMode = installMode;
+            HilogPrint(std::string("QEMU: ParseVMConfig installMode = ") + (installMode ? "true" : "false"));
+        }
     }
     
     // 获取 UEFI 固件路径（可选）
@@ -1324,6 +1477,88 @@ static bool CreateDirectories(const std::string& path) {
 static bool FileExists(const std::string& path) {
     struct stat buffer;
     return (stat(path.c_str(), &buffer) == 0);
+}
+
+static bool PreflightOpen(const std::string& label, const std::string& path, int flags)
+{
+    if (path.empty()) {
+        HilogPrint("QEMU: [PREFLIGHT] " + label + " path is empty");
+        return false;
+    }
+    int fd = open(path.c_str(), flags);
+    if (fd < 0) {
+        HilogPrint("QEMU: [PREFLIGHT] open(" + label + ") failed: " + path +
+                   " flags=" + std::to_string(flags) + " errno=" + std::to_string(errno) +
+                   " (" + std::string(strerror(errno)) + ")");
+        return false;
+    }
+    close(fd);
+    HilogPrint("QEMU: [PREFLIGHT] open(" + label + ") ok: " + path);
+    return true;
+}
+
+static bool PreflightQcow2Header(const std::string& path)
+{
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    unsigned char magic[4] = {0, 0, 0, 0};
+    ssize_t r = read(fd, magic, sizeof(magic));
+    close(fd);
+    if (r != 4) {
+        HilogPrint("QEMU: [PREFLIGHT] qcow2 header read failed: " + path + " r=" + std::to_string(r));
+        return false;
+    }
+    // 'QFI\xfb'
+    if (!(magic[0] == 'Q' && magic[1] == 'F' && magic[2] == 'I' && magic[3] == 0xFB)) {
+        std::string hex = "0x" + std::to_string((int)magic[0]) + "," + std::to_string((int)magic[1]) + "," +
+                          std::to_string((int)magic[2]) + "," + std::to_string((int)magic[3]);
+        HilogPrint("QEMU: [PREFLIGHT] qcow2 magic mismatch: " + path + " magic=" + hex);
+        return false;
+    }
+    HilogPrint("QEMU: [PREFLIGHT] qcow2 magic ok: " + path);
+    return true;
+}
+
+// 复制文件（覆盖/截断写入）。用于把 UEFI VARS 模板复制到每个 VM 的私有 vars 文件中。
+static bool CopyFileTruncate(const std::string& src, const std::string& dst)
+{
+    int in = open(src.c_str(), O_RDONLY);
+    if (in < 0) return false;
+
+    // 确保目标目录存在
+    size_t pos = dst.find_last_of('/');
+    if (pos != std::string::npos) {
+        std::string dir = dst.substr(0, pos);
+        if (!dir.empty()) {
+            (void)CreateDirectories(dir);
+        }
+    }
+
+    int out = open(dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (out < 0) {
+        close(in);
+        return false;
+    }
+
+    char buf[8192];
+    bool ok = true;
+    while (true) {
+        ssize_t r = read(in, buf, sizeof(buf));
+        if (r == 0) break;
+        if (r < 0) { ok = false; break; }
+        ssize_t off = 0;
+        while (off < r) {
+            ssize_t w = write(out, buf + off, static_cast<size_t>(r - off));
+            if (w <= 0) { ok = false; break; }
+            off += w;
+        }
+        if (!ok) break;
+    }
+
+    (void)fsync(out);
+    close(out);
+    close(in);
+    return ok;
 }
 
 // 创建VM工作目录
@@ -1461,62 +1696,97 @@ static uint64_t be64(uint64_t val) {
     return ((uint64_t)be32(val & 0xffffffff) << 32) | be32(val >> 32);
 }
 
-// 创建 QCOW2 格式磁盘（不依赖外部命令）
-static bool CreateQcow2Disk(const std::string& diskPath, uint64_t sizeBytes) {
-    std::ofstream disk(diskPath, std::ios::binary);
-    if (!disk) return false;
-    
-    const uint32_t cluster_bits = 16;  // 64KB clusters
-    const uint64_t cluster_size = 1ULL << cluster_bits;
-    
-    // 计算 L1 表大小
-    uint64_t l2_entries = cluster_size / 8;  // 每个 L2 表条目 8 字节
-    uint64_t l1_entries = (sizeBytes + (l2_entries * cluster_size) - 1) / (l2_entries * cluster_size);
-    if (l1_entries < 1) l1_entries = 1;
-    
-    // 偏移量
-    uint64_t header_cluster = 0;
-    uint64_t l1_table_offset = cluster_size;  // 第二个簇
-    uint64_t refcount_table_offset = cluster_size * 2;  // 第三个簇
-    
-    // 创建文件头
-    Qcow2Header header = {0};
-    header.magic = be32(0x514649fb);  // "QFI\xfb"
-    header.version = be32(3);
-    header.backing_file_offset = 0;
-    header.backing_file_size = 0;
-    header.cluster_bits = be32(cluster_bits);
-    header.size = be64(sizeBytes);
-    header.crypt_method = 0;
-    header.l1_size = be32(static_cast<uint32_t>(l1_entries));
-    header.l1_table_offset = be64(l1_table_offset);
-    header.refcount_table_offset = be64(refcount_table_offset);
-    header.refcount_table_clusters = be32(1);
-    header.nb_snapshots = 0;
-    header.snapshots_offset = 0;
-    header.incompatible_features = 0;
-    header.compatible_features = 0;
-    header.autoclear_features = 0;
-    header.refcount_order = be32(4);  // 16-bit refcounts
-    header.header_length = be32(104);
-    
-    // 写入文件头
-    disk.write(reinterpret_cast<char*>(&header), sizeof(header));
-    
-    // 填充到第一个簇
-    std::vector<char> zeros(cluster_size - sizeof(header), 0);
-    disk.write(zeros.data(), zeros.size());
-    
-    // L1 表（全零）
-    std::vector<char> l1_zeros(cluster_size, 0);
-    disk.write(l1_zeros.data(), l1_zeros.size());
-    
-    // Refcount 表（全零）
-    std::vector<char> refcount_zeros(cluster_size, 0);
-    disk.write(refcount_zeros.data(), refcount_zeros.size());
-    
-    disk.close();
-    return disk.good();
+static uint32_t ReadBe32(const unsigned char* p)
+{
+    return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+           (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
+}
+
+static uint64_t ReadBe64(const unsigned char* p)
+{
+    uint64_t hi = ReadBe32(p);
+    uint64_t lo = ReadBe32(p + 4);
+    return (hi << 32) | lo;
+}
+
+static bool IsQcow2Magic(const unsigned char magic[4])
+{
+    return magic[0] == 'Q' && magic[1] == 'F' && magic[2] == 'I' && magic[3] == 0xFB;
+}
+
+// 轻量 qcow2 健康检查：避免 “旧版内置 qcow2 伪实现” 生成的镜像触发 QEMU bdrv_open fatal→exit(1)
+// 规则：qcow2 必须有有效的 refcount table entry[0]（不应为 0），否则 QEMU 会认为镜像损坏并拒绝以 rw 打开。
+static bool PreflightQcow2RefcountTable(const std::string& path)
+{
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+
+    unsigned char headerBuf[104] = {0};
+    ssize_t r = read(fd, headerBuf, sizeof(headerBuf));
+    if (r < 32) {
+        close(fd);
+        return false;
+    }
+
+    if (!IsQcow2Magic(headerBuf)) {
+        close(fd);
+        return true; // 非 qcow2：这条检查不适用
+    }
+
+    uint32_t clusterBits = ReadBe32(headerBuf + 20);
+    uint64_t refcountTableOffset = ReadBe64(headerBuf + 48);
+
+    if (clusterBits < 9 || clusterBits > 22) {
+        HilogPrint("QEMU: [PREFLIGHT] qcow2 invalid clusterBits=" + std::to_string(clusterBits) + " path=" + path);
+        close(fd);
+        return false;
+    }
+
+    const uint64_t clusterSize = 1ULL << clusterBits;
+    if (refcountTableOffset == 0 || (refcountTableOffset % clusterSize) != 0) {
+        HilogPrint("QEMU: [PREFLIGHT] qcow2 invalid refcount_table_offset=" + std::to_string(refcountTableOffset) +
+                   " clusterSize=" + std::to_string(clusterSize) + " path=" + path);
+        close(fd);
+        return false;
+    }
+
+    // 读取 refcount table 的第 1 个条目（8字节，big-endian offset）
+    if (lseek(fd, static_cast<off_t>(refcountTableOffset), SEEK_SET) < 0) {
+        close(fd);
+        return false;
+    }
+    unsigned char ent[8] = {0};
+    r = read(fd, ent, sizeof(ent));
+    close(fd);
+    if (r != 8) return false;
+
+    uint64_t firstRefcountBlock = ReadBe64(ent);
+    if (firstRefcountBlock == 0) {
+        HilogPrint("QEMU: [PREFLIGHT] qcow2 refcount table entry[0]==0 (image likely corrupt / legacy stub). path=" + path);
+        return false;
+    }
+
+    return true;
+}
+
+static bool IsQcow2FileQuick(const std::string& path)
+{
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    unsigned char magic[4] = {0, 0, 0, 0};
+    ssize_t r = read(fd, magic, sizeof(magic));
+    close(fd);
+    if (r != 4) return false;
+    return IsQcow2Magic(magic);
+}
+
+static bool CreateRawSparseDisk(const std::string& diskPath, uint64_t sizeBytes)
+{
+    int fd = open(diskPath.c_str(), O_CREAT | O_RDWR | O_TRUNC, 0644);
+    if (fd < 0) return false;
+    int rc = ftruncate(fd, static_cast<off_t>(sizeBytes));
+    close(fd);
+    return rc == 0;
 }
 
 static bool CreateVirtualDisk(const std::string& diskPath, int sizeGB) {
@@ -1526,23 +1796,13 @@ static bool CreateVirtualDisk(const std::string& diskPath, int sizeGB) {
             return false;
         }
         
-        // 使用内置 QCOW2 创建函数（不依赖外部 qemu-img 命令）
+        // 默认创建 raw sparse：稳定、简单，且避免错误的“内置 qcow2 伪实现”导致 QEMU 判定镜像损坏并 exit(1)
         uint64_t sizeBytes = static_cast<uint64_t>(sizeGB) * 1024ULL * 1024ULL * 1024ULL;
-        if (CreateQcow2Disk(diskPath, sizeBytes)) {
-            HilogPrint("QEMU: Created QCOW2 disk: " + diskPath + " (" + std::to_string(sizeGB) + "GB)");
-            return true;
+        if (!CreateRawSparseDisk(diskPath, sizeBytes)) {
+            HilogPrint("QEMU: Failed to create raw sparse disk: " + diskPath + " errno=" + std::to_string(errno));
+            return false;
         }
-        
-        // 如果 QCOW2 创建失败，创建稀疏 raw 文件作为备选
-        HilogPrint("QEMU: QCOW2 creation failed, falling back to sparse raw file");
-        std::ofstream disk(diskPath, std::ios::binary);
-        if (!disk) return false;
-        
-        // 创建稀疏文件
-        disk.seekp(static_cast<std::streamoff>(sizeGB) * 1024 * 1024 * 1024 - 1);
-        disk.write("\0", 1);
-        disk.close();
-        
+        HilogPrint("QEMU: Created RAW sparse disk: " + diskPath + " (" + std::to_string(sizeGB) + "GB)");
         return true;
     } catch (...) {
         return false;
@@ -1552,6 +1812,53 @@ static bool CreateVirtualDisk(const std::string& diskPath, int sizeGB) {
 // 构建QEMU命令行参数
 static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
     std::vector<std::string> args;
+    bool scsiControllerAdded = false;
+    bool xhciControllerAdded = false;
+    bool sataControllerAdded = false;
+    // ============================================================
+    // 来宾 OS 类型（用于做最小化兼容策略）
+    // - Windows PE/安装程序通常没有 virtio-blk 驱动
+    // - Linux 通常自带 virtio 驱动
+    // ============================================================
+    auto toLower = [](std::string s) -> std::string {
+        for (auto &ch : s) {
+            ch = static_cast<char>(::tolower(static_cast<unsigned char>(ch)));
+        }
+        return s;
+    };
+    std::string osHint = config.osType;
+    if (osHint.empty()) {
+        osHint = config.name;
+    }
+    if (osHint.empty()) {
+        osHint = config.isoPath;
+    }
+    const std::string osLower = toLower(osHint);
+    const bool isWindowsGuest =
+        (!osLower.empty() && (osLower == "windows" || osLower.find("windows") != std::string::npos ||
+                              osLower == "win" || osLower.find("win") == 0));
+    HilogPrint(std::string("QEMU: [OS] osType=") + (config.osType.empty() ? "(empty)" : config.osType) +
+               " inferredWindows=" + (isWindowsGuest ? "true" : "false"));
+    // install 模式下，某些固件会按“设备枚举顺序”而不是 bootindex 来选择默认启动项。
+    // 由于我们的 disk 配置在 ISO 之前，固件可能先尝试从硬盘启动，导致一直停在 TianoCore。
+    // 因此：在 aarch64+virt 的 install 模式下，将硬盘参数延后到 ISO 之后再追加，以提高 ISO 启动概率。
+    const bool deferDiskForInstallBoot =
+        config.installMode &&
+        config.archType == "aarch64" &&
+        (config.machine.empty() || config.machine == "virt") &&
+        !config.isoPath.empty();
+    std::vector<std::string> deferredDiskArgs;
+
+    // 一些 Windows/WinPE 镜像在 aarch64 virt 下对 XHCI/USB-storage 支持不稳定，
+    // 会出现安装程序提示 “A media driver your computer needs is missing...”
+    // 因此提供 AHCI(SATA) 作为更通用的安装介质/磁盘承载方式（Windows 免驱）。
+    auto ensureSataController = [&]() {
+        if (sataControllerAdded) return;
+        args.push_back("-device");
+        args.push_back("ich9-ahci,id=ahci");
+        sataControllerAdded = true;
+        HilogPrint("QEMU: [HW] SATA controller added: ich9-ahci,id=ahci");
+    };
     
     // 根据架构选择QEMU二进制文件
     if (config.archType == "x86_64") {
@@ -1638,7 +1945,8 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         HilogPrint("QEMU: WARNING - x86/x86_64 architecture is not supported in current build");
         HilogPrint("QEMU: WARNING - Falling back to aarch64 virt machine");
         args.push_back("-machine");
-        args.push_back("virt,gic-version=3");
+        // Windows on ARM 通常需要 ACPI；对大多数 Linux 也兼容
+        args.push_back("virt,gic-version=3,acpi=on");
         args.push_back("-cpu");
         args.push_back("cortex-a72");
     } else {
@@ -1651,18 +1959,112 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
             // 注意：virtualization=on 在 TCG 模式下可能导致问题
             // 仅在 KVM 模式下启用嵌套虚拟化
             if (config.accel == "kvm") {
-                args.push_back("virt,gic-version=3,virtualization=on");
+                args.push_back("virt,gic-version=3,virtualization=on,acpi=on");
             } else {
-                args.push_back("virt,gic-version=3");
+                args.push_back("virt,gic-version=3,acpi=on");
             }
         } else {
             // 其他机器类型（如 raspi3b/raspi4b）直接传递，保持最小假设
             args.push_back(machine);
         }
         
+        // aarch64+virt：补齐固件/Windows 常用能力
+        // 1) RNG：EDK2/Windows 启动阶段会尝试初始化 TRNG；没有 RNG 时会打印 ArmTrngLib init failed
+        // 2) TCG 兼容：Windows ARM 镜像对 CPU feature 较敏感，TCG 下用 -cpu max 更稳（性能另说）
+        const bool isTcg = (config.accel.find("tcg") != std::string::npos);
+        if (machine == "virt") {
+            // 生成运行期唯一的 RNG ID，避免在同一进程多次启动时出现 Duplicate ID 错误
+            auto sanitizeId = [](const std::string &name) -> std::string {
+                std::string out;
+                out.reserve(name.size());
+                for (char c : name) {
+                    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+                        out.push_back(c);
+                    } else if (c == '-' || c == '_' || c == '.') {
+                        out.push_back(c);
+                    } else {
+                        out.push_back('_');
+                    }
+                }
+                if (out.empty()) out = "vm";
+                return out;
+            };
+            const uint32_t uniq = g_id_suffix_counter.fetch_add(1, std::memory_order_relaxed) + 1;
+            const std::string rngId = "rng_hmos_" + sanitizeId(config.name) + "_" + std::to_string(uniq);
+
+            // RNG backend
+            args.push_back("-object");
+            args.push_back("rng-random,id=" + rngId + ",filename=/dev/urandom");
+            args.push_back("-device");
+            args.push_back("virtio-rng-device,rng=" + rngId);
+            HilogPrint("QEMU: [HW] RNG enabled: rng-random(id=" + rngId + ") + virtio-rng-device (MMIO)");
+
+            // TPM2 (Windows 11 / UEFI TCG2)
+            // - HarmonyOS 构建：QEMU 侧提供“内置最小 TPM2”兜底（见 QEMU tpm_emulator.c 的 OHOS patch）
+            //   这样即使没有 swtpm 外部进程，也不会因为缺少 chardev 导致 QEMU 直接 exit(1) 把 App 带崩。
+            // - 设备模型选择（重要：避免 QEMU/ACPI 崩溃）：
+            //   - aarch64 + virt + acpi=on：必须使用 tpm-tis-device（SysBusDevice）
+            //     * QEMU 的 ARM virt ACPI 代码会把 tpm_find() 强转为 SysBusDevice 并走 platform-bus 分配 MMIO
+            //     * tpm-crb 在 QEMU 里是 TYPE_DEVICE，且会固定映射到 0xFED40000，不是 sysbus 设备
+            //     * 在我们当前构建（未启用 CONFIG_QOM_CAST_DEBUG）下，这个强转不会报错而会导致 NULL 解引用崩溃：
+            //       memory_region_is_mapped(NULL) <- platform_bus_get_mmio_addr()
+            //   - 其他机器/平台：才考虑 tpm-crb（更贴近 PC/Win11 常见 CRB 接口）
+            // - backend 使用 type=emulator；在 HarmonyOS 构建里我们提供了“内置最小 TPM2”实现（无需 swtpm 进程）
+            // 启用 TPM 后端（HarmonyOS：缺省不传 chardev，会走内置 minimal TPM2）
+            args.push_back("-tpmdev");
+            args.push_back("emulator,id=tpm0");
+            args.push_back("-device");
+
+            // aarch64 virt + ACPI：使用 tpm-tis-device（sysbus）更稳，避免 CRB 在 ARM virt 下的映射/类型问题
+            if (machine == "virt") {
+                args.push_back("tpm-tis-device,tpmdev=tpm0");
+                HilogPrint("QEMU: [HW] TPM2 enabled: tpm-tis-device (virt/acpi safe, builtin backend on OHOS)");
+            } else {
+                // 其他机器：保守同样使用 TIS
+                args.push_back("tpm-tis-device,tpmdev=tpm0");
+                HilogPrint("QEMU: [HW] TPM2 enabled: tpm-tis-device (tpmdev=emulator,id=tpm0)");
+            }
+        }
+
+        // CPU 选择优先级：用户指定(cpuModel) > 默认策略
+        auto normalizeCpu = [](const std::string& s) -> std::string {
+            std::string t = s;
+            // trim
+            while (!t.empty() && (t.front() == ' ' || t.front() == '\t' || t.front() == '\n' || t.front() == '\r')) t.erase(t.begin());
+            while (!t.empty() && (t.back() == ' ' || t.back() == '\t' || t.back() == '\n' || t.back() == '\r')) t.pop_back();
+            return t;
+        };
+        const std::string requestedCpu = normalizeCpu(config.cpuModel);
+        const auto isAllowedCpu = [](const std::string& m) -> bool {
+            if (m.empty()) return false;
+            // 白名单：避免用户填错导致 qemu_init 直接失败（HarmonyOS 下失败代价很高）
+            return m == "max" ||
+                   m == "cortex-a72" ||
+                   m == "cortex-a57" ||
+                   m == "cortex-a53" ||
+                   m == "neoverse-n1";
+        };
+
         args.push_back("-cpu");
-        // 使用 cortex-a72 而不是 max，max 在某些环境下可能有问题
-        args.push_back("cortex-a72");
+        if (!requestedCpu.empty()) {
+            if (requestedCpu == "auto") {
+                // fallthrough to default policy
+            } else if (isAllowedCpu(requestedCpu)) {
+                args.push_back(requestedCpu);
+                HilogPrint("QEMU: [HW] CPU model selected by user: " + requestedCpu);
+            } else {
+                HilogPrint("QEMU: [HW] ⚠️ cpuModel not allowed/unknown, fallback to default policy: " + requestedCpu);
+            }
+        }
+        if (args.back() == "-cpu") {
+            // 还没 push 具体型号（走默认策略）
+            if (machine == "virt" && isTcg) {
+                args.push_back("max");
+                HilogPrint("QEMU: [HW] CPU=max selected for TCG compatibility");
+            } else {
+                args.push_back("cortex-a72");
+            }
+        }
     }
     
     args.push_back("-smp");
@@ -1792,7 +2194,7 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
             varsCandidates.push_back("edk2-arm-vars.fd");
             varsCandidates.push_back("edk2-aarch64-vars.fd");
 
-            std::string varsPath;
+            std::string varsTemplatePath;
             for (const auto& cand : varsCandidates) {
                 if (cand.empty()) continue;
                 int fd = open(cand.c_str(), O_RDONLY);
@@ -1802,14 +2204,37 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
                 ssize_t r = read(fd, tmp, 0);
                 close(fd);
                 if (r < 0) continue;
-                varsPath = cand;
+                varsTemplatePath = cand;
                 break;
             }
 
-            if (!varsPath.empty()) {
+            if (!varsTemplatePath.empty()) {
+                // 关键修复：UEFI VARS 不能全局复用，否则 BootOrder/启动项会被“记住”，
+                // 导致反复先从硬盘启动、按键没接住就回固件（你看到的 TianoCore 卡住）。
+                // 这里把 VARS 做成“每个 VM 独立一份”：
+                // - 默认：若不存在则从模板复制一份
+                // - 安装模式：强制重置（每次挂载 ISO 安装都用干净的 BootOrder）
+                std::string vmVarsPath = config.vmDir + "/edk2-vars.fd";
+                bool needReset = config.installMode || !FileExists(vmVarsPath);
+                if (needReset) {
+                    bool copied = CopyFileTruncate(varsTemplatePath, vmVarsPath);
+                    HilogPrint(std::string("QEMU: [FIRMWARE] VARS reset=") + (needReset ? "true" : "false") +
+                               " template=" + varsTemplatePath + " -> " + vmVarsPath + " copied=" + (copied ? "true" : "false"));
+                    if (!copied) {
+                        // 兜底：复制失败时仍尝试使用模板（可能不可写，但至少不至于启动失败）
+                        HilogPrint("QEMU: [FIRMWARE] ⚠️ VARS copy failed, fallback to template vars (may be read-only): " + varsTemplatePath);
+                        vmVarsPath = varsTemplatePath;
+                    }
+                } else {
+                    HilogPrint("QEMU: [FIRMWARE] Using existing per-VM VARS: " + vmVarsPath);
+                }
+
+                // 预检测：VARS 必须可写，否则 QEMU pflash 打开失败会直接 fatal→exit(1)
+                (void)PreflightOpen("VARS(pflash,rw)", vmVarsPath, O_RDWR);
+
                 args.push_back("-drive");
-                args.push_back("file=" + varsPath + ",if=pflash,format=raw,unit=1");
-                HilogPrint(std::string("QEMU: [FIRMWARE] 添加 pflash(VARS) 参数: ") + varsPath);
+                args.push_back("file=" + vmVarsPath + ",if=pflash,format=raw,unit=1");
+                HilogPrint(std::string("QEMU: [FIRMWARE] 添加 pflash(VARS) 参数: ") + vmVarsPath);
             } else {
                 HilogPrint("QEMU: [FIRMWARE] ⚠️ 未找到 VARS 固件(edk2-arm-vars.fd)，继续仅使用 CODE 盘");
             }
@@ -1827,13 +2252,49 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
     // 磁盘配置
     // 注意：OHOS 版 QEMU 禁用了 linux-aio，简化磁盘参数避免崩溃
     if (FileExists(config.diskPath)) {
-        // 使用 if=none + virtio-blk-device（而不是 virtio-blk-pci）
-        // virtio-blk-device 是 MMIO 版本，在 ARM virt 上更稳定
-        args.push_back("-drive");
-        args.push_back("file=" + config.diskPath + ",if=none,id=hd0,format=qcow2,cache=writeback");
-            args.push_back("-device");
-        args.push_back("virtio-blk-device,drive=hd0");
+        const bool isQcow2 = IsQcow2FileQuick(config.diskPath);
+        // 预检测：disk 打不开会导致 bdrv_open fatal→exit(1)
+        (void)PreflightOpen(std::string("DISK(") + (isQcow2 ? "qcow2" : "raw") + ",rw)", config.diskPath, O_RDWR);
+        if (isQcow2) {
+            (void)PreflightQcow2Header(config.diskPath);
+            // 额外 sanity：refcount table 不能是“全 0”。StartVm 已经会拦截并 reject，这里只打印日志。
+            (void)PreflightQcow2RefcountTable(config.diskPath);
+        }
+        // 默认：virtio-blk-device 是 MMIO 版本，在 ARM virt 上更稳定
+        deferredDiskArgs.push_back("-drive");
+        deferredDiskArgs.push_back("file=" + config.diskPath + ",if=none,id=hd0,format=" +
+                                   std::string(isQcow2 ? "qcow2" : "raw") + ",cache=writeback");
+        deferredDiskArgs.push_back("-device");
+        if (isWindowsGuest && config.archType == "aarch64" &&
+            (config.machine.empty() || config.machine == "virt")) {
+            // Windows on ARM virt：优先 SATA(AHCI) 以避免某些 PE/安装程序缺驱动导致“不显示磁盘/提示加载驱动”
+            ensureSataController();
+            std::string dev = "ide-hd,drive=hd0,bus=ahci.1";
+            // 提供 bootindex：ISO=0，Disk=1；非安装模式则 Disk=0
+            if (config.installMode && !config.isoPath.empty()) {
+                dev += ",bootindex=1";
+            } else {
+                dev += ",bootindex=0";
+            }
+            deferredDiskArgs.push_back(dev);
+            HilogPrint("QEMU: Disk configured with SATA(AHCI): " + config.diskPath);
+        } else if (isWindowsGuest) {
+            // NVMe：Windows 通常免驱（非 virt 或其他平台保持原策略）
+            deferredDiskArgs.push_back("nvme,drive=hd0,serial=QEMUHMOS0001");
+            HilogPrint("QEMU: Disk configured with NVMe: " + config.diskPath);
+        } else {
+        // 非 Windows：virtio-blk-device 是 MMIO 版本，在 ARM virt 上更稳定。
+        // 关键：只有在存在 ISO 时才把硬盘放到 bootindex=1；否则硬盘必须是 0，
+        // 否则部分固件/版本会导致“没有 boot option → 直接进 UEFI Shell”。
+        std::string dev = "virtio-blk-device,drive=hd0";
+        if (config.installMode && !config.isoPath.empty()) {
+            dev += ",bootindex=1";
+        } else {
+            dev += ",bootindex=0";
+        }
+        deferredDiskArgs.push_back(dev);
         HilogPrint("QEMU: Disk configured with virtio-blk-device: " + config.diskPath);
+        }
     } else {
         HilogPrint("QEMU: WARNING - Disk file not found: " + config.diskPath);
     }
@@ -1892,9 +2353,76 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         }
         
         if (isoAccessible) {
-            args.push_back("-cdrom");
-            args.push_back(isoPath);
-            HilogPrint("QEMU: [ISO] CDROM configured: " + isoPath);
+            (void)PreflightOpen("ISO(raw,ro)", isoPath, O_RDONLY);
+            // 重要：你反馈的现象是“UEFI Shell 里 map -r 看不到 ISO”，说明固件根本没有识别到光驱设备。
+            // 在 aarch64 virt + edk2 场景里，最稳的方式是使用 virtio-blk-device（MMIO 版本），
+            // 让固件通过 VirtioBlkDxe 识别 ISO（对应的文件系统由 UEFI 的 ISO9660 驱动提供）。
+            //
+            // 注意：ich9-ahci + ide-cd 依赖固件包含 AHCI/ATAPI 驱动，部分组合会导致 ISO 完全不可见。
+            if (config.archType == "aarch64" && (config.machine.empty() || config.machine == "virt")) {
+                if (isWindowsGuest) {
+                    // Windows PE/安装程序：
+                    // - 部分镜像对 XHCI/USB-storage 支持不稳定，会弹出 “A media driver ... is missing”
+                    // - 这里优先用 SATA CDROM (AHCI) 提供安装介质（Windows 免驱）
+                    ensureSataController();
+                    args.push_back("-drive");
+                    args.push_back("file=" + isoPath + ",if=none,format=raw,id=cd0,readonly=on,media=cdrom");
+                    args.push_back("-device");
+                    args.push_back("ide-cd,drive=cd0,bus=ahci.0,bootindex=0");
+                    HilogPrint("QEMU: [ISO] Windows guest - ISO configured via SATA CDROM (AHCI): " + isoPath);
+
+                    // 同时保留 USB-storage 作为固件/兼容性兜底（只读重复打开同一 ISO）
+                    if (!xhciControllerAdded) {
+                        args.push_back("-device");
+                        args.push_back("qemu-xhci,id=xhci");
+                        xhciControllerAdded = true;
+                        HilogPrint("QEMU: [HW] XHCI controller added for USB fallback: qemu-xhci,id=xhci");
+                    }
+                    args.push_back("-drive");
+                    args.push_back("file=" + isoPath + ",if=none,format=raw,id=usbstick,readonly=on");
+                    args.push_back("-device");
+                    args.push_back("usb-storage,bus=xhci.0,drive=usbstick,bootindex=2");
+                    HilogPrint("QEMU: [ISO] Added USB-storage fallback for ISO (XHCI): " + isoPath);
+
+                    // 打开 boot menu 便于调试；启动优先级由 bootindex 控制
+                    args.push_back("-boot");
+                    args.push_back("menu=on");
+                } else {
+                    // Linux 等来宾：最稳路径是 virtio-blk-device（MMIO），固件通常自带 VirtioBlkDxe。
+                // 注意：不要使用 media=cdrom，避免块设备/光驱类型不匹配导致 fatal→exit(1)
+                args.push_back("-drive");
+                args.push_back("file=" + isoPath + ",if=none,format=raw,id=cd0,readonly=on");
+                args.push_back("-device");
+                args.push_back("virtio-blk-device,drive=cd0,bootindex=0");
+                HilogPrint("QEMU: [ISO] ISO configured via virtio-blk-device (MMIO): " + isoPath);
+
+                // 打开 boot menu 便于调试；启动优先级由 bootindex 控制
+                args.push_back("-boot");
+                args.push_back("menu=on");
+
+                // 兼容性兜底：再额外挂一个 USB-storage（有些固件对 USB 更友好）
+                // 注意：usb-storage 依赖 xhci.0 bus，因此必须先创建 qemu-xhci
+                if (!xhciControllerAdded) {
+                    args.push_back("-device");
+                    args.push_back("qemu-xhci,id=xhci");
+                    xhciControllerAdded = true;
+                    HilogPrint("QEMU: [HW] XHCI controller added for USB fallback: qemu-xhci,id=xhci");
+                }
+                args.push_back("-drive");
+                args.push_back("file=" + isoPath + ",if=none,format=raw,id=usbstick,readonly=on");
+                args.push_back("-device");
+                args.push_back("usb-storage,bus=xhci.0,drive=usbstick,bootindex=2");
+                HilogPrint("QEMU: [ISO] Added USB-storage fallback for ISO: " + isoPath);
+                }
+            } else {
+                // 其他架构/机型：保留传统 -cdrom 兼容路径
+                args.push_back("-cdrom");
+                args.push_back(isoPath);
+                // 有 ISO 时也尽量从光驱启动
+                args.push_back("-boot");
+                args.push_back("order=dc,menu=on");
+                HilogPrint("QEMU: [ISO] CDROM configured: " + isoPath);
+            }
         } else {
             // ISO 不可访问，跳过 CDROM 配置
             // 这样 QEMU 不会因为打开 ISO 失败而 abort
@@ -1907,16 +2435,30 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         HilogPrint("QEMU: [ISO] No ISO path configured, skipping CDROM");
     }
 
+    // install 模式下，为提高“默认从 ISO 引导”概率，把硬盘参数延后到 ISO 之后再追加
+    if (!deferredDiskArgs.empty()) {
+        if (deferDiskForInstallBoot) {
+            HilogPrint("QEMU: [BOOT] Deferring DISK args until after ISO for install boot priority");
+        }
+        args.insert(args.end(), deferredDiskArgs.begin(), deferredDiskArgs.end());
+    }
+
     // 启用 QEMU 自身的调试日志，方便定位崩溃原因
-    // 将 QEMU 的日志输出到 vmDir/qemu.log（与我们自己的日志路径一致）
-    if (!config.logPath.empty()) {
+    // 注意：不要把 QEMU -D 输出写到 config.logPath(qemu.log)，因为 QEMU 会打开并可能清空该文件，
+    // 这会把我们 WriteLog 记录的启动/退出信息覆盖掉，导致“导出 qemu.log 为空”。
+    if (!config.vmDir.empty()) {
+        const std::string qemuDebugLogPath = config.vmDir + "/qemu_debug.log";
         args.push_back("-D");
-        args.push_back(config.logPath);
-        // 只打开 guest_errors，避免日志过大
+        args.push_back(qemuDebugLogPath);
+        // 只打开少量关键项，避免日志过大：
+        // - guest_errors: 来宾侧错误（如未实现指令/设备）
+        // - cpu_reset:   捕获来宾触发重启（用于判断“转圈后重启/黑屏”到底是卡死还是 reboot）
         args.push_back("-d");
-        args.push_back("guest_errors");
-        HilogPrint(std::string("QEMU: [DEBUG] Logging enabled: ") + config.logPath);
-        WriteLog(config.logPath, "[DEBUG] QEMU debug log enabled with -d guest_errors");
+        args.push_back("guest_errors,cpu_reset");
+        HilogPrint(std::string("QEMU: [DEBUG] QEMU debug log enabled: ") + qemuDebugLogPath);
+        if (!config.logPath.empty()) {
+            WriteLog(config.logPath, "[DEBUG] QEMU debug log enabled: " + qemuDebugLogPath + " (-d guest_errors,cpu_reset)");
+        }
     }
     
     // ============================================================
@@ -2027,6 +2569,11 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         args.push_back("-serial");
         args.push_back("tcp:127.0.0.1:4321,server,nowait");
         HilogPrint("QEMU: [DEBUG] Serial console on tcp:127.0.0.1:4321");
+        // 额外兜底：把串口内容落盘，便于排查“卡在 TianoCore/UEFI 阶段”
+        // 注意：路径包含空格也没关系（argv 单独一项，不会被再次 split）
+        args.push_back("-serial");
+        args.push_back("file:" + config.vmDir + "/serial.log");
+        HilogPrint("QEMU: [DEBUG] Serial log file: " + config.vmDir + "/serial.log");
     } else {
         // 检查 keymaps 是否可用，决定是否启用 VNC
         bool vncAvailable = false;
@@ -2119,6 +2666,17 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
         // 这是 virt 机器上最常见/最兼容的图形设备路径之一。
         // ============================================================
         std::string effectiveDisplayDev = config.displayDevice;
+
+        // 安装阶段(aarch64)兜底：强制使用 ramfb，避免 EDK2/TianoCore 阶段
+        // virtio-gpu 无 GOP 导致 “Display Output Is Not Active”。
+        // 注意：这里只影响本次启动参数，不会修改用户持久化的显示设备偏好。
+        if (config.installMode && config.archType == "aarch64") {
+            if (effectiveDisplayDev != "ramfb") {
+                HilogPrint(std::string("QEMU: [HW] install(aarch64) force display device = ramfb (requested=") +
+                           (config.displayDevice.empty() ? "(empty)" : config.displayDevice) + ")");
+            }
+            effectiveDisplayDev = "ramfb";
+        }
         if (displayConfig != "none") {
             // 注意：UI 侧历史上默认会传 'none'，但这会导致 VNC 只能看到串口控制台（Parallel Console）。
             // 对于 aarch64 + VNC，我们把 'none' 也当作“未指定”，自动选择可用的图形设备。
@@ -2205,11 +2763,48 @@ static std::vector<std::string> BuildQemuArgs(const VMConfig& config) {
             HilogPrint("QEMU: [HW] No extra display device configured");
         }
 
+        // ============================================================
+        // 输入设备（关键修复点）
+        //
+        // 现象：VNC 能显示画面，但鼠标/键盘不工作。
+        // 原因：VNC 只是远程显示与“输入注入”的通道，但 QEMU 内必须有可接收输入事件的设备。
+        // 对于 aarch64 的 virt 机型，如果不显式添加 USB/virtio 输入设备，来宾侧可能完全收不到输入。
+        //
+        // 处理：在启用图形输出（displayConfig != "none"）且 machine=virt 时，默认挂载：
+        //   - qemu-xhci (USB 控制器)
+        //   - usb-tablet (绝对坐标指针，鼠标更顺滑)
+        //   - usb-kbd (键盘)
+        //
+        // 注意：仅对 virt 自动启用，避免对其他 machine 造成兼容性风险。
+        // ============================================================
+        if (displayConfig != "none") {
+            std::string machine = config.machine.empty() ? "virt" : config.machine;
+            if (machine == "virt") {
+                if (!xhciControllerAdded) {
+                    args.push_back("-device");
+                    args.push_back("qemu-xhci,id=xhci");
+                    xhciControllerAdded = true;
+                }
+                args.push_back("-device");
+                args.push_back("usb-tablet,bus=xhci.0");
+                args.push_back("-device");
+                args.push_back("usb-kbd,bus=xhci.0");
+                HilogPrint("QEMU: [HW] USB input enabled for VNC: qemu-xhci + usb-tablet + usb-kbd");
+            } else {
+                HilogPrint("QEMU: [HW] NOTE: USB input auto-config is only enabled for machine=virt; current machine=" +
+                           machine + " (VNC input may be unavailable unless you add input devices manually)");
+            }
+        }
+
         // 串口绑定到 TCP socket，用户可以通过网络连接进行交互
         // 格式：telnet localhost 4321
         args.push_back("-serial");
         args.push_back("tcp:127.0.0.1:4321,server,nowait");
         HilogPrint("QEMU: [DEBUG] Serial console on tcp:127.0.0.1:4321");
+        // 同时把串口落盘，排查 UEFI/Windows 引导卡点
+        args.push_back("-serial");
+        args.push_back("file:" + config.vmDir + "/serial.log");
+        HilogPrint("QEMU: [DEBUG] Serial log file: " + config.vmDir + "/serial.log");
     }
 
     // 声卡配置
@@ -2352,22 +2947,24 @@ static void WriteLog(const std::string& logPath, const std::string& message) {
 }
 
 // 动态加载 QEMU 核心库并调用其 API
-// QEMU 共享库导出的 API：
-//   void qemu_init(int argc, char **argv) - 初始化 QEMU
-//   int qemu_main_loop(void) - 运行主循环
-//   void qemu_cleanup(void) - 清理资源
-//   void qemu_system_shutdown_request(int reason) - 请求关闭
-// 类型定义（与 qemu_wrapper.h 中的全局变量兼容）
-using qemu_main_loop_fn = int(*)(void);
-using qemu_cleanup_fn = void(*)(void);
-using qemu_shutdown_fn = void(*)(int);
+//
+// 注意：在 OHOS 侧，我们用 dlopen + dlsym 访问 QEMU 核心入口。
+// 但 QEMU 的 qemu_init/qemu_main_loop/qemu_cleanup 等符号可能不在 dynsym（nm 可见，但 nm -D 看不到），
+// 因此 QEMU 核心库会额外导出一组 qemu_hmos_* shim 符号供我们 fallback。
+using qemu_init_fn = void (*)(int argc, char **argv);
+using qemu_main_loop_fn = int (*)(void);
+using qemu_cleanup_fn = void (*)(int status);
+using qemu_shutdown_fn = void (*)(int reason);
+using qemu_hmos_get_last_exit_code_fn = int (*)(void);
+using qemu_hmos_clear_last_exit_code_fn = void (*)(void);
 
-// g_qemu_core_init 已在 qemu_wrapper.h 中声明为 extern
-// int (*g_qemu_core_init)(int argc, char** argv);
-static void* g_qemu_core_handle = nullptr;
+static void *g_qemu_core_handle = nullptr;
+static qemu_init_fn g_qemu_core_qemu_init = nullptr;
 static qemu_main_loop_fn g_qemu_core_main_loop = nullptr;
 static qemu_cleanup_fn g_qemu_core_cleanup = nullptr;
 static qemu_shutdown_fn g_qemu_core_shutdown = nullptr;
+static qemu_hmos_get_last_exit_code_fn g_qemu_core_get_last_exit_code = nullptr;
+static qemu_hmos_clear_last_exit_code_fn g_qemu_core_clear_last_exit_code = nullptr;
 static bool g_qemu_initialized = false;
 
 // 读取 dlerror() 的安全封装，避免重复调用导致 nullptr
@@ -2485,7 +3082,7 @@ static void EnsureQemuCoreLoaded(const std::string& logPath, const std::string& 
     std::string libName = GetQemuLibName(archType);
     
     // 如果已经加载了相同架构的库，直接返回
-    if (g_qemu_core_init && g_loaded_arch == archType) {
+    if (g_qemu_core_qemu_init && g_loaded_arch == archType) {
         HilogPrint("QEMU: Library already loaded for arch: " + archType);
         return;
     }
@@ -2496,10 +3093,12 @@ static void EnsureQemuCoreLoaded(const std::string& logPath, const std::string& 
         WriteLog(logPath, "[QEMU] Switching architecture from " + g_loaded_arch + " to " + archType);
         
         // 清理之前加载的函数指针
-        g_qemu_core_init = nullptr;
+        g_qemu_core_qemu_init = nullptr;
         g_qemu_core_main_loop = nullptr;
         g_qemu_core_cleanup = nullptr;
         g_qemu_core_shutdown = nullptr;
+        g_qemu_core_get_last_exit_code = nullptr;
+        g_qemu_core_clear_last_exit_code = nullptr;
         
         // 卸载之前的库
         dlclose(g_qemu_core_handle);
@@ -2507,7 +3106,7 @@ static void EnsureQemuCoreLoaded(const std::string& logPath, const std::string& 
         g_loaded_arch.clear();
     }
     
-    if (g_qemu_core_init) return;
+    if (g_qemu_core_qemu_init) return;
     
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_LOAD", "========== 开始加载 %s ==========", libName.c_str());
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_LOAD", "目标架构: %s", archType.c_str());
@@ -2590,32 +3189,54 @@ static void EnsureQemuCoreLoaded(const std::string& logPath, const std::string& 
     dlerror();
     
     // 加载 QEMU API 符号 - 逐个加载并检查
-    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> 查找 qemu_init <<<");
-    g_qemu_core_init = reinterpret_cast<int(*)(int, char**)>(dlsym(g_qemu_core_handle, "qemu_init"));
-    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> qemu_init = %p <<<", (void*)g_qemu_core_init);
+    // 说明：qemu_init/qemu_main_loop/qemu_cleanup 可能不在 dynsym，
+    //      优先查原始符号，失败则回退到 qemu_hmos_* shim。
+    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> 查找 qemu_init (or shim) <<<");
+    // 关键：在 OHOS 上必须优先使用 shim（它在 QEMU core so 内部拦截 exit(1)，避免 appspawn SIGABRT）
+    g_qemu_core_qemu_init = reinterpret_cast<qemu_init_fn>(dlsym(g_qemu_core_handle, "qemu_hmos_qemu_init"));
+    if (!g_qemu_core_qemu_init) {
+        g_qemu_core_qemu_init = reinterpret_cast<qemu_init_fn>(dlsym(g_qemu_core_handle, "qemu_init"));
+    }
+    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> qemu_init = %p <<<", (void*)g_qemu_core_qemu_init);
     
-    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> 查找 qemu_main_loop <<<");
+    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> 查找 qemu_main_loop (or shim) <<<");
+    g_qemu_core_main_loop = reinterpret_cast<qemu_main_loop_fn>(dlsym(g_qemu_core_handle, "qemu_hmos_qemu_main_loop"));
+    if (!g_qemu_core_main_loop) {
     g_qemu_core_main_loop = reinterpret_cast<qemu_main_loop_fn>(dlsym(g_qemu_core_handle, "qemu_main_loop"));
+    }
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> qemu_main_loop = %p <<<", (void*)g_qemu_core_main_loop);
     
-    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> 查找 qemu_cleanup <<<");
+    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> 查找 qemu_cleanup (or shim) <<<");
+    g_qemu_core_cleanup = reinterpret_cast<qemu_cleanup_fn>(dlsym(g_qemu_core_handle, "qemu_hmos_qemu_cleanup"));
+    if (!g_qemu_core_cleanup) {
     g_qemu_core_cleanup = reinterpret_cast<qemu_cleanup_fn>(dlsym(g_qemu_core_handle, "qemu_cleanup"));
+    }
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> qemu_cleanup = %p <<<", (void*)g_qemu_core_cleanup);
     
-    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> 查找 qemu_system_shutdown_request <<<");
+    OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> 查找 qemu_system_shutdown_request (or shim) <<<");
+    g_qemu_core_shutdown =
+        reinterpret_cast<qemu_shutdown_fn>(dlsym(g_qemu_core_handle, "qemu_hmos_qemu_system_shutdown_request"));
+    if (!g_qemu_core_shutdown) {
     g_qemu_core_shutdown = reinterpret_cast<qemu_shutdown_fn>(dlsym(g_qemu_core_handle, "qemu_system_shutdown_request"));
+    }
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> qemu_system_shutdown_request = %p <<<", (void*)g_qemu_core_shutdown);
+
+    // 可选：从 QEMU core shim 里读取 “是否触发 exit(1)” 的信息
+    g_qemu_core_get_last_exit_code =
+        reinterpret_cast<qemu_hmos_get_last_exit_code_fn>(dlsym(g_qemu_core_handle, "qemu_hmos_get_last_exit_code"));
+    g_qemu_core_clear_last_exit_code =
+        reinterpret_cast<qemu_hmos_clear_last_exit_code_fn>(dlsym(g_qemu_core_handle, "qemu_hmos_clear_last_exit_code"));
     
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_SYM", ">>> dlsym 完成 <<<");
 
     // 添加详细的调试日志
-    if (!g_qemu_core_init) {
+    if (!g_qemu_core_qemu_init) {
         std::string err = SafeDlError();
-        WriteLog(logPath, std::string("[QEMU] dlsym qemu_init failed: ") + err);
-        HilogPrint(std::string("QEMU: dlsym qemu_init failed: ") + err);
+        WriteLog(logPath, std::string("[QEMU] dlsym qemu_init (and shim) failed: ") + err);
+        HilogPrint(std::string("QEMU: dlsym qemu_init (and shim) failed: ") + err);
     } else {
-        WriteLog(logPath, "[QEMU] Successfully loaded qemu_init symbol");
-        HilogPrint("QEMU: Successfully loaded qemu_init symbol");
+        WriteLog(logPath, "[QEMU] Successfully loaded qemu_init symbol (or shim)");
+        HilogPrint("QEMU: Successfully loaded qemu_init symbol (or shim)");
     }
 
     if (!g_qemu_core_main_loop) {
@@ -2654,7 +3275,7 @@ static int QemuCoreMainOrStub(int argc, char** argv)
     // 使用全局变量中保存的架构类型
     std::string archType = g_current_arch_type.empty() ? "aarch64" : g_current_arch_type;
     EnsureQemuCoreLoaded(logPath, archType);
-    if (g_qemu_core_init && g_qemu_core_main_loop) {
+    if (g_qemu_core_qemu_init && g_qemu_core_main_loop) {
         WriteLog(logPath, "[QEMU] Core library loaded, initializing QEMU...");
         HilogPrint("QEMU: Core library loaded successfully");
         
@@ -2673,17 +3294,8 @@ static int QemuCoreMainOrStub(int argc, char** argv)
         fflush(stdout);
         fflush(stderr);
         
-        // 设置信号处理以捕获崩溃
-        struct sigaction sa_old, sa_new;
-        memset(&sa_new, 0, sizeof(sa_new));
-        sa_new.sa_handler = [](int sig) {
-            OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_CRASH", 
-                ">>> QEMU 崩溃！信号: %d <<<", sig);
-            // 不要在这里调用 exit()，让系统处理
-        };
-        sigaction(SIGSEGV, &sa_new, &sa_old);
-        sigaction(SIGABRT, &sa_new, &sa_old);
-        sigaction(SIGBUS, &sa_new, &sa_old);
+        // 注意：不要在这里安装自定义 signal handler（尤其不要在 handler 里调用日志/分配内存/锁），
+        // 这会在某些设备/场景下造成二次崩溃或死锁，反而让“闪退”更难定位。
         
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_INIT", 
             ">>> 即将调用 qemu_init，参数数量: %d <<<", argc);
@@ -2706,13 +3318,41 @@ static int QemuCoreMainOrStub(int argc, char** argv)
                 "[%d] = %s", i, argv[i]);
         }
         
-        // 直接使用用户配置
-        g_qemu_core_init(argc, argv);
-        
-        // 恢复信号处理
-        sigaction(SIGSEGV, &sa_old, nullptr);
-        sigaction(SIGABRT, &sa_old, nullptr);
-        sigaction(SIGBUS, &sa_old, nullptr);
+        // 关键修复：拦截 QEMU 内部的 exit(1)，避免被 appspawn 杀进程
+        g_tls_in_qemu = true;
+        g_tls_exit_code = 0;
+        int jumped = setjmp(g_tls_exit_jmp);
+        if (jumped != 0) {
+            int code = g_tls_exit_code;
+            g_tls_in_qemu = false;
+
+            std::string msg = "QEMU called exit(" + std::to_string(code) + ") during init/mainloop; converted to failure to avoid appspawn crash";
+            HilogPrint("QEMU: [FATAL] " + msg);
+            WriteLog(logPath, "[QEMU] [FATAL] " + msg);
+            return (code == 0) ? -1 : code;
+        }
+
+        // 如果 QEMU core 内部 shim 支持记录 exit code，则先清空一次
+        if (g_qemu_core_clear_last_exit_code) {
+            g_qemu_core_clear_last_exit_code();
+        }
+
+        // 直接使用用户配置（如果 QEMU 内部调用 exit，会被上面的 setjmp 捕获）
+        g_qemu_core_qemu_init(argc, argv);
+
+        // 关键：在 OHOS 上，QEMU 有可能在 qemu_init 里直接 exit(1)；我们用 core shim 兜底捕获后，
+        // qemu_init 会“正常返回”。因此这里必须额外检查一次 exit_code。
+        if (g_qemu_core_get_last_exit_code) {
+            int coreExit = g_qemu_core_get_last_exit_code();
+            if (coreExit != 0) {
+        g_tls_in_qemu = false;
+                std::string msg =
+                    "QEMU core requested exit(" + std::to_string(coreExit) + ") during qemu_init; converted to failure to avoid appspawn crash";
+                HilogPrint("QEMU: [FATAL] " + msg);
+                WriteLog(logPath, "[QEMU] [FATAL] " + msg);
+                return coreExit;
+            }
+        }
         
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_INIT", 
             ">>> qemu_init 返回成功！<<<");
@@ -2730,10 +3370,11 @@ static int QemuCoreMainOrStub(int argc, char** argv)
         if (g_qemu_core_cleanup) {
             HilogPrint("QEMU: Calling qemu_cleanup...");
             WriteLog(logPath, "[QEMU] Calling qemu_cleanup...");
-            g_qemu_core_cleanup();
+            g_qemu_core_cleanup(result);
             WriteLog(logPath, "[QEMU] qemu_cleanup completed");
         }
         g_qemu_initialized = false;
+        g_tls_in_qemu = false;
         
         return result;
     }
@@ -2804,7 +3445,8 @@ static napi_value GetVersion(napi_env env, napi_callback_info info) {
 static napi_value EnableJit(napi_env env, napi_callback_info info) {
     (void)info; // unused
     napi_value out;
-    napi_get_boolean(env, enableJit(), &out);
+    // 兼容旧接口：不再通过 syscall 启用/探测 JIT
+    napi_get_boolean(env, false, &out);
     return out;
 }
 
@@ -2813,28 +3455,6 @@ static napi_value KvmSupported(napi_env env, napi_callback_info info) {
     napi_value out;
     napi_get_boolean(env, kvmSupported(), &out);
     return out;
-}
-
-// 辅助函数：创建并返回拒绝的 Promise
-static napi_value CreateRejectedPromise(napi_env env, VmStartError error, const std::string& message, const std::string& vmName) {
-    napi_value promise;
-    napi_deferred deferred;
-    napi_create_promise(env, &deferred, &promise);
-    
-    napi_value errorObj;
-    napi_create_object(env, &errorObj);
-    
-    napi_value codeVal, messageVal, vmNameVal;
-    napi_create_int32(env, static_cast<int>(error), &codeVal);
-    napi_create_string_utf8(env, message.c_str(), NAPI_AUTO_LENGTH, &messageVal);
-    napi_create_string_utf8(env, vmName.c_str(), NAPI_AUTO_LENGTH, &vmNameVal);
-    
-    napi_set_named_property(env, errorObj, "code", codeVal);
-    napi_set_named_property(env, errorObj, "message", messageVal);
-    napi_set_named_property(env, errorObj, "vmName", vmNameVal);
-    
-    napi_reject_deferred(env, deferred, errorObj);
-    return promise;
 }
 
 static napi_value StartVm(napi_env env, napi_callback_info info) {
@@ -2847,20 +3467,20 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
     napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
     
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_START", ">>> 获取参数成功, argc=%{public}zu <<<", argc);
-    
-    // 返回 Promise
-    napi_value promise;
-    napi_deferred deferred;
-    napi_create_promise(env, &deferred, &promise);
-    
+
+    napi_value retBool;
+    napi_get_boolean(env, false, &retBool);
+
     if (argc < 1) {
-        return CreateRejectedPromise(env, VmStartError::CONFIG_FAILED, "No config provided", "");
+        napi_throw_error(env, nullptr, "No config provided");
+        return retBool;
     }
     
     bool ok = false;
     VMConfig config = ParseVMConfig(env, argv[0], ok);
     if (!ok) {
-        return CreateRejectedPromise(env, VmStartError::CONFIG_FAILED, "Invalid config", "");
+        napi_throw_error(env, nullptr, "Invalid config");
+        return retBool;
     }
     
     std::lock_guard<std::mutex> lock(g_vmMutex);
@@ -2868,7 +3488,8 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
     // 检查VM是否已在运行
     if (g_vmRunning.find(config.name) != g_vmRunning.end() && g_vmRunning[config.name]->load()) {
         HilogPrint("QEMU: VM '" + config.name + "' is already running");
-        return CreateRejectedPromise(env, VmStartError::ALREADY_RUNNING, "VM is already running", config.name);
+        napi_throw_error(env, nullptr, "VM is already running");
+        return retBool;
     }
     
     HilogPrint("QEMU: Starting VM '" + config.name + "' with accel=" + config.accel + " display=" + config.display);
@@ -2876,14 +3497,16 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
     // 创建VM目录结构
     if (!CreateVMDirectory(config.name)) {
         WriteLog(config.logPath, "Failed to create VM directory for: " + config.name);
-        return CreateRejectedPromise(env, VmStartError::CONFIG_FAILED, "Failed to create VM directory", config.name);
+        napi_throw_error(env, nullptr, "Failed to create VM directory");
+        return retBool;
     }
     WriteLog(config.logPath, "VM directory created for: " + config.name);
     
     // 创建VM配置文件
     if (!CreateVMConfigFile(config)) {
         WriteLog(config.logPath, "Failed to create VM config file for: " + config.name);
-        return CreateRejectedPromise(env, VmStartError::CONFIG_FAILED, "Failed to create VM config file", config.name);
+        napi_throw_error(env, nullptr, "Failed to create VM config file");
+        return retBool;
     }
     WriteLog(config.logPath, "VM config file created for: " + config.name);
 
@@ -2903,9 +3526,22 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
         if (!CreateVirtualDisk(config.diskPath, config.diskSizeGB)) {
             WriteLog(config.logPath, "Failed to create virtual disk");
             UpdateVMStatus(config.name, "failed");
-            return CreateRejectedPromise(env, VmStartError::DISK_CREATE_FAILED, "Failed to create virtual disk", config.name);
+            napi_throw_error(env, nullptr, "Failed to create virtual disk");
+            return retBool;
         }
         WriteLog(config.logPath, "Virtual disk created successfully");
+    }
+
+    // 启动前关键预检：避免 QEMU 在解析 -drive 时因 qcow2 镜像损坏直接 exit(1) → appspawn SIGABRT
+    // - raw disk：无需 qcow2 预检
+    // - qcow2 disk：必须有有效 refcount table，否则视为损坏（常见于旧版内置 qcow2 伪实现生成的镜像）
+    if (FileExists(config.diskPath) && IsQcow2FileQuick(config.diskPath)) {
+        if (!PreflightQcow2RefcountTable(config.diskPath)) {
+            UpdateVMStatus(config.name, "failed");
+            napi_throw_error(env, nullptr,
+                             "Disk image is corrupt (qcow2 refcount table invalid). 请到「磁盘空间管理 → 新建/覆盖」重建磁盘后再启动。");
+            return retBool;
+        }
     }
     
     // ========== 打印用户选择的设备配置 ==========
@@ -2947,37 +3583,14 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
     std::string archType = config.archType.empty() ? "aarch64" : config.archType;
     WriteLog(config.logPath, "[QEMU] Loading QEMU core for architecture: " + archType);
     EnsureQemuCoreLoaded(config.logPath, archType);
-    if (!g_qemu_core_init || !g_qemu_core_main_loop) {
+    if (!g_qemu_core_qemu_init || !g_qemu_core_main_loop) {
         WriteLog(config.logPath, "[QEMU] Core library not loaded. Aborting start.");
         std::string libName = GetQemuLibName(archType);
         WriteLog(config.logPath, "[QEMU] Please ensure " + libName + " is properly installed in the app bundle.");
         UpdateVMStatus(config.name, "failed");
-        return CreateRejectedPromise(env, VmStartError::CORE_LIB_MISSING, 
-            libName + " not found or failed to load. Please check app installation.", config.name);
+        napi_throw_error(env, nullptr, (libName + " not found or failed to load. Please check app installation.").c_str());
+        return retBool;
     }
-
-    // 创建 threadsafe function 用于回调
-    napi_value resourceName;
-    napi_create_string_utf8(env, "VmStartCallback", NAPI_AUTO_LENGTH, &resourceName);
-    
-    napi_threadsafe_function tsfn;
-    napi_status status = napi_create_threadsafe_function(
-        env, nullptr, nullptr, resourceName,
-        0, 1, nullptr, nullptr, nullptr,
-        VmStartCallbackOnMainThread, &tsfn);
-    
-    if (status != napi_ok) {
-        WriteLog(config.logPath, "[QEMU] Failed to create threadsafe function");
-        UpdateVMStatus(config.name, "failed");
-        return CreateRejectedPromise(env, VmStartError::INIT_FAILED, "Failed to create callback", config.name);
-    }
-    
-    // 存储 threadsafe function 和 deferred
-    VmStartContext ctx;
-    ctx.tsfn = tsfn;
-    ctx.deferred = deferred;
-    ctx.env = env;
-    g_vmStartCallbacks[config.name] = ctx;
 
     // 启动VM线程
     if (g_vmRunning.find(config.name) == g_vmRunning.end()) {
@@ -2997,8 +3610,8 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
             cargs.push_back(const_cast<char*>(s.c_str()));
         }
 
-        // 在进入 QEMU 主循环前启动 stdout/stderr/stdin 捕获
-        g_logCapture = std::make_unique<CaptureQemuOutput>();
+        // 在进入 QEMU 主循环前启动 stdout/stderr/stdin 捕获（并把 stdout/stderr 落盘到 VM 目录）
+        g_logCapture = std::make_unique<CaptureQemuOutput>(config.vmDir);
 
         WriteLog(config.logPath, "VM thread started");
         // 这里也通过 Hilog 打一条，方便在设备上直接看到 VM 主线程已启动
@@ -3018,10 +3631,13 @@ static napi_value StartVm(napi_env env, napi_callback_info info) {
         std::string errorMsg = (exitCode == 0) ? "" : "VM exited with code " + std::to_string(exitCode);
         NotifyVmStartResult(vmName, error, exitCode, errorMsg);
     });
-    
-    // 返回 Promise（将在 VM 退出时 resolve/reject）
-    return promise;
+
+    napi_get_boolean(env, true, &retBool);
+    return retBool;
 }
+
+// Forward declaration: used by StopVm() background watchdog thread.
+static std::string QueryVmStatusViaQmp(const std::string& vmName);
 
 static napi_value StopVm(napi_env env, napi_callback_info info) {
     size_t argc = 1;
@@ -3046,22 +3662,248 @@ static napi_value StopVm(napi_env env, napi_callback_info info) {
     if (g_vmRunning.find(vmName) != g_vmRunning.end() && g_vmRunning[vmName]->load()) {
         // 更新VM状态为停止中
         UpdateVMStatus(vmName, "stopping");
-        
-        qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST);
-        if (g_vmThreads[vmName].joinable()) {
-            g_vmThreads[vmName].join();
-        }
-        g_vmRunning[vmName]->store(false);
-        
-        // 更新VM状态为已停止
-        UpdateVMStatus(vmName, "stopped");
-        
+
         std::string logPath = "/data/storage/el2/base/haps/entry/files/vms/" + vmName + "/qemu.log";
-        WriteLog(logPath, "VM stopped by user request");
+        WriteLog(logPath, "StopVm requested by user (non-blocking)");
+
+        // 先发“优雅关机”请求（不会阻塞）
+        qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST);
+
+        // 关键修复：不要在 NAPI 调用里 join VM 线程（会卡死 UI）
+        // 把 join 放到后台线程里做；超时则通过 QMP 发送 quit 强制退出。
+        std::thread vmThread;
+        auto itTh = g_vmThreads.find(vmName);
+        if (itTh != g_vmThreads.end()) {
+            vmThread = std::move(itTh->second);
+            g_vmThreads.erase(itTh);
+        }
+
+        // QMP: send {"execute":"quit"} to force exit
+        auto sendQmpQuit = [](const std::string& name) -> bool {
+            std::string socketPath = "/data/storage/el2/base/haps/entry/files/vms/" + name + "/qmp.sock";
+            int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+            if (sock < 0) return false;
+
+            struct timeval tv;
+            tv.tv_sec = 2;
+            tv.tv_usec = 0;
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+            struct sockaddr_un addr;
+            memset(&addr, 0, sizeof(addr));
+            addr.sun_family = AF_UNIX;
+            strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
+
+            if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+                close(sock);
+                return false;
+            }
+
+            char buffer[4096];
+            ssize_t n = recv(sock, buffer, sizeof(buffer) - 1, 0); // greeting
+            if (n <= 0) {
+                close(sock);
+                return false;
+            }
+            buffer[n] = '\0';
+
+            const char* capCmd = "{\"execute\": \"qmp_capabilities\"}\n";
+            if (send(sock, capCmd, strlen(capCmd), 0) <= 0) {
+                close(sock);
+                return false;
+            }
+            n = recv(sock, buffer, sizeof(buffer) - 1, 0); // capabilities response (ignore content)
+            (void)n;
+
+            const char* quitCmd = "{\"execute\": \"quit\"}\n";
+            (void)send(sock, quitCmd, strlen(quitCmd), 0);
+            close(sock);
+            return true;
+        };
+
+        // 后台等待退出/强制退出
+        std::thread([vmName, logPath, vmThread = std::move(vmThread), sendQmpQuit]() mutable {
+            // 等待一小段时间让 guest 自己关机
+            const auto start = std::chrono::steady_clock::now();
+            bool forced = false;
+
+            while (true) {
+                // 这里不加全局锁：仅通过 QMP 看状态（失败则认为仍需等待）
+                std::string st = QueryVmStatusViaQmp(vmName);
+                if (st == "stopped" || st == "shutdown") {
+                    break;
+                }
+
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - start).count();
+
+                if (!forced && elapsed >= 5) {
+                    // 超时：强制退出
+                    forced = true;
+                    bool ok = sendQmpQuit(vmName);
+                    WriteLog(logPath, std::string("[STOP] Timeout reached, sent QMP quit: ") + (ok ? "ok" : "failed"));
+                    HilogPrint(std::string("QEMU: [STOP] Timeout, QMP quit sent: ") + (ok ? "ok" : "failed"));
+                }
+
+                if (elapsed >= 12) {
+                    // 再给一点宽限；避免无休止等待
+                    WriteLog(logPath, "[STOP] Force stop watchdog reached 12s, giving up waiting (thread may still exit later)");
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            }
+
+            if (vmThread.joinable()) {
+                vmThread.join();
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(g_vmMutex);
+                auto it = g_vmRunning.find(vmName);
+                if (it != g_vmRunning.end() && it->second) {
+                    it->second->store(false);
+                }
+            }
+            UpdateVMStatus(vmName, "stopped");
+            WriteLog(logPath, "[STOP] VM stopped (non-blocking stop handler done)");
+        }).detach();
     }
     
     napi_get_boolean(env, true, &result);
     return result;
+}
+
+// ============================================================
+// 磁盘工具：qemu-img 创建/扩容（以及内置 QCOW2 创建兜底）
+// 仅允许在 VM 停止时使用（UI 层也应拦截，但 Native 侧再做一次保护）
+// ============================================================
+
+static bool IsVmRunningLocked(const std::string& vmName) {
+    auto it = g_vmRunning.find(vmName);
+    if (it == g_vmRunning.end() || !it->second) return false;
+    return it->second->load();
+}
+
+// qemuImgCreateDisk(vmName: string, sizeGB: number, overwrite?: boolean): boolean
+static napi_value QemuImgCreateDisk(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value argv[3];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+    napi_value out;
+    napi_get_boolean(env, false, &out);
+
+    if (argc < 2) return out;
+
+    std::string vmName;
+    if (!NapiGetStringUtf8(env, argv[0], vmName) || vmName.empty()) return out;
+
+    int32_t sizeGB = 0;
+    napi_get_value_int32(env, argv[1], &sizeGB);
+    if (sizeGB <= 0) return out;
+
+    bool overwrite = false;
+    if (argc >= 3) {
+        napi_get_value_bool(env, argv[2], &overwrite);
+    }
+
+    std::lock_guard<std::mutex> lock(g_vmMutex);
+    if (IsVmRunningLocked(vmName)) {
+        HilogPrint("QEMU: [DISK] Refuse create disk while VM running: " + vmName);
+        return out;
+    }
+
+    const std::string vmDir = "/data/storage/el2/base/haps/entry/files/vms/" + vmName;
+    const std::string diskPath = vmDir + "/disk.qcow2";
+
+    if (!overwrite && FileExists(diskPath)) {
+        HilogPrint("QEMU: [DISK] disk already exists, overwrite=false: " + diskPath);
+        napi_get_boolean(env, true, &out);
+        return out;
+    }
+
+    // 确保目录存在
+    if (!CreateDirectories(vmDir)) {
+        HilogPrint("QEMU: [DISK] failed to create vmDir: " + vmDir);
+        return out;
+    }
+
+    // 走内置 QCOW2 创建（不依赖外部工具）
+    if (!CreateVirtualDisk(diskPath, sizeGB)) {
+        HilogPrint("QEMU: [DISK] CreateVirtualDisk failed: " + diskPath);
+        return out;
+    }
+
+    HilogPrint("QEMU: [DISK] created disk: " + diskPath + " (" + std::to_string(sizeGB) + "GB)");
+    napi_get_boolean(env, true, &out);
+    return out;
+}
+
+// qemuImgResizeDisk(vmName: string, newSizeGB: number): boolean
+static napi_value QemuImgResizeDisk(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value argv[2];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+    napi_value out;
+    napi_get_boolean(env, false, &out);
+
+    if (argc < 2) return out;
+
+    std::string vmName;
+    if (!NapiGetStringUtf8(env, argv[0], vmName) || vmName.empty()) return out;
+
+    int32_t newSizeGB = 0;
+    napi_get_value_int32(env, argv[1], &newSizeGB);
+    if (newSizeGB <= 0) return out;
+
+    std::lock_guard<std::mutex> lock(g_vmMutex);
+    if (IsVmRunningLocked(vmName)) {
+        HilogPrint("QEMU: [DISK] Refuse resize disk while VM running: " + vmName);
+        return out;
+    }
+
+    const std::string vmDir = "/data/storage/el2/base/haps/entry/files/vms/" + vmName;
+    const std::string diskPath = vmDir + "/disk.qcow2";
+
+    if (!FileExists(diskPath)) {
+        HilogPrint("QEMU: [DISK] disk not found: " + diskPath);
+        return out;
+    }
+
+    // 优先走 qemu-img（符合你的诉求：用 qemu-img 扩容）
+    // 注意：如果运行环境缺少 qemu-img，这里会失败，UI 会提示用户。
+    std::string cmd = "qemu-img resize \"" + diskPath + "\" " + std::to_string(newSizeGB) + "G";
+    HilogPrint("QEMU: [DISK] exec: " + cmd);
+    int rc = system(cmd.c_str());
+    if (rc != 0) {
+        HilogPrint("QEMU: [DISK] qemu-img resize failed rc=" + std::to_string(rc));
+        // 兜底：raw 磁盘可以直接用 ftruncate 扩容/缩小；qcow2 必须依赖 qemu-img
+        if (!IsQcow2FileQuick(diskPath)) {
+            const uint64_t newSizeBytes = static_cast<uint64_t>(newSizeGB) * 1024ULL * 1024ULL * 1024ULL;
+            int fd = open(diskPath.c_str(), O_RDWR);
+            if (fd < 0) {
+                HilogPrint("QEMU: [DISK] raw fallback resize open failed errno=" + std::to_string(errno));
+                return out;
+            }
+            int trc = ftruncate(fd, static_cast<off_t>(newSizeBytes));
+            close(fd);
+            if (trc != 0) {
+                HilogPrint("QEMU: [DISK] raw fallback ftruncate failed errno=" + std::to_string(errno));
+                return out;
+            }
+            HilogPrint("QEMU: [DISK] raw fallback resized disk to " + std::to_string(newSizeGB) + "GB: " + diskPath);
+            napi_get_boolean(env, true, &out);
+            return out;
+        }
+
+        return out;
+    }
+
+    HilogPrint("QEMU: [DISK] resized disk to " + std::to_string(newSizeGB) + "GB: " + diskPath);
+    napi_get_boolean(env, true, &out);
+    return out;
 }
 
 // 获取VM实时日志
@@ -3560,6 +4402,57 @@ static napi_value GetRdpStatus(napi_env env, napi_callback_info info) {
     return result;
 }
 
+// 发送 RDP 键盘事件（供 ArkTS 虚拟键盘使用）
+// key: 目前沿用 X11 keysym（与 VNC 一致），后续如需可在 native 内做 scanCode 映射
+static napi_value RdpSendKey(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value argv[3];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+    if (argc < 3) {
+        napi_throw_error(env, nullptr, "Missing parameters: clientId, key, down");
+        return nullptr;
+    }
+
+    std::string client_id;
+    if (!NapiGetStringUtf8(env, argv[0], client_id)) {
+        napi_throw_error(env, nullptr, "Failed to get client ID");
+        return nullptr;
+    }
+
+    int32_t key = 0;
+    if (napi_get_value_int32(env, argv[1], &key) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to get key");
+        return nullptr;
+    }
+
+    bool down = false;
+    if (napi_get_value_bool(env, argv[2], &down) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to get down");
+        return nullptr;
+    }
+
+    rdp_client_handle_t client = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_rdp_mutex);
+        auto it = g_rdp_clients.find(client_id);
+        if (it != g_rdp_clients.end()) {
+            client = it->second;
+        }
+    }
+
+    if (!client) {
+        napi_throw_error(env, nullptr, "RDP client not found");
+        return nullptr;
+    }
+
+    int ret = rdp_client_send_keyboard_event(client, static_cast<int>(key), down ? 1 : 0);
+
+    napi_value result;
+    napi_create_int32(env, ret, &result);
+    return result;
+}
+
 // 检测核心库存在性（真实检测，不加载到全局）
 // ============ 诊断工具：追踪 dlopen 崩溃位置 ============
 // 这个函数会详细记录 dlopen 过程中的每一步
@@ -3575,7 +4468,7 @@ static napi_value CheckCoreLib(napi_env env, napi_callback_info info) {
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_DIAG", "========== CheckCoreLib 开始 ==========");
     
     // 已加载到全局？
-    bool alreadyLoaded = g_qemu_core_init != nullptr && g_qemu_core_main_loop != nullptr;
+    bool alreadyLoaded = g_qemu_core_qemu_init != nullptr && g_qemu_core_main_loop != nullptr;
     set_bool("loaded", alreadyLoaded);
     OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_DOMAIN, "QEMU_DIAG", "步骤0: 检查是否已加载 = %s", alreadyLoaded ? "是" : "否");
 
@@ -3757,6 +4650,34 @@ struct VncSession {
 #ifdef LIBVNC_HAVE_CLIENT
     rfbClient* client = nullptr;
 #endif
+    // 保护 client/worker/render_worker 等生命周期对象（仅短时间持锁）
+    std::mutex lifecycle_mtx;
+#ifdef LIBVNC_HAVE_CLIENT
+    // 连接/断开必须避免阻塞 UI 线程：把耗时的 rfbClientConnect/rfbClientInitialise 放到后台线程
+    std::atomic<bool> connecting{false};
+    std::atomic<uint32_t> connect_seq{0};
+#endif
+#if defined(__OHOS__)
+    // XComponent 直绘：NativeWindow 必须在同一线程内创建/使用/销毁，避免 FlushBuffer 崩溃
+    std::thread render_worker;
+    std::atomic<bool> render_running{false};
+    std::condition_variable render_cv;
+    std::mutex render_cv_mtx;
+
+    // 由 ArkTS/NAPI 更新：仅写“期望的 surface”，由 render 线程创建/销毁 window
+    std::mutex surface_mtx;
+    uint64_t pending_surface_id = 0;
+    int pending_surface_w = 0;
+    int pending_surface_h = 0;
+    std::atomic<bool> surface_dirty{false};
+
+    // 由 VNC 回调更新：最新 BGRA 帧（render 线程消费并 flush）
+    std::mutex frame_mtx;
+    int fb_w = 0;
+    int fb_h = 0;
+    std::vector<uint8_t> fb_bgra;
+    std::atomic<bool> frame_dirty{false};
+#endif
     std::thread worker;
     std::atomic<bool> running;  // 在构造函数中初始化
     int width = 0;
@@ -3770,6 +4691,189 @@ struct VncSession {
 };
 
 static std::map<int, std::unique_ptr<VncSession>> g_vnc_sessions;
+#ifdef LIBVNC_HAVE_CLIENT
+// libvncclient 的 clientData 需要一个“唯一 tag”作为 key
+static int g_vnc_clientdata_tag = 0;
+#endif
+
+#if defined(__OHOS__)
+static void VncRenderWorker(VncSession* s)
+{
+    if (!s) return;
+
+    OHNativeWindow* window = nullptr;
+    uint64_t curSurfaceId = 0;
+    int curW = 0;
+    int curH = 0;
+
+    s->render_running.store(true);
+
+    auto cleanupWindow = [&]() {
+        if (window) {
+            OH_NativeWindow_DestroyNativeWindow(window);
+            window = nullptr;
+            curSurfaceId = 0;
+            curW = 0;
+            curH = 0;
+        }
+    };
+
+    while (s->render_running.load()) {
+        // 等待新帧/新surface/停止
+        {
+            std::unique_lock<std::mutex> lk(s->render_cv_mtx);
+            s->render_cv.wait_for(lk, std::chrono::milliseconds(50), [&]() {
+                return !s->render_running.load() || s->surface_dirty.load() || s->frame_dirty.load();
+            });
+        }
+        if (!s->render_running.load()) break;
+
+        // 1) 处理 surface 更新（在 render 线程内创建/销毁 window）
+        if (s->surface_dirty.exchange(false)) {
+            uint64_t targetId = 0;
+            int targetW = 0;
+            int targetH = 0;
+            {
+                std::lock_guard<std::mutex> lk(s->surface_mtx);
+                targetId = s->pending_surface_id;
+                targetW = s->pending_surface_w;
+                targetH = s->pending_surface_h;
+            }
+
+            // surface 变更：先清旧 window
+            cleanupWindow();
+
+            if (targetId != 0) {
+                OHNativeWindow* win = nullptr;
+                if (OH_NativeWindow_CreateNativeWindowFromSurfaceId(targetId, &win) == 0 && win) {
+                    (void)OH_NativeWindow_NativeWindowHandleOpt(win, SET_BUFFER_GEOMETRY, targetW, targetH);
+                    (void)OH_NativeWindow_NativeWindowHandleOpt(win, SET_FORMAT, (int)NATIVEBUFFER_PIXEL_FMT_BGRA_8888);
+                    // 关键：显式要求 CPU 可写的 buffer（否则 MapPlanes/GetImageLayout 可能失败，甚至 FlushBuffer 崩）
+                    const uint64_t usage = (uint64_t)(
+                        NATIVEBUFFER_USAGE_CPU_READ |
+                        NATIVEBUFFER_USAGE_CPU_WRITE |
+                        NATIVEBUFFER_USAGE_CPU_READ_OFTEN |
+                        NATIVEBUFFER_USAGE_MEM_DMA
+                    );
+                    (void)OH_NativeWindow_NativeWindowHandleOpt(win, SET_USAGE, usage);
+                    window = win;
+                    curSurfaceId = targetId;
+                    curW = targetW;
+                    curH = targetH;
+                    HilogPrint("VNC: RenderWorker bound surfaceId=" + std::to_string(curSurfaceId) +
+                        " size=" + std::to_string(curW) + "x" + std::to_string(curH));
+                } else {
+                    HilogPrint("VNC: RenderWorker failed to create window from surfaceId=" + std::to_string(targetId));
+                }
+            }
+        }
+
+        // 2) 处理帧渲染
+        if (!window) {
+            // 没有 surface，丢弃 dirty 帧标记即可（避免堆积）
+            if (s->frame_dirty.load()) s->frame_dirty.store(false);
+            continue;
+        }
+
+        if (s->frame_dirty.exchange(false)) {
+            int w = 0;
+            int h = 0;
+            std::vector<uint8_t> bgra;
+            {
+                std::lock_guard<std::mutex> lk(s->frame_mtx);
+                w = s->fb_w;
+                h = s->fb_h;
+                bgra = s->fb_bgra;
+            }
+            if (w <= 0 || h <= 0 || bgra.empty()) continue;
+
+            if (curW != w || curH != h) {
+                (void)OH_NativeWindow_NativeWindowHandleOpt(window, SET_BUFFER_GEOMETRY, w, h);
+                (void)OH_NativeWindow_NativeWindowHandleOpt(window, SET_FORMAT, (int)NATIVEBUFFER_PIXEL_FMT_BGRA_8888);
+                curW = w;
+                curH = h;
+            }
+
+            OHNativeWindowBuffer* wndBuf = nullptr;
+            int fenceFd = -1;
+            if (OH_NativeWindow_NativeWindowRequestBuffer(window, &wndBuf, &fenceFd) != 0 || !wndBuf) {
+                HilogPrint("VNC: RenderWorker RequestBuffer failed, drop surface");
+                cleanupWindow();
+                continue;
+            }
+            // RequestBuffer 返回的 fence 表示该 buffer 何时可写；不等待可能导致偶发内存踩踏/闪退
+            if (fenceFd >= 0) {
+                struct pollfd pfd;
+                pfd.fd = fenceFd;
+                pfd.events = POLLIN;
+                pfd.revents = 0;
+                const int prc = poll(&pfd, 1, 200); // 最多等 200ms
+                close(fenceFd);
+                fenceFd = -1;
+                if (prc <= 0) {
+                    (void)OH_NativeWindow_NativeWindowAbortBuffer(window, wndBuf);
+                    continue;
+                }
+            }
+
+            OH_NativeBuffer* nb = nullptr;
+            if (OH_NativeBuffer_FromNativeWindowBuffer(wndBuf, &nb) != 0 || !nb) {
+                (void)OH_NativeWindow_NativeWindowAbortBuffer(window, wndBuf);
+                continue;
+            }
+
+            // 在该机型上 MapPlanes 会频繁失败（50007000），因此直接用 GetConfig 拿 stride + Map
+            OH_NativeBuffer_Config cfg{};
+            OH_NativeBuffer_GetConfig(nb, &cfg);
+            const int dstW = (cfg.width > 0) ? cfg.width : w;
+            const int dstH = (cfg.height > 0) ? cfg.height : h;
+            const uint32_t rowStride = (cfg.stride > 0) ? (uint32_t)cfg.stride : (uint32_t)dstW * 4;
+
+            void* virAddr = nullptr;
+            if (OH_NativeBuffer_Map(nb, &virAddr) != 0 || !virAddr) {
+                virAddr = nullptr;
+            }
+
+            if (!virAddr) {
+                (void)OH_NativeWindow_NativeWindowAbortBuffer(window, wndBuf);
+                continue;
+            }
+
+            const uint8_t* src = bgra.data();
+            uint8_t* dst = reinterpret_cast<uint8_t*>(virAddr);
+            const int copyW = std::min(w, dstW);
+            const int copyH = std::min(h, dstH);
+            const size_t srcRow = (size_t)copyW * 4;
+            const size_t dstRow = (size_t)rowStride;
+            if (dstRow < srcRow) {
+                // stride 不合理，避免越界写导致系统层崩溃
+                (void)OH_NativeBuffer_Unmap(nb);
+                (void)OH_NativeWindow_NativeWindowAbortBuffer(window, wndBuf);
+                HilogPrint("VNC: RenderWorker invalid stride=" + std::to_string(dstRow) +
+                    " < srcRow=" + std::to_string(srcRow) + ", abort buffer");
+                continue;
+            }
+            for (int yy = 0; yy < copyH; yy++) {
+                std::memcpy(dst + (size_t)yy * dstRow, src + (size_t)yy * (size_t)w * 4, srcRow);
+            }
+            (void)OH_NativeBuffer_Unmap(nb);
+
+            Region::Rect rect{ 0, 0, (uint32_t)copyW, (uint32_t)copyH };
+            Region region{ &rect, 1 };
+            const int flushRc = OH_NativeWindow_NativeWindowFlushBuffer(window, wndBuf, -1, region);
+            if (flushRc != 0) {
+                HilogPrint("VNC: RenderWorker FlushBuffer rc=" + std::to_string(flushRc) + ", drop surface");
+                cleanupWindow();
+                continue;
+            }
+            // 注意：FromNativeWindowBuffer() 并未声明需要 Unreference。为避免破坏 BufferQueue 引用计数，这里不做 Unreference。
+        }
+    }
+
+    cleanupWindow();
+    s->render_running.store(false);
+}
+#endif
 
 static napi_value VncAvailable(napi_env env, napi_callback_info info) {
     (void)info;  // 添加
@@ -3811,16 +4915,13 @@ static rfbBool VncMallocFB(rfbClient* cl)
     cl->frameBuffer = (uint8_t*)malloc(bytes);
     if (!cl->frameBuffer) return false;
 
-    // Find our session by matching pointer
-    std::lock_guard<std::mutex> lock(g_vnc_mutex);
-    for (auto& kv : g_vnc_sessions) {
-        if (kv.second->client == cl) {
-            std::lock_guard<std::mutex> lk(kv.second->mtx);
-            kv.second->width = w;
-            kv.second->height = h;
-            kv.second->frame.resize(bytes);
-            break;
-        }
+    // 通过 clientData 直接拿到 session（避免全局 map 扫描 & 线程竞争）
+    VncSession* s = reinterpret_cast<VncSession*>(rfbClientGetClientData(cl, &g_vnc_clientdata_tag));
+    if (s) {
+        std::lock_guard<std::mutex> lk(s->mtx);
+        s->width = w;
+        s->height = h;
+        s->frame.resize(bytes);
     }
     return true;
 }
@@ -3829,16 +4930,27 @@ static void VncGotUpdate(rfbClient* cl, int x, int y, int w, int h)
 {
     (void)x; (void)y; (void)w; (void)h; // unused parameters
     if (!cl || !cl->frameBuffer) return;
-    std::lock_guard<std::mutex> lock(g_vnc_mutex);
-    for (auto& kv : g_vnc_sessions) {
-        auto& s = kv.second;
-        if (s->client == cl) {
+    VncSession* s = reinterpret_cast<VncSession*>(rfbClientGetClientData(cl, &g_vnc_clientdata_tag));
+    if (!s) return;
+            // 把 BGRA 帧投递给 render 线程（NativeWindow 的 create/flush 必须在同一线程内完成）
+#if defined(__OHOS__)
+            {
+                std::lock_guard<std::mutex> lk2(s->frame_mtx);
+                const int ww = cl->width;
+                const int hh = cl->height;
+                const size_t bytes = (size_t)ww * (size_t)hh * 4;
+                s->fb_w = ww;
+                s->fb_h = hh;
+                s->fb_bgra.resize(bytes);
+                std::memcpy(s->fb_bgra.data(), cl->frameBuffer, bytes);
+                s->frame_dirty.store(true);
+            }
+            s->render_cv.notify_one();
+#else
             std::lock_guard<std::mutex> lk(s->mtx);
             if (s->width != cl->width || s->height != cl->height) {
                 s->width = cl->width; s->height = cl->height; s->frame.resize((size_t)s->width * s->height * 4);
             }
-            // cl->frameBuffer 为 little-endian 32bpp，按照 format shifts 通常是 BGRA(byte order: B,G,R,X)。
-            // ArkTS 侧渲染希望是 RGBA，因此在 C++ 侧转换一次，避免 ArkTS 每帧做大数组转换造成卡顿/GC 抖动。
             const int ww = cl->width;
             const int hh = cl->height;
             const size_t bytes = (size_t)ww * (size_t)hh * 4;
@@ -3846,7 +4958,6 @@ static void VncGotUpdate(rfbClient* cl, int x, int y, int w, int h)
                 const uint8_t* src = reinterpret_cast<const uint8_t*>(cl->frameBuffer);
                 uint8_t* dst = s->frame.data();
                 for (size_t i = 0; i < bytes; i += 4) {
-                    // BGRA -> RGBA
                     dst[i + 0] = src[i + 2];
                     dst[i + 1] = src[i + 1];
                     dst[i + 2] = src[i + 0];
@@ -3855,28 +4966,169 @@ static void VncGotUpdate(rfbClient* cl, int x, int y, int w, int h)
                 s->seq++;
                 s->dirty = true;
             }
+#endif
             // 关键：继续请求下一帧（增量更新）。否则很多 VNC 服务端不会主动推送后续帧，
             // Viewer 会一直停在 "Display Output Is Not Active"。
             SendFramebufferUpdateRequest(cl, 0, 0, cl->width, cl->height, TRUE);
-            break;
-        }
-    }
 }
 
 static void VncWorker(VncSession* s)
 {
-    if (!s || !s->client) return;
+    if (!s) return;
+#ifdef LIBVNC_HAVE_CLIENT
+    // 重要：把 client 指针缓存到本地，避免断开时把 s->client 置空导致 worker 线程读到 nullptr
+    rfbClient* cl = s->client;
+    if (!cl) return;
+#else
+    return;
+#endif
     s->running.store(true);
     while (s->running.load()) {
-        int ret = WaitForMessage(s->client, 100000); // 100ms
+        int ret = WaitForMessage(cl, 100000); // 100ms
         if (ret < 0) break;
         if (ret > 0) {
-            if (!HandleRFBServerMessage(s->client)) {
+            if (!HandleRFBServerMessage(cl)) {
                 break;
             }
         }
     }
     s->running.store(false);
+}
+#endif
+
+// 断开并清理（后台线程调用）：保证不阻塞 UI 线程
+#ifdef LIBVNC_HAVE_CLIENT
+static void VncStopAndCleanupAsync(VncSession* s)
+{
+    if (!s) return;
+
+    std::thread tWorker;
+#if defined(__OHOS__)
+    std::thread tRender;
+#endif
+    rfbClient* oldClient = nullptr;
+
+    {
+        // 只短时间持锁：摘下 thread/client 指针，避免与 UI 线程并发访问产生数据竞争
+        std::lock_guard<std::mutex> lk(s->lifecycle_mtx);
+        s->running.store(false);
+#if defined(__OHOS__)
+        s->render_running.store(false);
+        s->render_cv.notify_all();
+#endif
+
+        if (s->worker.joinable()) tWorker = std::move(s->worker);
+#if defined(__OHOS__)
+        if (s->render_worker.joinable()) tRender = std::move(s->render_worker);
+#endif
+
+        oldClient = s->client;
+        s->client = nullptr;
+    }
+
+    if (tWorker.joinable()) tWorker.join();
+#if defined(__OHOS__)
+    if (tRender.joinable()) tRender.join();
+#endif
+    if (oldClient) {
+        rfbClientCleanup(oldClient);
+    }
+
+#if defined(__OHOS__)
+    {
+        std::lock_guard<std::mutex> lk1(s->surface_mtx);
+        s->pending_surface_id = 0;
+        s->pending_surface_w = 0;
+        s->pending_surface_h = 0;
+        s->surface_dirty.store(false);
+    }
+    {
+        std::lock_guard<std::mutex> lk2(s->frame_mtx);
+        s->fb_w = 0;
+        s->fb_h = 0;
+        s->fb_bgra.clear();
+        s->frame_dirty.store(false);
+    }
+#endif
+
+    {
+        std::lock_guard<std::mutex> lk(s->mtx);
+        s->width = 0;
+        s->height = 0;
+        s->frame.clear();
+        s->seq = 0;
+        s->dirty = false;
+    }
+}
+
+static void VncConnectAsync(VncSession* s, uint32_t seq, std::string host, int port)
+{
+    if (!s) return;
+
+    // 先把旧连接/线程清掉（不阻塞 UI）
+    VncStopAndCleanupAsync(s);
+
+    // 如果期间被取消/更新了请求，则直接退出
+    if (seq != s->connect_seq.load()) {
+        s->connecting.store(false);
+        return;
+    }
+
+    rfbClient* cl = rfbGetClient(8, 3, 4); // 32-bit truecolor
+    if (!cl) {
+        s->connecting.store(false);
+        return;
+    }
+    rfbClientSetClientData(cl, &g_vnc_clientdata_tag, s);
+    cl->MallocFrameBuffer = VncMallocFB;
+    cl->GotFrameBufferUpdate = VncGotUpdate;
+    cl->canHandleNewFBSize = 1;
+    cl->appData.shareDesktop = TRUE;
+    // Some HarmonyOS builds/packaged libvncclient variants may not fully support "tight"
+    // and can log "Unknown encoding 'tight'" during negotiation, causing unstable/blank
+    // rendering. Force a conservative, widely-supported encoding set.
+    //
+    // Note: we've observed libvncclient logging "Unknown encoding '<full string>'" when
+    // a list is supplied, so we keep it to the most compatible baseline first.
+    cl->appData.encodingsString = "raw";
+    HilogPrint(std::string("VNC: forcing encodingsString=") + cl->appData.encodingsString);
+    cl->serverHost = strdup(host.c_str());
+    cl->serverPort = port;
+
+    if (!rfbClientConnect(cl)) {
+        rfbClientCleanup(cl);
+        s->connecting.store(false);
+        return;
+    }
+    if (!rfbClientInitialise(cl)) {
+        rfbClientCleanup(cl);
+        s->connecting.store(false);
+        return;
+    }
+
+    // 连接完成后先请求一次全量帧，触发服务端开始发送画面
+    SendFramebufferUpdateRequest(cl, 0, 0, cl->width, cl->height, FALSE);
+
+    if (seq != s->connect_seq.load()) {
+        rfbClientCleanup(cl);
+        s->connecting.store(false);
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(s->lifecycle_mtx);
+        // 期间可能又被取消
+        if (seq != s->connect_seq.load()) {
+            // 不挂到 session 上，交给下面 cleanup
+        } else {
+        s->client = cl;
+        s->worker = std::thread(VncWorker, s);
+            cl = nullptr; // ownership moved to session
+        }
+    }
+    if (cl) rfbClientCleanup(cl);
+
+    s->connecting.store(false);
 }
 #endif
 
@@ -3893,40 +5145,37 @@ static napi_value VncConnect(napi_env env, napi_callback_info info) {
     {
         std::lock_guard<std::mutex> lock(g_vnc_mutex);
         if (g_vnc_sessions.find(id) == g_vnc_sessions.end()) return out;
+        s = g_vnc_sessions[id].get();
     }
 
 #ifdef LIBVNC_HAVE_CLIENT
-    s = g_vnc_sessions[id].get();
-    if (s->worker.joinable()) { s->running.store(false); s->worker.join(); }
-    if (s->client) { rfbClientCleanup(s->client); s->client = nullptr; }
+    if (!s) return out;
 
-    rfbClient* cl = rfbGetClient(8, 3, 4); // 32-bit truecolor
-    if (!cl) return out;
-    cl->MallocFrameBuffer = VncMallocFB;
-    cl->GotFrameBufferUpdate = VncGotUpdate;
-    cl->canHandleNewFBSize = 1;
-    cl->appData.shareDesktop = TRUE;
-    cl->serverHost = strdup(host.c_str());
-    cl->serverPort = port;
-
-    if (!rfbClientConnect(cl)) {
-        rfbClientCleanup(cl);
-        return out;
-    }
-    if (!rfbClientInitialise(cl)) {
-        rfbClientCleanup(cl);
-        return out;
-    }
-
-    // 关键：连接完成后先请求一次全量帧，触发服务端开始发送画面。
-    SendFramebufferUpdateRequest(cl, 0, 0, cl->width, cl->height, FALSE);
-
+    // 已连接：直接返回 true
     {
-        std::lock_guard<std::mutex> lock(g_vnc_mutex);
-        s->client = cl;
-        s->worker = std::thread(VncWorker, s);
-    }
+        std::lock_guard<std::mutex> lk(s->lifecycle_mtx);
+        if (s->client != nullptr) {
     napi_get_boolean(env, true, &out);
+            return out;
+        }
+    }
+
+    // 正在连接：立即返回 false（避免阻塞 UI 线程）
+    if (s->connecting.load()) {
+        return out;
+    }
+
+    // 启动后台连接线程
+    s->connecting.store(true);
+    const uint32_t seq = s->connect_seq.fetch_add(1) + 1;
+    HilogPrint("VNC: async connect requested id=" + std::to_string(id) + " " + host + ":" + std::to_string(port));
+    try {
+        std::thread([s, seq, host, port]() mutable {
+            VncConnectAsync(s, seq, std::move(host), port);
+        }).detach();
+    } catch (...) {
+        s->connecting.store(false);
+    }
 #else
     (void)host; (void)port;
     // Client lib not available
@@ -3945,16 +5194,123 @@ static napi_value VncDisconnect(napi_env env, napi_callback_info info) {
         auto it = g_vnc_sessions.find(id);
         if (it != g_vnc_sessions.end()) {
             sess = it->second.get();
-            if (sess) sess->running.store(false);
         }
     }
-    if (sess) {
-        if (sess->worker.joinable()) sess->worker.join();
 #ifdef LIBVNC_HAVE_CLIENT
-        if (sess->client) { rfbClientCleanup(sess->client); sess->client = nullptr; }
-#endif
+    if (sess) {
+        // 取消正在进行的 connect（通过 seq 递增），并在后台做 stop/join/cleanup
+        sess->connect_seq.fetch_add(1);
+        HilogPrint("VNC: async disconnect requested id=" + std::to_string(id));
+        try {
+            std::thread([sess]() {
+                VncStopAndCleanupAsync(sess);
+            }).detach();
+        } catch (...) {
+            // ignore
+        }
     }
+#else
+    (void)sess;
+#endif
     napi_value out; napi_get_boolean(env, true, &out); return out;
+}
+
+static napi_value VncSetSurface(napi_env env, napi_callback_info info) {
+    size_t argc = 4;
+    napi_value argv[4];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    napi_value out;
+    napi_get_boolean(env, false, &out);
+    if (argc < 4) return out;
+
+    int32_t id = 0;
+    napi_get_value_int32(env, argv[0], &id);
+    std::string surfaceIdStr;
+    if (!NapiGetStringUtf8(env, argv[1], surfaceIdStr)) return out;
+    int32_t w = 0;
+    int32_t h = 0;
+    napi_get_value_int32(env, argv[2], &w);
+    napi_get_value_int32(env, argv[3], &h);
+    if (w <= 0 || h <= 0) return out;
+
+#if defined(__OHOS__)
+    uint64_t surfaceId = 0;
+    try {
+        surfaceId = std::stoull(surfaceIdStr, nullptr, 0);
+    } catch (...) {
+        return out;
+    }
+
+    VncSession* sess = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_vnc_mutex);
+        auto it = g_vnc_sessions.find(id);
+        if (it == g_vnc_sessions.end()) return out;
+        sess = it->second.get();
+    }
+    if (!sess) return out;
+
+    // 只更新 pending surface，让 render 线程在同一线程内创建/flush，避免 FlushBuffer 崩溃
+    {
+        std::lock_guard<std::mutex> lk(sess->surface_mtx);
+        sess->pending_surface_id = surfaceId;
+        sess->pending_surface_w = w;
+        sess->pending_surface_h = h;
+        sess->surface_dirty.store(true);
+    }
+
+    // render_worker 的 thread 对象也受生命周期锁保护，避免与异步 disconnect/cleanup 并发 move/join 产生数据竞争
+    {
+        std::lock_guard<std::mutex> lk(sess->lifecycle_mtx);
+    if (!sess->render_running.load()) {
+        sess->render_running.store(true);
+        sess->render_worker = std::thread(VncRenderWorker, sess);
+        }
+    }
+    sess->render_cv.notify_one();
+
+    napi_get_boolean(env, true, &out);
+    return out;
+#else
+    (void)surfaceIdStr;
+    (void)w;
+    (void)h;
+    return out;
+#endif
+}
+
+static napi_value VncClearSurface(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value argv[1];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    napi_value out;
+    napi_get_boolean(env, true, &out);
+    if (argc < 1) return out;
+
+    int32_t id = 0;
+    napi_get_value_int32(env, argv[0], &id);
+
+#if defined(__OHOS__)
+    VncSession* sess = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_vnc_mutex);
+        auto it = g_vnc_sessions.find(id);
+        if (it == g_vnc_sessions.end()) return out;
+        sess = it->second.get();
+    }
+    if (!sess) return out;
+
+    {
+        std::lock_guard<std::mutex> lk(sess->surface_mtx);
+        sess->pending_surface_id = 0;
+        sess->pending_surface_w = 0;
+        sess->pending_surface_h = 0;
+        sess->surface_dirty.store(true);
+    }
+    sess->render_cv.notify_one();
+#endif
+
+    return out;
 }
 
 static napi_value VncGetFrame(napi_env env, napi_callback_info info) {
@@ -3989,6 +5345,78 @@ static napi_value VncGetFrame(napi_env env, napi_callback_info info) {
 }
 // --------------------------------------------------------------------------------------------
 
+static napi_value VncGetInfo(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value argv[1];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+    napi_value obj;
+    napi_create_object(env, &obj);
+    napi_value wVal, hVal, cVal;
+    napi_create_int32(env, 0, &wVal);
+    napi_create_int32(env, 0, &hVal);
+    napi_get_boolean(env, false, &cVal);
+    napi_set_named_property(env, obj, "width", wVal);
+    napi_set_named_property(env, obj, "height", hVal);
+    napi_set_named_property(env, obj, "connected", cVal);
+
+    if (argc < 1) return obj;
+    int32_t id = 0;
+    napi_get_value_int32(env, argv[0], &id);
+
+#ifdef LIBVNC_HAVE_CLIENT
+    std::lock_guard<std::mutex> lock(g_vnc_mutex);
+    auto it = g_vnc_sessions.find(id);
+    if (it == g_vnc_sessions.end()) return obj;
+    VncSession* s = it->second.get();
+    if (!s) return obj;
+
+    int w = 0;
+    int h = 0;
+#if defined(__OHOS__)
+    // OHOS: 优先读取 rfbClient 的实时宽高（SetDesktopSize 后会立刻更新），
+    // 避免仅靠 GotFrameBufferUpdate 导致宽高同步滞后 -> 坐标映射偏移 -> “点不了”。
+    rfbClient* cl = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(s->lifecycle_mtx);
+        cl = s->client;
+    }
+    if (cl) {
+        w = cl->width;
+        h = cl->height;
+    }
+#endif
+#if defined(__OHOS__)
+    {
+        std::lock_guard<std::mutex> lk(s->frame_mtx);
+        if (w <= 0) w = s->fb_w;
+        if (h <= 0) h = s->fb_h;
+    }
+#else
+    {
+        std::lock_guard<std::mutex> lk(s->mtx);
+        w = s->width;
+        h = s->height;
+    }
+#endif
+
+    napi_create_int32(env, w, &wVal);
+    napi_create_int32(env, h, &hVal);
+    napi_set_named_property(env, obj, "width", wVal);
+    napi_set_named_property(env, obj, "height", hVal);
+    bool connected = false;
+    {
+        std::lock_guard<std::mutex> lk(s->lifecycle_mtx);
+        connected = (s->client != nullptr);
+    }
+    napi_get_boolean(env, connected, &cVal);
+    napi_set_named_property(env, obj, "connected", cVal);
+#else
+    (void)id;
+#endif
+    return obj;
+}
+
 static napi_value VncSendPointer(napi_env env, napi_callback_info info) {
     size_t argc = 4; napi_value argv[4];
     napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
@@ -4004,9 +5432,14 @@ static napi_value VncSendPointer(napi_env env, napi_callback_info info) {
     auto it = g_vnc_sessions.find(id);
     if (it == g_vnc_sessions.end()) return out;
     auto& s = it->second;
-    if (!s->client) return out;
-    SendPointerEvent(s->client, x, y, mask);
-    napi_get_boolean(env, true, &out);
+    rfbClient* cl = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(s->lifecycle_mtx);
+        cl = s->client;
+    }
+    if (!cl) return out;
+    const rfbBool ok = SendPointerEvent(cl, x, y, mask);
+    napi_get_boolean(env, ok ? true : false, &out);
 #else
     (void)x; (void)y; (void)mask;
 #endif
@@ -4027,8 +5460,13 @@ static napi_value VncSendKey(napi_env env, napi_callback_info info) {
     auto it = g_vnc_sessions.find(id);
     if (it == g_vnc_sessions.end()) return out;
     auto& s = it->second;
-    if (!s->client) return out;
-    SendKeyEvent(s->client, (rfbKeySym)keysym, down ? TRUE : FALSE);
+    rfbClient* cl = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(s->lifecycle_mtx);
+        cl = s->client;
+    }
+    if (!cl) return out;
+    SendKeyEvent(cl, (rfbKeySym)keysym, down ? TRUE : FALSE);
     napi_get_boolean(env, true, &out);
 #else
     (void)keysym; (void)down;
@@ -4393,6 +5831,7 @@ static napi_value GetModuleInfo(napi_env env, napi_callback_info info) {
 
 // 模块初始化
 EXTERN_C_START
+// Keep exports stable; ArkTS depends on these names.
 static napi_value Init(napi_env env, napi_value exports) {
     HilogPrint("QEMU: ========================================");
     HilogPrint("QEMU: NAPI Init function called!");
@@ -4427,6 +5866,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "disconnectRdp", 0, DisconnectRdp, 0, 0, 0, napi_default, 0 },
         { "getRdpStatus", 0, GetRdpStatus, 0, 0, 0, napi_default, 0 },
         { "destroyRdpClient", 0, DestroyRdpClient, 0, 0, 0, napi_default, 0 },
+        { "rdpSendKey", 0, RdpSendKey, 0, 0, 0, napi_default, 0 },
         // RDP 超时处理
         { "rdpCheckTimeout", 0, RdpCheckTimeout, 0, 0, 0, napi_default, 0 },
         { "rdpSetTimeout", 0, RdpSetTimeout, 0, 0, 0, napi_default, 0 },
@@ -4439,8 +5879,11 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "vncConnect", 0, VncConnect, 0, 0, 0, napi_default, 0 },
         { "vncDisconnect", 0, VncDisconnect, 0, 0, 0, napi_default, 0 },
         { "vncGetFrame", 0, VncGetFrame, 0, 0, 0, napi_default, 0 },
+        { "vncGetInfo", 0, VncGetInfo, 0, 0, 0, napi_default, 0 },
         { "vncSendPointer", 0, VncSendPointer, 0, 0, 0, napi_default, 0 },
         { "vncSendKey", 0, VncSendKey, 0, 0, 0, napi_default, 0 },
+        { "vncSetSurface", 0, VncSetSurface, 0, 0, 0, napi_default, 0 },
+        { "vncClearSurface", 0, VncClearSurface, 0, 0, 0, napi_default, 0 },
         // Windows 11 配置相关
         { "setupTpm", 0, SetupTpm, 0, 0, 0, napi_default, 0 },
         { "setupUefi", 0, SetupUefi, 0, 0, 0, napi_default, 0 },
@@ -4455,6 +5898,9 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "setConsoleCallback", 0, SetConsoleCallback, 0, 0, 0, napi_default, 0 },
         // QMP screendump（VNC 替代方案）
         { "takeScreenshot", 0, TakeScreenshot, 0, 0, 0, napi_default, 0 },
+        // Disk tools (qemu-img / built-in qcow2 create)
+        { "qemuImgCreateDisk", 0, QemuImgCreateDisk, 0, 0, 0, napi_default, 0 },
+        { "qemuImgResizeDisk", 0, QemuImgResizeDisk, 0, 0, 0, napi_default, 0 },
     };
 #else
     napi_property_descriptor__ desc[] = {
@@ -4471,6 +5917,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "disconnectRdp", DisconnectRdp, 0 },
         { "getRdpStatus", GetRdpStatus, 0 },
         { "destroyRdpClient", DestroyRdpClient, 0 },
+        { "rdpSendKey", RdpSendKey, 0 },
         // RDP 超时处理
         { "rdpCheckTimeout", RdpCheckTimeout, 0 },
         { "rdpSetTimeout", RdpSetTimeout, 0 },
@@ -4483,8 +5930,11 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "vncConnect", VncConnect, 0 },
         { "vncDisconnect", VncDisconnect, 0 },
         { "vncGetFrame", VncGetFrame, 0 },
+        { "vncGetInfo", VncGetInfo, 0 },
         { "vncSendPointer", VncSendPointer, 0 },
         { "vncSendKey", VncSendKey, 0 },
+        { "vncSetSurface", VncSetSurface, 0 },
+        { "vncClearSurface", VncClearSurface, 0 },
         // Windows 11 配置相关
         { "setupTpm", SetupTpm, 0 },
         { "setupUefi", SetupUefi, 0 },
@@ -4499,6 +5949,9 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "setConsoleCallback", SetConsoleCallback, 0 },
         // QMP screendump（VNC 替代方案）
         { "takeScreenshot", TakeScreenshot, 0 },
+        // Disk tools (qemu-img / built-in qcow2 create)
+        { "qemuImgCreateDisk", QemuImgCreateDisk, 0 },
+        { "qemuImgResizeDisk", QemuImgResizeDisk, 0 },
     };
 #endif
     size_t count = sizeof(desc) / sizeof(desc[0]);

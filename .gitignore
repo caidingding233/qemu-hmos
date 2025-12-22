@@ -155,3 +155,4 @@ coverage/
 .env.local
 .env.*.local
 
+local.properties

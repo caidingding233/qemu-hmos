@@ -15,9 +15,17 @@ message(STATUS "Building ${PROJECT_NAME} v${PROJECT_VERSION} in ${CMAKE_BUILD_TY
 # 鸿蒙开发环境特定配置
 # 允许通过缓存变量或环境变量传入 OpenHarmony NDK 根目录
 set(OHOS_NDK_HOME "" CACHE PATH "Path to the OpenHarmony NDK (set for device builds)")
-
 set(_candidate_ndk_paths
     "$ENV{OHOS_NDK_HOME}"
+    "$ENV{OHOS_NDK}"
+    "C:/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/native"
+    "$ENV{USERPROFILE}/AppData/Local/Huawei/DevEcoStudio/sdk/default/openharmony/native"
+    "/mnt/c/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/native"
+    "/mnt/e/HMOS_SDK/linux/native"
+    "$ENV{HOME}/OpenHarmony/Sdk/18/native"
+    "$ENV{HOME}/OpenHarmony/Sdk/15/native"
+    "/opt/openharmony/ndk/18/native"
+    "/opt/openharmony/ndk/15/native"
     "/Users/caidingding233/Library/OpenHarmony/Sdk/18/native"
     "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native"
     "/Applications/DevEco-Studio.app/Contents/ohos/ndk"
@@ -253,6 +261,18 @@ endif()
 # 如果设置了 USE_PREBUILT_LIB，则只检查预编译库是否存在，不进行编译
 option(USE_PREBUILT_LIB "Use prebuilt libqemu_hmos.so instead of building it" OFF)
 
+# ======================================================================================
+# Hvigor 打包路径说明（重要）：
+# - 模块（entry）构建时，Hvigor 会从 entry/build/default/intermediates/... 取 native libs 进行打包；
+# - 根工程构建时，也可能从 build/default/intermediates/... 取 native libs（不同任务/插件实现略有差异）。
+#
+# 为了避免 “src/main/libs 已更新，但 entry/build 仍旧打包旧 so” 的情况，
+# 这里在 CMake 阶段同时把关键 so 同步到两套 intermediates 目录。
+# ======================================================================================
+set(HVIGOR_APP_INTERMEDIATES_LIBS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../build/default/intermediates/libs/default/arm64-v8a")
+set(HVIGOR_ENTRY_INTERMEDIATES_LIBS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../build/default/intermediates/libs/default/arm64-v8a")
+set(HVIGOR_ENTRY_STRIPPED_LIBS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../build/default/intermediates/stripped_native_libs/default/arm64-v8a")
+
 # 预编译库路径：从 entry/src/main/cpp 向上到 entry/src/main，然后进入 libs/arm64-v8a
 get_filename_component(PREBUILT_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a" ABSOLUTE)
 set(PREBUILT_LIB_PATH "${PREBUILT_LIB_DIR}/libqemu_hmos.so")
@@ -267,19 +287,26 @@ if(USE_PREBUILT_LIB)
             IMPORTED_LOCATION ${PREBUILT_LIB_PATH}
         )
         
-        # 关键：将预编译库复制到 hvigor 期望的 intermediates 目录
-        set(PREBUILT_DST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../build/default/intermediates/libs/default/arm64-v8a")
-        set(PREBUILT_DST "${PREBUILT_DST_DIR}/libqemu_hmos.so")
+        # 关键：将预编译库复制到 hvigor 期望的 intermediates 目录（entry/build & build）
+        set(PREBUILT_DST_APP_DIR "${HVIGOR_APP_INTERMEDIATES_LIBS_DIR}")
+        set(PREBUILT_DST_ENTRY_DIR "${HVIGOR_ENTRY_INTERMEDIATES_LIBS_DIR}")
+        set(PREBUILT_DST_APP "${PREBUILT_DST_APP_DIR}/libqemu_hmos.so")
+        set(PREBUILT_DST_ENTRY "${PREBUILT_DST_ENTRY_DIR}/libqemu_hmos.so")
         
         # 使用 file(COPY) 在配置阶段复制
-        file(MAKE_DIRECTORY ${PREBUILT_DST_DIR})
-        file(COPY ${PREBUILT_LIB_PATH} DESTINATION ${PREBUILT_DST_DIR})
-        message(STATUS "✅ Copied prebuilt library to: ${PREBUILT_DST}")
+        file(MAKE_DIRECTORY ${PREBUILT_DST_APP_DIR})
+        file(MAKE_DIRECTORY ${PREBUILT_DST_ENTRY_DIR})
+        file(COPY ${PREBUILT_LIB_PATH} DESTINATION ${PREBUILT_DST_APP_DIR})
+        file(COPY ${PREBUILT_LIB_PATH} DESTINATION ${PREBUILT_DST_ENTRY_DIR})
+        message(STATUS "✅ Copied prebuilt library to: ${PREBUILT_DST_APP}")
+        message(STATUS "✅ Copied prebuilt library to: ${PREBUILT_DST_ENTRY}")
         
         # 同时创建一个自定义目标确保每次构建都复制
         add_custom_target(copy_prebuilt_qemu_hmos ALL
-            COMMAND ${CMAKE_COMMAND} -E make_directory ${PREBUILT_DST_DIR}
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${PREBUILT_LIB_PATH} ${PREBUILT_DST}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${PREBUILT_DST_APP_DIR}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${PREBUILT_DST_ENTRY_DIR}
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${PREBUILT_LIB_PATH} ${PREBUILT_DST_APP}
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${PREBUILT_LIB_PATH} ${PREBUILT_DST_ENTRY}
             COMMENT "Copying prebuilt libqemu_hmos.so to intermediates"
         )
         
@@ -379,6 +406,31 @@ if(BUILD_FOR_OHOS)
     if(NOT LOG_LIB)
         message(WARNING "LOG library not found, skipping...")
         set(LOG_LIB "")
+    endif()
+
+    # NativeWindow / NativeBuffer (XComponent 直绘需要)
+    find_library(NATIVE_WINDOW_LIB native_window
+        PATHS
+        "${OHOS_NDK_HOME}/sysroot/usr/lib"
+        "${OHOS_NDK_HOME}/sysroot/usr/lib/aarch64-linux-ohos"
+        NO_DEFAULT_PATH
+    )
+    find_library(NATIVE_BUFFER_LIB native_buffer
+        PATHS
+        "${OHOS_NDK_HOME}/sysroot/usr/lib"
+        "${OHOS_NDK_HOME}/sysroot/usr/lib/aarch64-linux-ohos"
+        NO_DEFAULT_PATH
+    )
+
+    if(NATIVE_WINDOW_LIB)
+        target_link_libraries(qemu_hmos ${NATIVE_WINDOW_LIB})
+    else()
+        message(WARNING "native_window library not found, XComponent direct draw may fail to link")
+    endif()
+    if(NATIVE_BUFFER_LIB)
+        target_link_libraries(qemu_hmos ${NATIVE_BUFFER_LIB})
+    else()
+        message(WARNING "native_buffer library not found, XComponent direct draw may fail to link")
     endif()
 
     message(STATUS "LOG_LIB: ${LOG_LIB}")
@@ -559,17 +611,26 @@ if(FREERDP_LIB_PATH)
         )
         
         # 链接 OpenSSL 静态库（如果存在）
+        #
+        # 重要说明：
+        # - HarmonyOS sysroot 通常不提供 -lssl/-lcrypto（系统 OpenSSL），
+        #   因此在 OHOS 目标下不要做“链接系统库”的回退，否则会直接导致链接失败：
+        #   ld.lld: error: unable to find library -lssl/-lcrypto
+        # - 若需要 TLS/NLA 等能力，请用 tools/build_openssl_ohos.sh 生成
+        #   third_party/deps/install-ohos/lib/libssl.a / libcrypto.a
         if(HAVE_OPENSSL)
-            target_link_libraries(qemu_hmos 
+            target_link_libraries(qemu_hmos
                 ${OPENSSL_SSL_LIB}
                 ${OPENSSL_CRYPTO_LIB}
             )
+        elseif(NOT BUILD_FOR_OHOS)
+            # 主机侧编译可尝试使用系统 OpenSSL（仅限非 OHOS）
+            target_link_libraries(qemu_hmos
+                -lssl
+                -lcrypto
+            )
         else()
-            # 回退到系统库（可能不存在）
-            target_link_libraries(qemu_hmos 
-        -lssl
-        -lcrypto
-    )
+            message(WARNING "⚠️  OpenSSL not found for OHOS; skip linking -lssl/-lcrypto. RDP/FreeRDP TLS features may be unavailable until OpenSSL static libs are built.")
         endif()
     endif()
 endif()
@@ -632,13 +693,17 @@ set_target_properties(qemu_hmos PROPERTIES
 
 # 确保 libqemu_hmos.so 也被复制到 intermediates 目录（HVIGOR 打包时会从这里读取）
 set(QEMU_HMOS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a/libqemu_hmos.so")
-set(QEMU_HMOS_DST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../build/default/intermediates/libs/default/arm64-v8a")
-set(QEMU_HMOS_DST "${QEMU_HMOS_DST_DIR}/libqemu_hmos.so")
+set(QEMU_HMOS_DST_APP_DIR "${HVIGOR_APP_INTERMEDIATES_LIBS_DIR}")
+set(QEMU_HMOS_DST_ENTRY_DIR "${HVIGOR_ENTRY_INTERMEDIATES_LIBS_DIR}")
+set(QEMU_HMOS_DST_APP "${QEMU_HMOS_DST_APP_DIR}/libqemu_hmos.so")
+set(QEMU_HMOS_DST_ENTRY "${QEMU_HMOS_DST_ENTRY_DIR}/libqemu_hmos.so")
 
 add_custom_command(
     TARGET qemu_hmos POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_HMOS_DST_DIR}
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${QEMU_HMOS_SRC} ${QEMU_HMOS_DST}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_HMOS_DST_APP_DIR}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_HMOS_DST_ENTRY_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${QEMU_HMOS_SRC} ${QEMU_HMOS_DST_APP}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${QEMU_HMOS_SRC} ${QEMU_HMOS_DST_ENTRY}
     COMMENT "Copying libqemu_hmos.so to intermediates/libs for HAP packaging"
 )
 endif()
@@ -646,33 +711,51 @@ endif()
 # ---- Bundle prebuilt QEMU core into native outputs (so Hvigor packs it) ----
 # Copy prebuilt core from cpp folder to Hvigor expected directory
 set(QEMU_FULL_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a/libqemu_full.so")
-set(QEMU_FULL_DST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../build/default/intermediates/libs/default/arm64-v8a")
-set(QEMU_FULL_DST "${QEMU_FULL_DST_DIR}/libqemu_full.so")
+set(QEMU_FULL_DST_APP_DIR "${HVIGOR_APP_INTERMEDIATES_LIBS_DIR}")
+set(QEMU_FULL_DST_ENTRY_DIR "${HVIGOR_ENTRY_INTERMEDIATES_LIBS_DIR}")
+set(QEMU_FULL_DST_ENTRY_STRIPPED_DIR "${HVIGOR_ENTRY_STRIPPED_LIBS_DIR}")
+set(QEMU_FULL_DST_APP "${QEMU_FULL_DST_APP_DIR}/libqemu_full.so")
+set(QEMU_FULL_DST_ENTRY "${QEMU_FULL_DST_ENTRY_DIR}/libqemu_full.so")
+set(QEMU_FULL_DST_ENTRY_STRIPPED "${QEMU_FULL_DST_ENTRY_STRIPPED_DIR}/libqemu_full.so")
 
 # Copy libslirp.so.0 (QEMU networking component - note the .0 suffix!)
 set(SLIRP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a/libslirp.so.0")
-set(SLIRP_DST "${QEMU_FULL_DST_DIR}/libslirp.so.0")
+set(SLIRP_DST_APP "${QEMU_FULL_DST_APP_DIR}/libslirp.so.0")
+set(SLIRP_DST_ENTRY "${QEMU_FULL_DST_ENTRY_DIR}/libslirp.so.0")
+set(SLIRP_DST_ENTRY_STRIPPED "${QEMU_FULL_DST_ENTRY_STRIPPED_DIR}/libslirp.so.0")
 if(EXISTS ${SLIRP_SRC})
     add_custom_command(
-        OUTPUT ${SLIRP_DST}
-        COMMAND ${CMAKE_COMMAND} -E copy ${SLIRP_SRC} ${SLIRP_DST}
+        OUTPUT ${SLIRP_DST_APP} ${SLIRP_DST_ENTRY} ${SLIRP_DST_ENTRY_STRIPPED}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_APP_DIR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_ENTRY_DIR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_ENTRY_STRIPPED_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy ${SLIRP_SRC} ${SLIRP_DST_APP}
+        COMMAND ${CMAKE_COMMAND} -E copy ${SLIRP_SRC} ${SLIRP_DST_ENTRY}
+        COMMAND ${CMAKE_COMMAND} -E copy ${SLIRP_SRC} ${SLIRP_DST_ENTRY_STRIPPED}
         DEPENDS ${SLIRP_SRC}
         COMMENT "Copying libslirp.so.0 to intermediates"
     )
-    add_custom_target(copy_slirp ALL DEPENDS ${SLIRP_DST})
+    add_custom_target(copy_slirp ALL DEPENDS ${SLIRP_DST_APP} ${SLIRP_DST_ENTRY} ${SLIRP_DST_ENTRY_STRIPPED})
 endif()
 
 # Copy libintl.so (gettext internationalization library)
 set(INTL_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a/libintl.so")
-set(INTL_DST "${QEMU_FULL_DST_DIR}/libintl.so")
+set(INTL_DST_APP "${QEMU_FULL_DST_APP_DIR}/libintl.so")
+set(INTL_DST_ENTRY "${QEMU_FULL_DST_ENTRY_DIR}/libintl.so")
+set(INTL_DST_ENTRY_STRIPPED "${QEMU_FULL_DST_ENTRY_STRIPPED_DIR}/libintl.so")
 if(EXISTS ${INTL_SRC})
     add_custom_command(
-        OUTPUT ${INTL_DST}
-        COMMAND ${CMAKE_COMMAND} -E copy ${INTL_SRC} ${INTL_DST}
+        OUTPUT ${INTL_DST_APP} ${INTL_DST_ENTRY} ${INTL_DST_ENTRY_STRIPPED}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_APP_DIR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_ENTRY_DIR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_ENTRY_STRIPPED_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy ${INTL_SRC} ${INTL_DST_APP}
+        COMMAND ${CMAKE_COMMAND} -E copy ${INTL_SRC} ${INTL_DST_ENTRY}
+        COMMAND ${CMAKE_COMMAND} -E copy ${INTL_SRC} ${INTL_DST_ENTRY_STRIPPED}
         DEPENDS ${INTL_SRC}
         COMMENT "Copying libintl.so to intermediates"
     )
-    add_custom_target(copy_intl ALL DEPENDS ${INTL_DST})
+    add_custom_target(copy_intl ALL DEPENDS ${INTL_DST_APP} ${INTL_DST_ENTRY} ${INTL_DST_ENTRY_STRIPPED})
 endif()
 
 # Also copy to oh_modules for runtime loading
@@ -680,14 +763,18 @@ set(QEMU_FULL_OH_DST "${CMAKE_CURRENT_SOURCE_DIR}/../../oh_modules/libqemu_full.
 
 if(EXISTS ${QEMU_FULL_SRC})
     add_custom_command(
-        OUTPUT ${QEMU_FULL_DST} ${QEMU_FULL_OH_DST}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_DIR}
-        COMMAND ${CMAKE_COMMAND} -E copy ${QEMU_FULL_SRC} ${QEMU_FULL_DST}
+        OUTPUT ${QEMU_FULL_DST_APP} ${QEMU_FULL_DST_ENTRY} ${QEMU_FULL_DST_ENTRY_STRIPPED} ${QEMU_FULL_OH_DST}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_APP_DIR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_ENTRY_DIR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_ENTRY_STRIPPED_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${QEMU_FULL_SRC} ${QEMU_FULL_DST_APP}
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${QEMU_FULL_SRC} ${QEMU_FULL_DST_ENTRY}
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${QEMU_FULL_SRC} ${QEMU_FULL_DST_ENTRY_STRIPPED}
         COMMAND ${CMAKE_COMMAND} -E copy ${QEMU_FULL_SRC} ${QEMU_FULL_OH_DST}
         DEPENDS ${QEMU_FULL_SRC}
-        COMMENT "Copying prebuilt libqemu_full.so to libs/arm64-v8a and oh_modules"
+        COMMENT "Copying prebuilt libqemu_full.so to intermediates (entry/build & build) and oh_modules"
     )
-    add_custom_target(copy_qemu_full ALL DEPENDS ${QEMU_FULL_DST} ${QEMU_FULL_OH_DST})
+    add_custom_target(copy_qemu_full ALL DEPENDS ${QEMU_FULL_DST_APP} ${QEMU_FULL_DST_ENTRY} ${QEMU_FULL_DST_ENTRY_STRIPPED} ${QEMU_FULL_OH_DST})
     add_dependencies(qemu_hmos copy_qemu_full)
 
     # 不再链接 libqemu_full.so，而是在运行时通过 dlopen 加载
@@ -702,15 +789,22 @@ endif()
 set(QEMU_ARCH_LIBS "libqemu_aarch64.so" "libqemu_x86_64.so" "libqemu_i386.so")
 foreach(ARCH_LIB ${QEMU_ARCH_LIBS})
     set(ARCH_LIB_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../libs/arm64-v8a/${ARCH_LIB}")
-    set(ARCH_LIB_DST "${QEMU_FULL_DST_DIR}/${ARCH_LIB}")
+    set(ARCH_LIB_DST_APP "${QEMU_FULL_DST_APP_DIR}/${ARCH_LIB}")
+    set(ARCH_LIB_DST_ENTRY "${QEMU_FULL_DST_ENTRY_DIR}/${ARCH_LIB}")
+    set(ARCH_LIB_DST_ENTRY_STRIPPED "${QEMU_FULL_DST_ENTRY_STRIPPED_DIR}/${ARCH_LIB}")
     if(EXISTS ${ARCH_LIB_SRC})
         add_custom_command(
-            OUTPUT ${ARCH_LIB_DST}
-            COMMAND ${CMAKE_COMMAND} -E copy ${ARCH_LIB_SRC} ${ARCH_LIB_DST}
+            OUTPUT ${ARCH_LIB_DST_APP} ${ARCH_LIB_DST_ENTRY} ${ARCH_LIB_DST_ENTRY_STRIPPED}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_APP_DIR}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_ENTRY_DIR}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${QEMU_FULL_DST_ENTRY_STRIPPED_DIR}
+            COMMAND ${CMAKE_COMMAND} -E copy ${ARCH_LIB_SRC} ${ARCH_LIB_DST_APP}
+            COMMAND ${CMAKE_COMMAND} -E copy ${ARCH_LIB_SRC} ${ARCH_LIB_DST_ENTRY}
+            COMMAND ${CMAKE_COMMAND} -E copy ${ARCH_LIB_SRC} ${ARCH_LIB_DST_ENTRY_STRIPPED}
             DEPENDS ${ARCH_LIB_SRC}
             COMMENT "Copying ${ARCH_LIB} to intermediates for HAP packaging"
         )
-        add_custom_target(copy_${ARCH_LIB} ALL DEPENDS ${ARCH_LIB_DST})
+        add_custom_target(copy_${ARCH_LIB} ALL DEPENDS ${ARCH_LIB_DST_APP} ${ARCH_LIB_DST_ENTRY} ${ARCH_LIB_DST_ENTRY_STRIPPED})
         message(STATUS "✅ Will copy ${ARCH_LIB} to HAP")
     else()
         message(STATUS "⚠️  ${ARCH_LIB} not found at ${ARCH_LIB_SRC}")

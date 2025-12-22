@@ -1,0 +1,149 @@
+﻿diff --git a/backends/tpm/tpm_emulator.c b/backends/tpm/tpm_emulator.c
+index f10b9074fb..d6a409794a 100644
+--- a/backends/tpm/tpm_emulator.c
++++ b/backends/tpm/tpm_emulator.c
+@@ -85,8 +85,99 @@ struct TPMEmulator {
+ 
+     bool relock_storage;
+     VMChangeStateEntry *vmstate;
++
++#ifdef __OHOS__
++    /*
++     * HarmonyOS: app 杩涚▼鍐呰繍琛?QEMU锛坕n-process锛夋椂锛屼笉鑳戒緷璧?swtpm 澶栭儴杩涚▼锛?+     * 涔熷緢闅惧仛 /dev/tpm0 passthrough銆備负浜嗛伩鍏?鈥?tpmdev emulator 缂?chardev鈥?+     * 鐩存帴瀵艰嚧 QEMU 鎶ラ敊/exit(1) 杩涜€屽穿婧冿紝杩欓噷鎻愪緵涓€涓瀬绠€鍐呯疆鍚庣锛?+     * - 浠呬繚璇佸懡浠よ鍙傛暟鍙敤銆佷笉宕╂簝
++     * - 杩斿洖鏈€灏忓彲鎺ュ彈鐨?TPM2 鍝嶅簲锛堜笉鎵胯閫氳繃 Windows 11 瀹屾暣 TPM 璁よ瘉锛?+     */
++    bool hmos_builtin;
++#endif
+ };
+ 
++#ifdef __OHOS__
++/* ------------------------- HarmonyOS built-in minimal TPM2 backend ------------------------- */
++static uint16_t tpm_hmos_be16(const uint8_t *p)
++{
++    return (uint16_t)((uint16_t)p[0] << 8) | (uint16_t)p[1];
++}
++
++static uint32_t tpm_hmos_be32(const uint8_t *p)
++{
++    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
++}
++
++static void tpm_hmos_write_be16(uint8_t *p, uint16_t v)
++{
++    p[0] = (uint8_t)((v >> 8) & 0xff);
++    p[1] = (uint8_t)(v & 0xff);
++}
++
++static void tpm_hmos_write_be32(uint8_t *p, uint32_t v)
++{
++    p[0] = (uint8_t)((v >> 24) & 0xff);
++    p[1] = (uint8_t)((v >> 16) & 0xff);
++    p[2] = (uint8_t)((v >> 8) & 0xff);
++    p[3] = (uint8_t)(v & 0xff);
++}
++
++/* TPM2 headers/constants (minimal) */
++#define TPM2_ST_NO_SESSIONS 0x8001
++#define TPM2_RC_SUCCESS     0x00000000
++#define TPM2_CC_SELF_TEST   0x00000143
++#define TPM2_CC_STARTUP     0x00000144
++#define TPM2_CC_GET_RANDOM  0x0000017b
++
++static void tpm_hmos_write_resp_hdr(uint8_t *out, uint16_t tag, uint32_t size, uint32_t rc)
++{
++    tpm_hmos_write_be16(out + 0, tag);
++    tpm_hmos_write_be32(out + 2, size);
++    tpm_hmos_write_be32(out + 6, rc);
++}
++
++static void tpm_hmos_handle_tpm2_minimal(TPMBackendCmd *cmd)
++{
++    /* 榛樿鍐欎竴涓?鈥滄垚鍔?+ 绌?payload鈥?鐨?TPM2 鍝嶅簲锛岀‘淇濅笉宕╂簝 */
++    if (!cmd || !cmd->out || cmd->out_len < 10) {
++        return;
++    }
++
++    uint16_t tag = TPM2_ST_NO_SESSIONS;
++    uint32_t cc = 0;
++    if (cmd->in && cmd->in_len >= 10) {
++        tag = tpm_hmos_be16(cmd->in + 0);
++        cc = tpm_hmos_be32(cmd->in + 6);
++        /* 鍏煎锛氬鏋滆姹?tag 鏄?sessions锛屼篃鐓ф牱鍥?no-sessions锛堟渶淇濆畧锛?*/
++        (void)tag;
++    }
++
++    if (cc == TPM2_CC_GET_RANDOM && cmd->in_len >= 12 && cmd->out_len >= 12) {
++        /* TPM2_GetRandom: req payload 鏄?2 bytes */
++        uint16_t want = tpm_hmos_be16(cmd->in + 10);
++        uint16_t can = (uint16_t)((cmd->out_len > 12) ? (cmd->out_len - 12) : 0);
++        uint16_t n = (want < can) ? want : can;
++
++        tpm_hmos_write_resp_hdr(cmd->out, TPM2_ST_NO_SESSIONS, (uint32_t)(10 + 2 + n), TPM2_RC_SUCCESS);
++        tpm_hmos_write_be16(cmd->out + 10, n);
++        for (uint16_t i = 0; i < n; i++) {
++            /* 绠€鏄撲吉闅忔満锛氫笉鍋氬姞瀵嗗己搴︽壙璇猴紙Known issue 浼氳鏄庯級 */
++            cmd->out[12 + i] = (uint8_t)((i * 131) ^ 0x5a);
++        }
++        return;
++    }
++
++    if (cc == TPM2_CC_STARTUP || cc == TPM2_CC_SELF_TEST) {
++        tpm_hmos_write_resp_hdr(cmd->out, TPM2_ST_NO_SESSIONS, 10, TPM2_RC_SUCCESS);
++        return;
++    }
++
++    tpm_hmos_write_resp_hdr(cmd->out, TPM2_ST_NO_SESSIONS, 10, TPM2_RC_SUCCESS);
++}
++#endif
++
+ struct tpm_error {
+     uint32_t tpm_result;
+     const char *string;
+@@ -249,6 +340,13 @@ static void tpm_emulator_handle_request(TPMBackend *tb, TPMBackendCmd *cmd,
+ 
+     trace_tpm_emulator_handle_request();
+ 
++#ifdef __OHOS__
++    if (tpm_emu->hmos_builtin) {
++        tpm_hmos_handle_tpm2_minimal(cmd);
++        return;
++    }
++#endif
++
+     if (tpm_emulator_set_locality(tpm_emu, cmd->locty, errp) < 0 ||
+         tpm_emulator_unix_tx_bufs(tpm_emu, cmd->in, cmd->in_len,
+                                   cmd->out, cmd->out_len,
+@@ -632,8 +730,17 @@ static int tpm_emulator_handle_device_opts(TPMEmulator *tpm_emu, QemuOpts *opts)
+ 
+     value = qemu_opt_get(opts, "chardev");
+     if (!value) {
++#ifdef __OHOS__
++        /* HarmonyOS: allow missing chardev and fall back to built-in minimal TPM2. */
++        tpm_emu->hmos_builtin = true;
++        tpm_emu->tpm_version = TPM_VERSION_2_0;
++        tpm_emu->caps = 0;
++        fprintf(stderr, "[TPM_HMOS] built-in minimal TPM2 enabled (no chardev)\n");
++        return 0;
++#else
+         error_report("tpm-emulator: parameter 'chardev' is missing");
+         goto err;
++#endif
+     }
+ 
+     dev = qemu_chr_find(value);
+@@ -1053,9 +1160,14 @@ static void tpm_emulator_inst_finalize(Object *obj)
+ 
+     tpm_emulator_shutdown(tpm_emu);
+ 
+-    object_unref(OBJECT(tpm_emu->data_ioc));
++    if (tpm_emu->data_ioc) {
++        object_unref(OBJECT(tpm_emu->data_ioc));
++        tpm_emu->data_ioc = NULL;
++    }
+ 
+-    qemu_chr_fe_deinit(&tpm_emu->ctrl_chr, false);
++    if (tpm_emu->options && tpm_emu->options->chardev) {
++        qemu_chr_fe_deinit(&tpm_emu->ctrl_chr, false);
++    }
+ 
+     qapi_free_TPMEmulatorOptions(tpm_emu->options);
+ 
