@@ -1,6 +1,7 @@
 /**
  * VNC 独立窗口 Ability
  * 用于在新窗口中显示 VNC 远程桌面
+ * 原生 VNC 独立窗口（LibVNCClient）
  */
 import UIAbility from '@ohos.app.ability.UIAbility'
 import Want from '@ohos.app.ability.Want'
@@ -14,7 +15,7 @@ export default class VNCWindowAbility extends UIAbility {
   
   // 从 want 中获取的参数
   private vmName: string = ''
-  private vncPort: number = 5700  // WebSocket 端口（noVNC需要）
+  private vncPort: number = 5901  // RFB 端口（原生）
   private vncHost: string = '127.0.0.1'
   
   onCreate(want: Want, launchParam: object): void {
@@ -45,7 +46,6 @@ export default class VNCWindowAbility extends UIAbility {
       // 设置窗口标题为 VM 名称
       try {
         win.setWindowDecorVisible(true)
-        // 窗口标题会在页面中通过自定义标题栏显示
       } catch (e) {
         hilog.warn(0x0000, TAG, '设置窗口装饰失败: %{public}s', (e as Error).message)
       }
@@ -54,8 +54,10 @@ export default class VNCWindowAbility extends UIAbility {
       hilog.error(0x0000, TAG, '获取主窗口失败: %{public}s', err.message)
     })
     
-    // 加载 VNC 查看器页面
-    windowStage.loadContent('pages/VNCWindow', (err, data) => {
+    const pageName = 'pages/VNCNativeViewer'
+    hilog.info(0x0000, TAG, '加载页面: %{public}s', pageName)
+    
+    windowStage.loadContent(pageName, (err, data) => {
       if (err.code) {
         hilog.error(0x0000, TAG, '加载内容失败: %{public}d, %{public}s', err.code, err.message)
         return
@@ -80,4 +82,3 @@ export default class VNCWindowAbility extends UIAbility {
     hilog.info(0x0000, TAG, 'onBackground')
   }
 }
-

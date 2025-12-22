@@ -12,6 +12,11 @@ function hasVncMethods(obj: QemuAPI): boolean {
     api.vncGetFrame !== undefined;
 }
 
+function hasVncInputMethods(obj: QemuAPI): boolean {
+  const api = obj as QemuAPI
+  return api.vncSendPointer !== undefined && api.vncSendKey !== undefined
+}
+
 // 辅助函数：安全调用 VNC 方法（无参数）
 function callVncMethod0<T>(methodName: string): T | null {
   try {
@@ -61,10 +66,21 @@ function callVncMethod3<T>(methodName: string, arg1: number, arg2: string, arg3:
   }
 }
 
-class VNCNativeClient {
+export interface VNCNativeClientApi {
+  isAvailable(): boolean
+  create(): boolean
+  connect(host: string, port: number): Promise<boolean>
+  disconnect(): void
+  getFrame(): VncFrame | null
+  sendPointer(x: number, y: number, buttonMask: number): boolean
+  sendKey(keysym: number, down: boolean): boolean
+}
+
+class VNCNativeClient implements VNCNativeClientApi {
   private sessionId: number | null = null
   private host: string = '127.0.0.1'
   private port: number = 5901
+  private lastFrameLogMs: number = 0
 
   isAvailable(): boolean {
     if (hasVncMethods(qemu)) {
@@ -136,16 +152,57 @@ class VNCNativeClient {
     }
     if (hasVncMethods(qemu)) {
       const frame = callVncMethod1<VncFrame | null>('vncGetFrame', this.sessionId)
-    if (frame) {
-      hilog.debug(0x0000, 'VNC_CLIENT', `获取帧成功: ${frame.width}x${frame.height}`)
-    } else {
-      hilog.warn(0x0000, 'VNC_CLIENT', '获取帧失败或无新帧')
-    }
-    return frame
+      // 高频日志会严重拖慢 UI；这里做节流：最多 2 秒打一次
+      const now = Date.now()
+      if (now - this.lastFrameLogMs > 2000) {
+        this.lastFrameLogMs = now
+        if (frame) {
+          hilog.info(0x0000, 'VNC_CLIENT', `帧更新: ${frame.width}x${frame.height}`)
+        } else {
+          hilog.info(0x0000, 'VNC_CLIENT', '无新帧')
+        }
+      }
+      return frame
     }
     hilog.error(0x0000, 'VNC_CLIENT', 'vncGetFrame函数不可用')
     return null
   }
+
+  sendPointer(x: number, y: number, buttonMask: number): boolean {
+    if (this.sessionId == null) return false
+    const api = qemu as QemuAPI
+    if (hasVncMethods(qemu) && hasVncInputMethods(qemu) && api.vncSendPointer) {
+      try {
+        return api.vncSendPointer(this.sessionId, x, y, buttonMask) as boolean
+      } catch (_) {
+        return false
+      }
+    }
+    return false
+  }
+
+  sendKey(keysym: number, down: boolean): boolean {
+    if (this.sessionId == null) return false
+    const api = qemu as QemuAPI
+    if (hasVncMethods(qemu) && hasVncInputMethods(qemu) && api.vncSendKey) {
+      try {
+        return api.vncSendKey(this.sessionId, keysym, down) as boolean
+      } catch (_) {
+        return false
+      }
+    }
+    return false
+  }
 }
 
-export default new VNCNativeClient()
+const vncNativeClient: VNCNativeClientApi = new VNCNativeClient()
+export default vncNativeClient
+
+// 额外导出：避免部分 ArkTS 工具链对 default export 的类型推断不完整
+export function vncSendPointer(x: number, y: number, buttonMask: number): boolean {
+  return vncNativeClient.sendPointer(x, y, buttonMask)
+}
+
+export function vncSendKey(keysym: number, down: boolean): boolean {
+  return vncNativeClient.sendKey(keysym, down)
+}

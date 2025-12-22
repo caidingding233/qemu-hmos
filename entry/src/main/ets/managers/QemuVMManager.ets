@@ -36,6 +36,8 @@ interface NativeQemuModule {
   setDeviceInfo?: (deviceType: number, model: string) => void
   kvmSupported?: () => boolean
   startVm: (config: NativeVmConfig) => boolean
+  stopVm?: (name: string) => boolean
+  getVmStatus?: (name: string) => string
   writeToVmConsole?: (data: string) => void
   setConsoleCallback?: (callback: (data: string) => void) => void
   // 通过 QMP screendump 获取 VM 截图
@@ -452,6 +454,17 @@ export class QemuVMManager {
    */
   async stopVM(vmId: string): Promise<StopVMResult> {
     try {
+      // Worker 不可用时直接调用 NAPI（否则 sendCommand 会把 stop_vm 忽略掉，表现为“点停止关不了机”）
+      if (!this.workerAvailable) {
+        const native = await this.ensureNative()
+        try {
+          const ok = native.stopVm ? Boolean(native.stopVm(vmId)) : false
+          return { success: ok, message: ok ? '已通过 NAPI 关闭虚拟机' : 'NAPI stopVm 不可用或返回 false' }
+        } catch (err) {
+          return { success: false, message: `直接 NAPI 关闭失败: ${err}` }
+        }
+      }
+
       const response = await this.sendCommand({
         command: 'stop_vm',
         vmId: vmId

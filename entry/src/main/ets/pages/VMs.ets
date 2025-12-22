@@ -129,9 +129,7 @@ struct VMsPage {
         this.vms.push(newVm);
         await this.saveVms();
         this.showCreateDialog = false;
-        // 成功启动后进入 VNC 页面
-        router.pushUrl({ url: 'pages/VNCViewer', params: { vmInfo: { name: newVm.name, vncPort: 5701 } } })
-          .catch((e: Error) => console.error('打开VNC失败:', e));
+        // 成功启动后返回列表（新架构使用 Index 页的 VNCWindowAbility 打开原生 VNC）
         this.startVMStatusMonitoring(newVm.name);
       } else {
         this.error = 'Failed to start VM';
@@ -185,9 +183,7 @@ struct VMsPage {
       if (success) {
         vm.status = 'running';
         this.saveVms();
-        // 进入 VNC 页面
-        router.pushUrl({ url: 'pages/VNCViewer', params: { vmInfo: { name: vm.name, vncPort: 5701 } } })
-          .catch((e: Error) => console.error('打开VNC失败:', e));
+        // 新架构使用 Index 页的 VNCWindowAbility 打开原生 VNC
         this.startVMStatusMonitoring(vm.name);
       }
     } catch (e) {

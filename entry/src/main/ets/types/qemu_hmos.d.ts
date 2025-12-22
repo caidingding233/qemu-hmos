@@ -62,6 +62,8 @@ declare module 'qemu_hmos' {
       height: number;
       pixels: ArrayBuffer;
     } | null;
+    vncSendPointer(id: number, x: number, y: number, buttonMask: number): boolean;
+    vncSendKey(id: number, keysym: number, down: boolean): boolean;
     
     // 测试和诊断
     testFunction(): boolean;

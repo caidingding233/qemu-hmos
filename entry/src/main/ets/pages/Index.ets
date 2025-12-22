@@ -1,4 +1,4 @@
-// QEMU-HMOS 主页面 - 左侧导航栏 + 创建向导 + 动画 + 沉浸式 + 深色模式
+// Aether Engine 主页面 - 左侧导航栏 + 创建向导 + 动画 + 沉浸式 + 深色模式
 // 目标平台：平板/电脑
 import hilog from '@ohos.hilog'
 import common from '@ohos.app.ability.common'
@@ -20,6 +20,7 @@ import { CustomTitleBar } from '../components/CustomTitleBar'
 import { CommandPalette, VMInfo } from '../components/CommandPalette'
 import { VMCreateWizard, WizardResult } from '../components/VMCreateWizard'
 import deviceInfo from '@ohos.deviceInfo'
+import { vncSettings } from '../managers/VNCSettings'
 
 // ========== 类型定义 ==========
 interface DeviceOptionBase {
@@ -57,6 +58,7 @@ interface QemuModule {
   kvmSupported: () => boolean
   startVm: (config: object) => boolean
   stopVm: (name: string) => boolean
+  getVmStatus?: (name: string) => string
   getVmLogs: (name: string, startLine?: number) => string[]
   checkCoreLib?: () => CoreDiag
   getDeviceCapabilities?: () => DeviceCapabilities
@@ -66,8 +68,7 @@ interface QemuModule {
   clearDeviceCache?: () => boolean     // 清除设备缓存
 }
 
-interface VNCViewerParams { vmInfo: VNCVmInfo }
-interface VNCVmInfo { name: string; vncPort: number }
+// (noVNC 已移除)
 interface RDPViewerParams { vmId: string; vmName: string; rdpHost: string; rdpPort: number }
 
 // 支持的架构
@@ -143,7 +144,7 @@ function getStatusDisplayName(status: VMStatus): string {
     case 'creating': return '创建中'
     case 'preparing': return '准备中'
     case 'starting': return '启动中'
-    case 'stopping': return '停止中'
+    case 'stopping': return '关闭中'
     case 'failed': return '出错'
     default: return '未知'
   }
@@ -213,6 +214,7 @@ struct Index {
   @State showSidebar: boolean = true
   // 窗口宽度（用于响应式布局）
   @State windowWidth: number = 1920
+  @State windowHeight: number = 1080
   // 搜索关键字（用于过滤 VM 列表）
   @State searchKeyword: string = ''
   
@@ -233,6 +235,7 @@ struct Index {
   @State previewLoading: boolean = false
   @State previewError: string = ''
   private previewTimerId: number = -1
+  private statusTimerId: number = -1
   private readonly PREVIEW_INTERVAL: number = 2000  // 每 2 秒刷新一次预览
   
   // 设置项
@@ -243,10 +246,8 @@ struct Index {
   @State settingsAutoStartVnc: boolean = true
   @State settingsDefaultDisplay: string = 'vnc' // 'vnc' | 'rdp' - 默认显示方式
   
-  // VNC 设置
-  @State settingsVncMode: string = 'novnc' // 'native' | 'novnc'
+  // VNC 设置（仅原生 VNC）
   @State settingsVncNativePort: number = 5901  // 原生VNC端口 (RFB)
-  @State settingsVncNoVNCPort: number = 5701   // noVNC端口 (WebSocket)
 
   // 动态数据（从代码获取）
   private kvmAvailable: boolean = false
@@ -263,14 +264,48 @@ struct Index {
   // ========== 生命周期 ==========
   aboutToAppear(): void {
     this.setupImmersive()
-    this.initStore()
+    // initStore 是异步的：完成后再启动状态轮询，保证“安装模式打开新窗口”时主窗口也能看到状态变化
+    this.initStore().then(() => {
+      this.refreshVmStatusesOnce()
+      this.startStatusTimer()
+    }).catch((_e: Error) => {
+      // initStore 内部已有日志
+    })
+    this.initVncSettings()
     this.loadCapabilities()
     this.detectKvmCandidateDevice()
     this.startPreviewTimer()
   }
+
+  private async initVncSettings(): Promise<void> {
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext
+      await vncSettings.init(ctx)
+      const s = vncSettings.getSettings()
+      this.settingsVncNativePort = s.nativePort
+      hilog.info(0x0000, 'INDEX', '已加载 VNC 设置: nativePort=%{public}d', this.settingsVncNativePort)
+    } catch (e) {
+      hilog.error(0x0000, 'INDEX', '加载 VNC 设置失败: %{public}s', (e as Error).message)
+    }
+  }
+
+  private persistVncPort(nativePort: number): void {
+    this.settingsVncNativePort = nativePort
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext
+      vncSettings.init(ctx).then(async () => {
+        await vncSettings.setNativePort(nativePort)
+      }).catch((e: Error) => {
+        hilog.error(0x0000, 'INDEX', '保存 VNC 端口失败: %{public}s', e.message)
+      })
+    } catch (e) {
+      hilog.error(0x0000, 'INDEX', '保存 VNC 端口异常: %{public}s', (e as Error).message)
+    }
+  }
   
   aboutToDisappear(): void {
     this.stopPreviewTimer()
+    this.stopStatusTimer()
   }
   
   // 启动预览定时器
@@ -288,6 +323,56 @@ struct Index {
     if (this.previewTimerId !== -1) {
       clearInterval(this.previewTimerId)
       this.previewTimerId = -1
+    }
+  }
+
+  // ========== VM 状态同步 ==========
+  // 说明：
+  // - VNC/RDP 会在新的 Ability 窗口中打开，主窗口不会自动收到状态变化
+  // - 这里通过 NAPI 的 getVmStatus 做轮询校准，并写回 VmStore，保证主窗口能看到真实状态
+  private startStatusTimer(): void {
+    if (this.statusTimerId !== -1) return
+    this.statusTimerId = setInterval((): void => {
+      this.refreshVmStatusesOnce()
+    }, 2000)
+  }
+
+  private stopStatusTimer(): void {
+    if (this.statusTimerId !== -1) {
+      clearInterval(this.statusTimerId)
+      this.statusTimerId = -1
+    }
+  }
+
+  private async refreshVmStatusesOnce(): Promise<void> {
+    try {
+      if (!qemuModule?.getVmStatus) return
+      let changed = false
+      for (const vm of this.vms) {
+        let live = ''
+        try {
+          live = String(qemuModule.getVmStatus(vm.name))
+        } catch (_) {
+          live = ''
+        }
+        if (!live) continue
+        // 兼容 native 可能返回的 shutdown
+        const normalized = (live === 'shutdown') ? 'stopped' : live
+        const allowed: VMStatus[] = ['creating', 'preparing', 'starting', 'running', 'stopping', 'stopped', 'failed', 'paused', 'backup']
+        if (!allowed.includes(normalized as VMStatus)) continue
+        if (vm.status !== (normalized as VMStatus)) {
+          vm.status = normalized as VMStatus
+          changed = true
+        }
+      }
+      if (changed) {
+        // 重要：vms 是 @State 数组，元素是 class 实例。仅修改字段可能不会触发 UI 刷新，
+        // 这里通过重新赋值数组来强制触发渲染更新。
+        this.vms = [...this.vms]
+        await this.saveAllVMs()
+      }
+    } catch (e) {
+      hilog.warn(0x0000, 'INDEX', '刷新 VM 状态失败: %{public}s', (e as Error).message)
     }
   }
   
@@ -336,13 +421,30 @@ struct Index {
       // 获取初始窗口宽度
       const props = win.getWindowProperties()
       this.windowWidth = px2vp(props.windowRect.width)
+      this.windowHeight = px2vp(props.windowRect.height)
       // 监听窗口大小变化
       win.on('windowSizeChange', (size: window.Size): void => {
         this.windowWidth = px2vp(size.width)
+        this.windowHeight = px2vp(size.height)
       })
     } catch (e) {
       hilog.error(0x0000, 'INDEX', '沉浸式失败: %{public}s', (e as Error).message)
     }
+  }
+
+  // 右侧预览卡片高度：随窗口大小自适应（大屏更大，浮窗/小窗不至于挤爆）
+  private getPreviewCardHeight(): number {
+    // 基于窗口高度的 36%，再做 clamp
+    const raw = Math.floor(this.windowHeight * 0.36)
+    const minH = 260
+    const maxH = 560
+    const clamped = Math.max(minH, Math.min(maxH, raw))
+
+    // 超宽屏稍微再拉高一点，视觉更平衡
+    if (this.windowWidth >= 1600) {
+      return Math.min(maxH, clamped + 40)
+    }
+    return clamped
   }
 
   // 加载设备能力 - 动态从 QEMU 模块获取
@@ -536,7 +638,8 @@ struct Index {
         m.name = p.name
         m.osType = p.osType
         m.createdAt = p.createdAt
-        m.status = 'stopped'
+        // 恢复持久化状态，避免每次进页面都把运行中的 VM 显示成“已关机”
+        m.status = (p.status || 'stopped') as VMStatus
 
         const persistedCfg = p.config as VMConfigPersistExt
         const cfg = new QemuConfig()
@@ -781,15 +884,19 @@ struct Index {
 
   // 刷新 keymaps 可用性，供启动模式弹窗按钮禁用判断
   private async refreshKeymapsAvailability(): Promise<void> {
+    hilog.info(0x0000, 'INDEX', '>>> refreshKeymapsAvailability 开始 [v3-1225] <<<')
     try {
       const ctx = getContext(this) as common.UIAbilityContext
+      hilog.info(0x0000, 'INDEX', 'ctx 获取成功')
       const dir = await KeymapsManager.ensureKeymaps(ctx)
+      hilog.info(0x0000, 'INDEX', 'ensureKeymaps 返回: %{public}s', dir || '(null)')
       this.keymapsAvailable = !!dir
       hilog.info(0x0000, 'INDEX', 'keymapsAvailable=%{public}s', String(this.keymapsAvailable))
     } catch (e) {
       this.keymapsAvailable = false
       hilog.error(0x0000, 'INDEX', '刷新 keymaps 状态失败: %{public}s', (e as Error).message)
     }
+    hilog.info(0x0000, 'INDEX', '>>> refreshKeymapsAvailability 结束 <<<')
   }
 
   private async openConsole(vmId: string): Promise<void> {
@@ -922,6 +1029,12 @@ struct Index {
       vm.config.isoPath = targetIso
       await this.saveAllVMs()
       promptAction.showToast({ message: 'ISO 已复制到沙箱并挂载', duration: 2000 })
+      // UX：选完 ISO 自动关闭弹窗，避免“必须手动关 Sheet 才能继续用”
+      try {
+        this.closeSheet()
+      } catch (_) {
+        // ignore
+      }
     } catch (e) {
       hilog.error(0x0000, 'INDEX', '选择/复制 ISO 失败: %{public}s', (e as Error).message)
       promptAction.showToast({ message: 'ISO 选择失败: ' + (e as Error).message, duration: 2500 })
@@ -1061,15 +1174,23 @@ struct Index {
    *   - 'install': 安装模式 (VNC) - 系统安装时使用
    */
   private async startVM(vm: VMMeta, bootMode: 'enhanced' | 'standard' | 'debug' | 'install'): Promise<void> {
+    hilog.info(0x0000, 'INDEX', '>>> startVM 开始: vm=%{public}s, bootMode=%{public}s <<<', vm.name, bootMode)
     try {
       this.isLoading = true
       this.closeSheet()
       vm.status = 'starting'
+      this.vms = [...this.vms]
+      hilog.info(0x0000, 'INDEX', 'Sheet 已关闭，状态设为 starting')
       const ctx = getContext(this) as common.UIAbilityContext
       
       // 确保 UEFI 固件存在
+      hilog.info(0x0000, 'INDEX', '>>> 检查 UEFI 固件 <<<')
       const firmware = await FirmwareManager.ensureUefi(ctx)
-      if (!firmware) { this.errorMessage = '缺少UEFI固件'; vm.status = 'failed'; return }
+      hilog.info(0x0000, 'INDEX', '固件路径: %{public}s', firmware || '(null)')
+      if (!firmware) { 
+        hilog.error(0x0000, 'INDEX', '固件不存在，终止启动')
+        this.errorMessage = '缺少UEFI固件'; vm.status = 'failed'; return 
+      }
       
       // 非调试模式需要 keymaps（VNC/RDP都需要显示）
       let qemuDataDir: string | null = null
@@ -1106,21 +1227,61 @@ struct Index {
           console.warn('拷贝 ISO 到沙箱失败，仍然使用原路径:', (e as Error).message)
         }
       }
+
+      // install 模式必须挂载 ISO，否则等同于“空盘启动”，UEFI 会无事可做，看起来像卡死
+      // 这里直接拦截，避免用户白等数小时
+      hilog.info(0x0000, 'INDEX', '启动参数检查: bootMode=%{public}s, isoPath=%{public}s',
+        bootMode, isoPath || '(empty)')
+      if (bootMode === 'install' && !isoPath) {
+        hilog.error(0x0000, 'INDEX', 'install 模式缺少 ISO，终止启动')
+        this.errorMessage = '安装模式需要先选择 ISO 镜像'
+        promptAction.showToast({ message: '请先为该 VM 选择 ISO（安装镜像）', duration: 2500 })
+        vm.status = 'failed'
+        return
+      }
+      // install 模式 ISO 路径存在，但文件可能已被删除/拷贝失败（UI 看起来“挂载了”，实际 QEMU 读不到）
+      if (bootMode === 'install' && isoPath) {
+        try {
+          await fs.access(isoPath)
+          const st = await fs.stat(isoPath)
+          if (st.size < 1024 * 1024) { // <1MB 基本不可能是可用 ISO
+            throw new Error(`ISO 文件过小: ${st.size} bytes`)
+          }
+        } catch (e) {
+          hilog.error(0x0000, 'INDEX', 'install ISO 不可用，终止启动: %{public}s', (e as Error).message)
+          this.errorMessage = 'ISO 文件不可用，请重新选择'
+          promptAction.showToast({ message: 'ISO 文件不存在/不可读，请重新选择 ISO', duration: 3000 })
+          // 清空，避免下次继续误判“已挂载”
+          vm.config.isoPath = ''
+          await this.saveAllVMs()
+          vm.status = 'failed'
+          return
+        }
+      }
       
       // 根据启动模式配置 QEMU 参数
       let displayMode: string
       let nographic: boolean
       
+      // 使用设置中的 VNC 端口
+      // VNC display number = 端口 - 5900（如：5901 -> display :1）
+      const nativePort = this.settingsVncNativePort  // 原生 RFB 端口从设置读取
+      const vncDisplay = nativePort - 5900  // 计算 display number
+      
+      hilog.info(0x0000, 'INDEX', 'VNC 配置: nativePort=%{public}d, vncDisplay=%{public}d',
+        nativePort, vncDisplay)
+      
       switch (bootMode) {
         case 'enhanced':
           // 增强启动：VNC + RDP端口转发，最终通过FreeRDP连接
-          displayMode = 'vnc=127.0.0.1:1'
+          // 使用 0.0.0.0 监听所有接口，允许其他应用连接
+          displayMode = `vnc=0.0.0.0:${vncDisplay}`
           nographic = false
           break
         case 'standard':
         case 'install':
-          // 普通启动/安装：VNC + WebSocket
-          displayMode = 'vnc=127.0.0.1:1,websocket=5701'
+          // 普通启动/安装：原生 VNC（RFB）
+          displayMode = `vnc=0.0.0.0:${vncDisplay}`
           nographic = false
           break
         case 'debug':
@@ -1141,6 +1302,23 @@ struct Index {
       // 将最终使用的 ISO 路径写回 VM 配置，便于后续查看/重启
       vm.config.isoPath = isoPath
 
+      // 安装模式(aarch64)显示设备兜底：
+      // - Windows ARM 安装/UEFI 阶段对 virtio-gpu-device(MMIO) 可能没有驱动，VNC 会长期停留在 "Display Output Is Not Active"
+      // - ramfb 在固件阶段最稳定，优先保证“能出画面”
+      let effectiveDisplayDevice: string | undefined = vm.config.displayDevice
+      if (bootMode === 'install' && (vm.config.archType || 'aarch64') === 'aarch64') {
+        if (!effectiveDisplayDevice || effectiveDisplayDevice === 'auto' || effectiveDisplayDevice === 'none' ||
+          effectiveDisplayDevice.startsWith('virtio-gpu')) {
+          effectiveDisplayDevice = 'ramfb'
+          hilog.warn(0x0000, 'INDEX', 'install(aarch64) 显示设备兜底为 ramfb（原=%{public}s）',
+            vm.config.displayDevice || '(empty)')
+        }
+      }
+
+      hilog.info(0x0000, 'INDEX', '>>> 构建 VM 配置 <<<')
+      hilog.info(0x0000, 'INDEX', 'displayMode=%{public}s, nographic=%{public}s, keymapsAvailable=%{public}s',
+        displayMode, String(nographic), String(keymapsAvailable))
+      
       const config = {
         name: vm.name,
         archType: (vm.config.archType || 'aarch64') as 'aarch64' | 'x86_64' | 'i386',
@@ -1155,16 +1333,20 @@ struct Index {
         qemuDataDir: qemuDataDir || undefined,
         keymapsAvailable: keymapsAvailable,
         // 缺少 keymaps 时，强制禁用显示设备
-        displayDevice: (!keymapsAvailable && bootMode !== 'debug') ? 'none' : vm.config.displayDevice,
+        displayDevice: (!keymapsAvailable && bootMode !== 'debug') ? 'none' : effectiveDisplayDevice,
         // 将高级硬件配置下传到 Native 层
         machine: vm.config.machine,
         networkDevice: vm.config.networkDevice,
         audioDevice: vm.config.audioDevice
       } as ManagerVMConfig
       
+      hilog.info(0x0000, 'INDEX', '>>> 调用 manager.startVM <<<')
       const result = await manager.startVM(config)
+      hilog.info(0x0000, 'INDEX', 'startVM 返回: success=%{public}s, message=%{public}s', 
+        String(result.success), result.message || '(无消息)')
       if (result.success) {
         vm.status = 'running'
+        this.vms = [...this.vms]
         
         // 根据启动模式在新窗口中打开对应界面
         switch (bootMode) {
@@ -1175,6 +1357,7 @@ struct Index {
           case 'standard':
           case 'install':
             // 普通启动/安装：在新窗口打开 VNC
+            hilog.info(0x0000, 'INDEX', '>>> 准备打开 VNC 窗口 (install 模式) <<<')
             this.openVNCWindow(vm)
             break
           case 'debug':
@@ -1184,23 +1367,47 @@ struct Index {
         }
         } else {
         vm.status = 'failed'
+        this.vms = [...this.vms]
         this.errorMessage = result.message || '启动失败'
       }
     } catch (e) {
+      hilog.error(0x0000, 'INDEX', '>>> startVM 异常: %{public}s <<<', (e as Error).message)
       vm.status = 'failed'
+      this.vms = [...this.vms]
       this.errorMessage = (e as Error).message
     } finally {
       this.isLoading = false
       this.startTargetVM = null
       await this.saveAllVMs()
+      hilog.info(0x0000, 'INDEX', '>>> startVM 结束 <<<')
     }
   }
 
   private async stopVM(vm: VMMeta): Promise<void> {
     try {
       this.isLoading = true; vm.status = 'stopping'
-      await QemuVMManager.getInstance().stopVM(vm.name)
-      vm.status = 'stopped'
+      this.vms = [...this.vms]
+      const r = await QemuVMManager.getInstance().stopVM(vm.name)
+      if (r.success) {
+        vm.status = 'stopped'
+        this.vms = [...this.vms]
+      } else {
+        // 停止失败时不要假装已关机，尽量恢复真实状态
+        let live = ''
+        try {
+          if (qemuModule?.getVmStatus) live = String(qemuModule.getVmStatus(vm.name))
+        } catch (_) {
+          live = ''
+        }
+        // 兼容 native 可能返回的 shutdown
+        if (live === 'shutdown') live = 'stopped'
+        const allowed: VMStatus[] = ['creating', 'preparing', 'starting', 'running', 'stopping', 'stopped', 'failed', 'paused', 'backup']
+        if (allowed.includes(live as VMStatus)) vm.status = live as VMStatus
+        else vm.status = 'failed'
+        this.vms = [...this.vms]
+        this.errorMessage = r.message || '关闭虚拟机失败'
+        promptAction.showToast({ message: this.errorMessage, duration: 3000 })
+      }
     } catch (e) { this.errorMessage = (e as Error).message }
     finally { this.isLoading = false; await this.saveAllVMs() }
   }
@@ -1264,49 +1471,26 @@ struct Index {
   private openVNCWindow(vm: VMMeta): void {
     const ctx = getContext(this) as common.UIAbilityContext
     
-    // 根据设置选择VNC模式和端口
-    const useNative = this.settingsVncMode === 'native'
-    const vncPort = useNative ? this.settingsVncNativePort : this.settingsVncNoVNCPort
+    const vncPort = this.settingsVncNativePort
+    hilog.info(0x0000, 'INDEX', 'VNC(原生) 端口: %{public}d', vncPort)
     
-    hilog.info(0x0000, 'INDEX', 'VNC模式: %{public}s, 端口: %{public}d', 
-      useNative ? 'native' : 'novnc', vncPort)
-    
-    if (useNative) {
-      // 原生VNC客户端 - 使用VNCNativeViewer页面
-      router.pushUrl({
-        url: 'pages/VNCNativeViewer',
-        params: {
-          vmName: vm.name,
-          vmId: vm.id,
-          vncHost: '127.0.0.1',
-          vncPort: vncPort
-        }
-      }).then(() => {
-        hilog.info(0x0000, 'INDEX', '原生VNC页面打开成功: %{public}s', vm.name)
-      }).catch((err: Error) => {
-        hilog.error(0x0000, 'INDEX', '原生VNC页面打开失败: %{public}s', err.message)
-        this.errorMessage = `无法打开原生VNC: ${err.message}`
-      })
-    } else {
-      // noVNC - 使用新窗口
-      const want: Want = {
-        bundleName: ctx.abilityInfo.bundleName,
-        abilityName: 'VNCWindowAbility',
-        parameters: {
-          vmName: vm.name,
-          vmId: vm.id,
-          vncHost: '127.0.0.1',
-          vncPort: vncPort,
-          vncMode: 'novnc'
-        }
+    // 统一使用新窗口方式打开（原生 VNC）
+    const want: Want = {
+      bundleName: ctx.abilityInfo.bundleName,
+      abilityName: 'VNCWindowAbility',
+      parameters: {
+        vmName: vm.name,
+        vmId: vm.id,
+        vncHost: '127.0.0.1',
+        vncPort: vncPort
       }
-      ctx.startAbility(want).then(() => {
-        hilog.info(0x0000, 'INDEX', 'noVNC 窗口启动成功: %{public}s', vm.name)
-      }).catch((err: Error) => {
-        hilog.error(0x0000, 'INDEX', 'noVNC 窗口启动失败: %{public}s', err.message)
-        this.errorMessage = `无法打开 VNC 窗口: ${err.message}`
-      })
     }
+    ctx.startAbility(want).then(() => {
+      hilog.info(0x0000, 'INDEX', 'VNC 窗口启动成功: %{public}s', vm.name)
+    }).catch((err: Error) => {
+      hilog.error(0x0000, 'INDEX', 'VNC 窗口启动失败: %{public}s', err.message)
+      this.errorMessage = `无法打开 VNC 窗口: ${err.message}`
+    })
   }
 
   /**
@@ -1766,7 +1950,13 @@ struct Index {
         .fontColor(!this.keymapsAvailable ? $r('app.color.text_tertiary') : Color.White)
         .enabled(this.keymapsAvailable)
         .margin({ bottom: 8 })
-        .onClick((): void => { if (this.keymapsAvailable && this.startTargetVM) this.startVM(this.startTargetVM, 'install') })
+        .onClick((): void => {
+          hilog.info(0x0000, 'INDEX', '>>> 安装模式按钮点击 keymapsAvailable=%{public}s startTargetVM=%{public}s <<<',
+            String(this.keymapsAvailable), this.startTargetVM?.id || '(null)')
+          if (this.keymapsAvailable && this.startTargetVM) {
+            this.startVM(this.startTargetVM, 'install')
+          }
+        })
       Text(!this.keymapsAvailable ? '缺少 keymaps，无法使用 VNC 安装模式' : '使用 VNC 进行系统安装，适合首次安装操作系统')
         .fontSize(12)
         .fontColor($r('app.color.text_tertiary'))
@@ -1781,7 +1971,12 @@ struct Index {
         .fontColor(!this.keymapsAvailable ? $r('app.color.text_tertiary') : Color.White)
         .enabled(this.keymapsAvailable)
         .margin({ bottom: 8 })
-        .onClick((): void => { if (this.keymapsAvailable && this.startTargetVM) this.startVM(this.startTargetVM, 'enhanced') })
+        .onClick((): void => {
+          hilog.info(0x0000, 'INDEX', '>>> 增强启动按钮点击 <<<')
+          if (this.keymapsAvailable && this.startTargetVM) {
+            this.startVM(this.startTargetVM, 'enhanced')
+          }
+        })
       Text(!this.keymapsAvailable ? '缺少 keymaps，无法使用 RDP/VNC 图形模式' : '使用 RDP 远程桌面，适合 Windows 和支持 xrdp 的 Linux')
         .fontSize(12)
         .fontColor($r('app.color.text_tertiary'))
@@ -1796,7 +1991,12 @@ struct Index {
         .fontColor(!this.keymapsAvailable ? $r('app.color.text_tertiary') : Color.White)
         .enabled(this.keymapsAvailable)
         .margin({ bottom: 8 })
-        .onClick((): void => { if (this.keymapsAvailable && this.startTargetVM) this.startVM(this.startTargetVM, 'standard') })
+        .onClick((): void => {
+          hilog.info(0x0000, 'INDEX', '>>> 普通启动按钮点击 <<<')
+          if (this.keymapsAvailable && this.startTargetVM) {
+            this.startVM(this.startTargetVM, 'standard')
+          }
+        })
       Text(!this.keymapsAvailable ? '缺少 keymaps，无法使用 VNC 图形模式' : '使用 VNC 显示，适合 macOS 及不支持 RDP 的系统')
         .fontSize(12)
         .fontColor($r('app.color.text_tertiary'))
@@ -2223,7 +2423,7 @@ struct Index {
         // 自定义标题栏（自由多窗模式下不显示窗口控制按钮，系统已提供）
         if (this.showCustomTitleBar) {
           CustomTitleBar({
-            windowTitle: 'QEMU 鸿蒙版',
+            windowTitle: 'Aether Engine',
             showSearch: true,
             showWindowControls: this.windowMode === 'split',  // 分屏显示控制键，浮窗用系统键
             onSearchClick: (): void => { this.showCommandPalette = true }
@@ -2395,7 +2595,7 @@ struct Index {
                       }
                     }
                     .width('100%')
-                    .height(280)
+                    .height(this.getPreviewCardHeight())
                     .borderRadius(16)
                     .clip(true)
                     
@@ -2432,7 +2632,7 @@ struct Index {
                           Button() {
                             Row() {
                               SymbolGlyph($r('sys.symbol.xmark_circle')).fontSize(18).fontColor([Color.White])
-                              Text('停止').fontSize(14).fontColor(Color.White).margin({ left: 6 })
+                              Text('关闭虚拟机').fontSize(14).fontColor(Color.White).margin({ left: 6 })
                             }
                           }
                           .type(ButtonType.Capsule)
@@ -2459,7 +2659,7 @@ struct Index {
                           })
                         }
                       }.width('100%').margin({ top: 16 })
-                    }.padding(20).backgroundColor($r('app.color.card_background')).borderRadius(16).margin({ bottom: 16 })
+                    }.padding(20).backgroundColor($r('app.color.card_background')).borderRadius(16).margin({ top: 16, bottom: 16 })
 
                     // ========== 配置信息 ==========
                   Column() {
@@ -2610,6 +2810,7 @@ struct Index {
           blurStyle: BlurStyle.COMPONENT_ULTRA_THICK,
           preferType: SheetType.CENTER,
           onDisappear: (): void => {
+            hilog.info(0x0000, 'INDEX', '>>> Sheet onDisappear 触发，currentSheet=%{public}s <<<', this.currentSheet)
             this.sheetVisible = false
             this.currentSheet = 'none'
           }
@@ -2656,9 +2857,7 @@ struct Index {
           onOpenVnc: (vmId: string): void => {
             const vm = this.vms.find((v: VMMeta): boolean => v.id === vmId)
             if (vm) {
-              const vncInfo: VNCVmInfo = { name: vm.name, vncPort: 5701 }
-              const vncParams: VNCViewerParams = { vmInfo: vncInfo }
-              router.pushUrl({ url: 'pages/VNCViewer', params: vncParams })
+              this.openVNCWindow(vm)
             }
           },
           onOpenConsole: (vmId: string): void => {
@@ -3065,29 +3264,6 @@ struct Index {
           // VNC 设置
           Text('VNC 设置').fontSize(13).fontColor($r('app.color.text_secondary')).fontWeight(FontWeight.Medium).width('100%').margin({ bottom: 12 })
           
-          // VNC 模式选择
-          Column() {
-            Text('VNC 客户端模式').fontSize(15).fontColor($r('app.color.text_primary')).width('100%').margin({ bottom: 12 })
-            Row() {
-              Row() {
-                Radio({ value: 'novnc', group: 'vncMode' })
-                  .checked(this.settingsVncMode === 'novnc')
-                  .onChange((isChecked: boolean): void => { if (isChecked) this.settingsVncMode = 'novnc' })
-                Text('noVNC').fontSize(14).fontColor($r('app.color.text_primary')).margin({ left: 8 })
-              }.layoutWeight(1)
-              Row() {
-                Radio({ value: 'native', group: 'vncMode' })
-                  .checked(this.settingsVncMode === 'native')
-                  .onChange((isChecked: boolean): void => { if (isChecked) this.settingsVncMode = 'native' })
-                Text('原生').fontSize(14).fontColor($r('app.color.text_primary')).margin({ left: 8 })
-              }.layoutWeight(1)
-            }.width('100%')
-            Text(this.settingsVncMode === 'novnc' 
-              ? 'noVNC：通过 WebView 显示，兼容性好（需要 WebSocket 端口）' 
-              : '原生：使用 Native 库直接渲染，性能更好（需要 RFB 端口）')
-              .fontSize(12).fontColor($r('app.color.text_tertiary')).width('100%').margin({ top: 8 })
-          }.padding({ left: 16, right: 16, top: 12, bottom: 12 }).backgroundColor($r('app.color.sidebar_background')).borderRadius(12).margin({ bottom: 8 })
-
           // VNC 端口设置
           Column() {
             Row() {
@@ -3102,27 +3278,12 @@ struct Index {
                 .borderRadius(8)
                 .onChange((value: string): void => { 
                   const port = parseInt(value) || 5901
-                  this.settingsVncNativePort = Math.max(1024, Math.min(65535, port))
-                })
-            }.width('100%').margin({ bottom: 12 })
-            
-            Row() {
-              Text('noVNC 端口 (WebSocket)').fontSize(15).fontColor($r('app.color.text_primary')).layoutWeight(1)
-              TextInput({ text: this.settingsVncNoVNCPort.toString() })
-                .width(80)
-                .height(36)
-                .type(InputType.Number)
-                .fontSize(14)
-                .textAlign(TextAlign.Center)
-                .backgroundColor($r('app.color.card_background'))
-                .borderRadius(8)
-                .onChange((value: string): void => { 
-                  const port = parseInt(value) || 5701
-                  this.settingsVncNoVNCPort = Math.max(1024, Math.min(65535, port))
+                  const p = Math.max(1024, Math.min(65535, port))
+                  this.persistVncPort(p)
                 })
             }.width('100%')
             
-            Text('提示：原生端口为 QEMU VNC 的 RFB 协议端口，noVNC 端口为 WebSocket 端口')
+            Text('提示：原生端口为 QEMU VNC 的 RFB 协议端口')
               .fontSize(11).fontColor($r('app.color.text_tertiary')).width('100%').margin({ top: 8 })
           }.padding({ left: 16, right: 16, top: 12, bottom: 12 }).backgroundColor($r('app.color.sidebar_background')).borderRadius(12)
 

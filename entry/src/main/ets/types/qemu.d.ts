@@ -34,6 +34,8 @@ export interface QemuAPI {
   vncConnect?: (id: number, host: string, port: number) => boolean;
   vncDisconnect?: (id: number) => void;
   vncGetFrame?: (id: number) => VncFrame | null;
+  vncSendPointer?: (id: number, x: number, y: number, buttonMask: number) => boolean;
+  vncSendKey?: (id: number, keysym: number, down: boolean) => boolean;
 }
 
 // VNC frame shape for native client
@@ -41,6 +43,8 @@ export interface VncFrame {
   width: number;
   height: number;
   pixels: ArrayBuffer;
+  // optional: frame sequence id (incremented when there is a new frame)
+  seq?: number;
 }
 
 // Module declaration for N-API native addon
