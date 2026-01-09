@@ -68,7 +68,12 @@ git submodule update --init --recursive
 export OHOS_NDK_HOME=/path/to/harmonyos-sdk/linux/native
 
 bash tools/build_ohos_deps.sh
+
+# 二选一（只运行一条）：
+# - 默认构建（更小、更稳）
 bash tools/build_qemu_full_linux.sh
+# - 如果你需要 virtiofs / vhost-user-fs（会启用 vhost-user；virtiofsd backend 需自备）
+bash tools/build_virtiofs.sh
 ```
 
 产物默认输出到：

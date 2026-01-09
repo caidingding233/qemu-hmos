@@ -313,7 +313,7 @@ if(USE_PREBUILT_LIB)
         message(STATUS "⚠️  Prebuilt library mode: skipping compile, using pre-built binary")
     else()
         message(FATAL_ERROR "❌ Prebuilt library not found at ${PREBUILT_LIB_PATH}")
-        message(FATAL_ERROR "   Please run: bash tools/build_libqemu_hmos_linux.sh (WSL/Linux)")
+        message(FATAL_ERROR "   Fix: set -DUSE_PREBUILT_LIB=OFF (recommended) OR provide a valid prebuilt lib at the path above.")
     endif()
 else()
     # 编译模式：正常编译库
@@ -616,7 +616,7 @@ if(FREERDP_LIB_PATH)
         # - HarmonyOS sysroot 通常不提供 -lssl/-lcrypto（系统 OpenSSL），
         #   因此在 OHOS 目标下不要做“链接系统库”的回退，否则会直接导致链接失败：
         #   ld.lld: error: unable to find library -lssl/-lcrypto
-        # - 若需要 TLS/NLA 等能力，请用 tools/build_openssl_ohos.sh 生成
+        # - 若需要 TLS/NLA 等能力，请自行准备 OpenSSL 静态库：
         #   third_party/deps/install-ohos/lib/libssl.a / libcrypto.a
         if(HAVE_OPENSSL)
             target_link_libraries(qemu_hmos

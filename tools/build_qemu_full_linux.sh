@@ -43,6 +43,22 @@ log "QEMU 源码: ${QEMU_SRC}"
 log "依赖: ${DEPS_PREFIX}"
 log "输出: ${OUTPUT_DIR}"
 
+# ========= Feature toggles (keep default minimal) =========
+# 说明：
+# - virtiofs 需要 QEMU 侧启用 vhost-user（vhost-user-fs 设备）
+# - 默认仍保持 disabled（更小、更稳）；需要时可通过环境变量打开
+if [[ "${AETHER_ENABLE_VIRTIOFS:-0}" == "1" ]]; then
+    export AETHER_ENABLE_VHOST_USER=1
+fi
+
+VHOST_USER_OPT="disabled"
+if [[ "${AETHER_ENABLE_VHOST_USER:-0}" == "1" ]]; then
+    VHOST_USER_OPT="enabled"
+    log "Feature: vhost-user = enabled (virtiofs/vhost-user-fs)"
+else
+    log "Feature: vhost-user = disabled"
+fi
+
 # 检查依赖是否已构建
 if [[ ! -f "${DEPS_PREFIX}/lib/libglib-2.0.a" ]]; then
     error "依赖库未构建，请先运行: bash tools/build_ohos_deps.sh"
@@ -155,9 +171,8 @@ log "配置 QEMU (使用 configure)..."
     --disable-usb-redir \
     \
     -Db_staticpic=true \
-    -Dvhost_user=disabled \
+    -Dvhost_user=${VHOST_USER_OPT} \
     -Dvhost_user_blk_server=disabled \
-    -Dlibvhost_user=disabled \
     -Dvhost_vdpa=disabled \
     -Dlibvduse=disabled \
     -Dvduse_blk_export=disabled \
@@ -194,7 +209,7 @@ rm -rf meson-* build.ninja 2>/dev/null || true
     -Ddocs=disabled \
     -Dplugins=true \
     -Dwerror=false \
-    -Dvhost_user=disabled \
+    -Dvhost_user=${VHOST_USER_OPT} \
     -Dvhost_user_blk_server=disabled \
     -Dkeyring=disabled \
     -Dpasst=disabled \
