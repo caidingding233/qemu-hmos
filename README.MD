@@ -109,7 +109,7 @@ QEMU 的 `Makefile` 不在根目录，并且通常需要先 `./configure`（或�
 本仓库是**多许可证**结构：
 - **QEMU（`third_party/qemu`）**：遵循上游 QEMU 的 GPL 许可证（见 `third_party/qemu/COPYING`）
 - 我们App使用到的[其他项目（详见星河合伙人页面）](docs/STARRIVER_PARTNER.md)，均遵循其他代码自带的许可证！  
-- **本项目自研代码**（如 `entry/`、`tools/`、`scripts/`、`patches/` 等）：采用 **Apache-2.0** 开源（见 `LICENSE-APACHE`）  
+- **本项目自研代码**（如 `entry/`、`tools/`、`patches/` 等）：采用 **Apache-2.0** 开源（见 `LICENSE-APACHE`）  
 - **其他 third_party 组件**：遵循各自上游许可证（例如 FreeRDP、OpenSSL、GLib/Pixman/PCRE2 等）  
 
 > 说明：根目录的 `LICENSE` 当前放的是 GPL 文本，主要用于对 QEMU 相关分发/修改的合规提示；请以本节的“多许可证说明”理解整个仓库。  

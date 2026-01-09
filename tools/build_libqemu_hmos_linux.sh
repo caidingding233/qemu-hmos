@@ -13,7 +13,7 @@ set -euo pipefail
 # 3. 在 WSL 中下载 x86-64 版本的 HarmonyOS NDK
 # 4. 运行此脚本进行构建
 #
-# 详细说明请参考：docs/WSL_BUILD_GUIDE.md
+# 详细说明请参考：README.MD 的「构建与开发」章节
 
 log() {
   printf '[libqemu_hmos-build-linux] %s\n' "$*"

@@ -313,7 +313,7 @@ if(USE_PREBUILT_LIB)
         message(STATUS "⚠️  Prebuilt library mode: skipping compile, using pre-built binary")
     else()
         message(FATAL_ERROR "❌ Prebuilt library not found at ${PREBUILT_LIB_PATH}")
-        message(FATAL_ERROR "   Please run: tools/build_libqemu_hmos.sh")
+        message(FATAL_ERROR "   Please run: bash tools/build_libqemu_hmos_linux.sh (WSL/Linux)")
     endif()
 else()
     # 编译模式：正常编译库

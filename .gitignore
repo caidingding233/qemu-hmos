@@ -120,6 +120,15 @@ entry/.preview/
 entry/src/main/cpp/build-*/
 entry/src/main/cpp/.ninja_log
 
+# 本仓库历史遗留的本地/测试产物（不应入库）
+entry/src/main/cpp/qemu_test/
+entry/src/main/cpp/test_files/
+entry/src/main/cpp/test_*
+entry/src/main/cpp/CMakeLists_test.txt
+
+# 历史脚本目录（已废弃，不应入库）
+scripts/
+
 # ============================================
 # 包管理锁文件（可选保留）
 # ============================================
