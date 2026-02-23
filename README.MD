@@ -1,6 +1,9 @@
 # Aetherium for HarmonyOS（HMOS）
 ## 让鸿蒙也能离线跑 Windows / Linux —— 一个“鸿蒙版 UTM”的实验项目
 
+> [!CAUTION]
+> 这个App由AI生成 如果您需要为他做贡献 请注意一下他可能的Bugs 如果遇到任何Bugs 点上方Issue按钮 发一下您的问题 谢谢
+
 想象一下，你的鸿蒙设备瞬间变身为一台虚拟机：不用 root、不靠破解、尽量少黑魔法，直接在本地跑来宾系统。
 
 > ⚠️ **小字说明**：本项目仍处于实验阶段，功能/兼容性在快速迭代中。请仅在合法镜像 / 自测环境下使用。  
@@ -60,6 +63,13 @@ cd qemu-hmos
 git submodule update --init --recursive
 ```
 
+**一眼自检：你到底有没有拉到子模块？**
+
+```bash
+# 看到 third_party/qemu/configure 才算子模块正常
+ls third_party/qemu/configure
+```
+
 ### 2) 在 WSL / Linux 里交叉编译 QEMU（推荐）
 
 > Windows `cmd.exe` 不能直接运行 `.sh`。请使用 **WSL / Linux / Git Bash**。
@@ -95,6 +105,13 @@ bash tools/build_virtiofs.sh
 推荐做法：直接跑构建脚本
 - `bash tools/build_qemu_full_linux.sh`
 
+如果你一定要手动编译 QEMU，也请进入子模块目录：
+
+```bash
+cd third_party/qemu
+./configure --target-list=aarch64-softmmu
+```
+
 ### 2) `make: *** 没有指明目标并且找不到 makefile。 停止。`
 
 你多半是在 **错误目录**（比如仓库根目录）直接 `make` 了。  
@@ -106,6 +123,8 @@ QEMU 的 `Makefile` 不在根目录，并且通常需要先 `./configure`（或�
 - WSL
 - Linux 终端
 - Git Bash（能力有限，优先 WSL）
+
+> 经验法则：只要命令里出现 `bash xxx.sh`，就别用 Windows cmd。
 
 ---
 
